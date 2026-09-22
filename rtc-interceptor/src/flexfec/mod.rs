@@ -18,3 +18,4 @@
 pub(crate) mod bit_array;
 pub(crate) mod coverage;
 pub(crate) mod draft03;
+pub(crate) mod xor;

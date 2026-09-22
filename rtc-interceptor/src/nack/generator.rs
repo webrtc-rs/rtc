@@ -153,14 +153,22 @@ impl NackGeneratorInterceptor {
                 continue;
             }
 
-            // Initialize nack counts for this SSRC if needed
-            let nack_count = self.nack_counts.entry(ssrc).or_default();
-
-            // Filter by max_nacks_per_packet if configured
+            // Filter by max_nacks_per_packet if configured. Unlimited, the missing list is the
+            // feedback as it stands.
             let filtered: Vec<u16> = if self.max_nacks_per_packet > 0 {
+                let nack_count = self.nack_counts.entry(ssrc).or_default();
+
+                // Forget packets no longer missing — arrived late, or slid out of the log —
+                // before counting, and whether or not this round goes on to send anything: a
+                // round in which every missing packet has used up its allowance would otherwise
+                // leave the stale counts for a later one. Membership comes from the receive log
+                // in constant time; checking each count against the missing list was
+                // O(counts × missing) on every round under loss.
+                nack_count.retain(|&seq, _| receive_log.is_missing(seq, self.skip_last_n));
+
                 missing
-                    .iter()
-                    .filter(|&&seq| {
+                    .into_iter()
+                    .filter(|&seq| {
                         let count = nack_count.entry(seq).or_insert(0);
                         if *count < self.max_nacks_per_packet {
                             *count += 1;
@@ -169,18 +177,14 @@ impl NackGeneratorInterceptor {
                             false
                         }
                     })
-                    .copied()
                     .collect()
             } else {
-                missing.clone()
+                missing
             };
 
             if filtered.is_empty() {
                 continue;
             }
-
-            // Clean up nack counts for packets no longer missing
-            nack_count.retain(|seq, _| missing.contains(seq));
 
             // Create NACK packet
             let nack = rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack {
@@ -275,4 +279,128 @@ impl Interceptor for NackGeneratorInterceptor {
     fn bind_local_stream(&mut self, _info: &StreamInfo) {}
 
     fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stream_info::RTCPFeedback;
+    use rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
+
+    const SSRC: u32 = 1;
+
+    fn generator(max_nacks_per_packet: u16) -> NackGeneratorInterceptor {
+        let mut generator = NackGeneratorBuilder::new()
+            .with_interval(Duration::from_millis(10))
+            .with_max_nacks_per_packet(max_nacks_per_packet)
+            .build();
+        generator.bind_remote_stream(&StreamInfo {
+            ssrc: SSRC,
+            rtcp_feedback: vec![RTCPFeedback {
+                typ: "nack".to_string(),
+                parameter: String::new(),
+            }],
+            ..Default::default()
+        });
+        generator
+    }
+
+    fn receive(generator: &mut NackGeneratorInterceptor, seq: u16, now: Instant) {
+        generator
+            .handle_read(TaggedPacket {
+                now,
+                transport: TransportContext::default(),
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
+                    header: rtp::header::Header {
+                        ssrc: SSRC,
+                        sequence_number: seq,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })),
+            })
+            .unwrap();
+        while generator.poll_read().is_some() {}
+    }
+
+    /// Runs one NACK round at `now` and returns the sequence numbers it asked for.
+    fn round(generator: &mut NackGeneratorInterceptor, now: Instant) -> Vec<u16> {
+        generator.handle_timeout(now).unwrap();
+        let mut nacked = vec![];
+        while let Some(packet) = generator.poll_write() {
+            if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
+                for rtcp_packet in rtcp_packets {
+                    if let Some(nack) = rtcp_packet.as_any().downcast_ref::<TransportLayerNack>() {
+                        nacked.extend(nack.nacks.iter().flat_map(|pair| pair.packet_list()));
+                    }
+                }
+            }
+        }
+        nacked
+    }
+
+    /// A packet that arrives late must stop being counted, even in a round that sends nothing
+    /// because every packet still missing has used up its allowance.
+    #[test]
+    fn retry_counts_are_released_when_no_nack_is_sent() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut generator = generator(1);
+        for seq in [0, 1, 3, 4, 6] {
+            receive(&mut generator, seq, t0);
+        }
+
+        assert_eq!(round(&mut generator, at(10)), vec![2, 5]);
+        assert!(
+            round(&mut generator, at(20)).is_empty(),
+            "allowance used up"
+        );
+
+        receive(&mut generator, 2, at(25));
+        assert!(
+            round(&mut generator, at(30)).is_empty(),
+            "5 is still used up"
+        );
+        assert_eq!(
+            generator.nack_counts[&SSRC]
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![5],
+            "the count for 2 must go once 2 has arrived"
+        );
+    }
+
+    /// The limit counts per packet: a packet that goes missing later gets its full allowance.
+    #[test]
+    fn retry_limit_applies_per_packet() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut generator = generator(2);
+        for seq in [0, 2] {
+            receive(&mut generator, seq, t0);
+        }
+
+        assert_eq!(round(&mut generator, at(10)), vec![1]);
+        receive(&mut generator, 4, at(15));
+        assert_eq!(round(&mut generator, at(20)), vec![1, 3]);
+        assert_eq!(round(&mut generator, at(30)), vec![3]);
+        assert!(round(&mut generator, at(40)).is_empty());
+    }
+
+    /// Unlimited retries keep no counts and ask for every missing packet every round.
+    #[test]
+    fn unlimited_retries_keep_no_counts() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut generator = generator(0);
+        for seq in [0, 2, 5] {
+            receive(&mut generator, seq, t0);
+        }
+
+        for tick in 1..=3 {
+            assert_eq!(round(&mut generator, at(tick * 10)), vec![1, 3, 4]);
+        }
+        assert!(generator.nack_counts.is_empty());
+    }
 }

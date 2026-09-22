@@ -5,7 +5,6 @@ use crate::cipher_suite::*;
 use crate::handshake::*;
 
 use std::collections::HashMap;
-use std::io::BufReader;
 
 #[derive(Clone, Debug)]
 pub(crate) struct HandshakeCacheItem {
@@ -59,31 +58,26 @@ impl HandshakeCache {
         true
     }
 
-    // returns a list handshakes that match the requested rules
-    // the list will contain null entries for rules that can't be satisfied
-    // multiple entries may match a rule, but only the last match is returned (ie ClientHello with cookies)
-    pub(crate) fn pull(&self, rules: &[HandshakeCachePullRule]) -> Vec<HandshakeCacheItem> {
-        let mut out = vec![];
-        for r in rules {
-            let mut item: Option<HandshakeCacheItem> = None;
-            for c in &self.cache {
-                if c.typ == r.typ && c.is_client == r.is_client && c.epoch == r.epoch {
-                    if let Some(x) = &item {
-                        if x.message_sequence < c.message_sequence {
-                            item = Some(c.clone());
-                        }
-                    } else {
-                        item = Some(c.clone());
-                    }
+    // returns the cached message a rule selects: the latest (highest message_sequence) entry of
+    // the rule's type, epoch and sender, or `None` when no entry matches
+    fn find(&self, r: &HandshakeCachePullRule) -> Option<&HandshakeCacheItem> {
+        let mut item: Option<&HandshakeCacheItem> = None;
+        for c in &self.cache {
+            if c.typ == r.typ && c.is_client == r.is_client && c.epoch == r.epoch {
+                match item {
+                    Some(x) if x.message_sequence >= c.message_sequence => {}
+                    _ => item = Some(c),
                 }
             }
-
-            if let Some(c) = item {
-                out.push(c);
-            }
         }
+        item
+    }
 
-        out
+    // returns a list handshakes that match the requested rules
+    // rules that can't be satisfied are skipped
+    // multiple entries may match a rule, but only the last match is returned (ie ClientHello with cookies)
+    pub(crate) fn pull(&self, rules: &[HandshakeCachePullRule]) -> Vec<&HandshakeCacheItem> {
+        rules.iter().filter_map(|r| self.find(r)).collect()
     }
 
     // full_pull_map pulls all handshakes between rules[0] to rules[len(rules)-1] as map.
@@ -94,18 +88,7 @@ impl HandshakeCache {
     ) -> Result<(isize, HashMap<HandshakeType, HandshakeMessage>)> {
         let mut ci = HashMap::new();
         for r in rules {
-            let mut item: Option<HandshakeCacheItem> = None;
-            for c in &self.cache {
-                if c.typ == r.typ && c.is_client == r.is_client && c.epoch == r.epoch {
-                    if let Some(x) = &item {
-                        if x.message_sequence < c.message_sequence {
-                            item = Some(c.clone());
-                        }
-                    } else {
-                        item = Some(c.clone());
-                    }
-                }
-            }
+            let item = self.find(r);
             if !r.optional && item.is_none() {
                 // Missing mandatory message.
                 return Err(Error::Other("Missing mandatory message".to_owned()));
@@ -121,8 +104,8 @@ impl HandshakeCache {
         for r in rules {
             let t = r.typ;
             if let Some(i) = ci.get(&t) {
-                let mut reader = BufReader::new(i.data.as_slice());
-                let raw_handshake = Handshake::unmarshal(&mut reader)?;
+                // The cached bytes are already in memory: parse them straight from the slice.
+                let raw_handshake = Handshake::unmarshal(&mut i.data.as_slice())?;
                 if seq as u16 != raw_handshake.handshake_header.message_sequence {
                     // There is a gap. Some messages are not arrived.
                     return Err(Error::Other(
@@ -139,13 +122,7 @@ impl HandshakeCache {
 
     // pull_and_merge calls pull and then merges the results, ignoring any null entries
     pub(crate) fn pull_and_merge(&self, rules: &[HandshakeCachePullRule]) -> Vec<u8> {
-        let mut merged = vec![];
-
-        for p in &self.pull(rules) {
-            merged.extend_from_slice(&p.data);
-        }
-
-        merged
+        merge(&self.pull(rules), &[])
     }
 
     // session_hash returns the session hash for Extended Master Secret support
@@ -157,8 +134,6 @@ impl HandshakeCache {
         epoch: u16,
         additional: &[u8],
     ) -> Result<Vec<u8>> {
-        let mut merged = vec![];
-
         // Order defined by https://tools.ietf.org/html/rfc5246#section-7.3
         let handshake_buffer = self.pull(&[
             HandshakeCachePullRule {
@@ -211,11 +186,7 @@ impl HandshakeCache {
             },
         ]);
 
-        for p in &handshake_buffer {
-            merged.extend_from_slice(&p.data);
-        }
-
-        merged.extend_from_slice(additional);
+        let merged = merge(&handshake_buffer, additional);
 
         match hf {
             CipherSuiteHash::Sha256 => crypto
@@ -223,4 +194,15 @@ impl HandshakeCache {
                 .map_err(|error| Error::Crypto(error.to_string())),
         }
     }
+}
+
+// concatenates the selected messages, then `additional`, into one buffer sized up front
+fn merge(items: &[&HandshakeCacheItem], additional: &[u8]) -> Vec<u8> {
+    let len = items.iter().map(|i| i.data.len()).sum::<usize>() + additional.len();
+    let mut merged = Vec::with_capacity(len);
+    for i in items {
+        merged.extend_from_slice(&i.data);
+    }
+    merged.extend_from_slice(additional);
+    merged
 }

@@ -3,3 +3,5 @@ pub(crate) mod decoder;
 pub(crate) mod encoder;
 pub(crate) mod receiver;
 pub(crate) mod sender;
+#[cfg(test)]
+pub(crate) mod test_blocks;

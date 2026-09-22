@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Sample::<f32>::convert_from_i16_slice` and `Sample::<i16>::convert_from_f32_slice` convert PCM a
+  slice at a time with portable SIMD (`wide`), bit-identical to the per-sample `From` conversions;
+  `i16` to `f32` is about 1.75× faster than a per-sample loop.
 - `RTCCrypto::new_hmac` returns a keyed `Mac` whose key schedule is derived once, mirroring the
   existing keyed cipher factories. It replaces the removed one-shot `hmac`/`verify_hmac`.
 - **New `rtc-crypto` crate: a provider-neutral cryptographic API**
@@ -36,6 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`rtc-crypto` uses `aes` 0.9, `ctr` 0.10 and `ccm` 0.6, so applications get hardware AES on
+  aarch64 without configuration.** `aes` 0.8 compiled its ARMv8 backend in only when the final
+  build passed `--cfg aes_armv8`, which this repository's `.cargo/config.toml` did and applications
+  depending on rtc never inherit: their SRTP AES-CM, DTLS AES-CCM and AES-CBC ran on software AES,
+  27× slower for a 1,200-byte AES-CTR keystream on Apple M1. They are now accelerated with no
+  flags; `python3 scripts/bench.py external` checks this. The trade-off: `aes` 0.9's ARMv8
+  backend is slower than 0.8's with the flag, so builds that had the flag measure SRTP AES-CM
+  about 12% and DTLS AES-CBC encryption about 19% slower. AES-GCM runs on `ring`/`aws-lc-rs` and
+  is unaffected.
+- **Portable SIMD and whole-word rewrites of several hot loops**, with no API change and
+  bit-identical results, recorded in `SIMD.md`: H.264 packetization and the Annex B reader find
+  start codes with `memchr` (the reader is about 75× faster); audio buffer layout conversion has
+  mono, stereo and four-channel fast paths (5–17×); STUN `FINGERPRINT` and Ogg page checksums use
+  the `crc-fast` crate (3.8× at 100 bytes; Ogg pages up to 59×); RFC 8888 feedback decodes in
+  bulk (3–4×); FlexFEC serializes each protected packet once per block (encoding 1.4–1.7×); NACK
+  generation, the NACK responder, receiver reports and the TWCC arrival map work a word or slice
+  at a time. New dependencies: `crc-fast` (`rtc-stun`, `rtc-media`), `wide` (`rtc-media`,
+  `rtc-interceptor`) and `memchr` (`rtc-media`); `rtc-stun` no longer depends on `crc`.
+- DTLS AES-CBC decryption hands records of 512 bytes or more to the AES backend 32 blocks at a
+  time.
 - **No library code resolves a default crypto provider.** `crypto::default_provider()` is now
   called in exactly one place — peer-connection construction — where the application either
   supplied one via `SettingEngine::set_crypto_provider` or gets the feature-selected built-in.
@@ -112,6 +135,10 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- **`H26xReader::next_nal` no longer panics after end of stream.** If the underlying reader returned
+  `Ok(0)`, the final unit was returned, and the reader then produced more data beginning with a
+  short zero run and a start code, the length computation underflowed. That input is now read as
+  the empty unit it is.
 - `rtc-crypto`'s AES-CTR keystream now uses a batched implementation instead of one
   `encrypt_block` call per 16-byte block, which defeated AES-NI / ARMv8 instruction pipelining.
   Roughly 9-10% faster on a 1200-byte SRTP payload.

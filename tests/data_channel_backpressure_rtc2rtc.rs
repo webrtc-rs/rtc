@@ -22,6 +22,10 @@
 //! It is deliberately not a test that "the bound exists" — a core with no bound at all would
 //! also deliver everything, just with unbounded memory. It is a test that the bound does not
 //! lose or strand anything.
+//!
+//! The second scenario covers the byte bound (`with_sctp_read_backlog_bytes`), which is what
+//! engages first for large messages: two channels of mixed message sizes, a stalled consumer,
+//! and an upper bound on the backlog it is handed when it resumes.
 
 use anyhow::Result;
 use rtc::data_channel::RTCDataChannelInit;
@@ -66,17 +70,19 @@ struct Peers {
 
 async fn build_peer(
     role: RTCDtlsRole,
+    read_backlog_bytes: Option<usize>,
 ) -> Result<(RTCPeerConnection, UdpSocket, std::net::SocketAddr)> {
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let addr = socket.local_addr()?;
 
-    let setting_engine = SettingEngineBuilder::new()
-        .with_answering_dtls_role(role)
-        .build();
+    let mut setting_engine = SettingEngineBuilder::new().with_answering_dtls_role(role);
+    if let Some(bytes) = read_backlog_bytes {
+        setting_engine = setting_engine.with_sctp_read_backlog_bytes(bytes);
+    }
 
     let mut pc = RTCPeerConnectionBuilder::new()
         .with_configuration(RTCConfigurationBuilder::new().build())
-        .with_setting_engine(setting_engine)
+        .with_setting_engine(setting_engine.build())
         .build(Instant::now())?;
 
     let candidate = CandidateHostConfig {
@@ -95,9 +101,10 @@ async fn build_peer(
     Ok((pc, socket, addr))
 }
 
-async fn connect() -> Result<Peers> {
-    let (offer_pc, offer_socket, offer_addr) = build_peer(RTCDtlsRole::Server).await?;
-    let (answer_pc, answer_socket, answer_addr) = build_peer(RTCDtlsRole::Client).await?;
+async fn connect(answerer_read_backlog_bytes: Option<usize>) -> Result<Peers> {
+    let (offer_pc, offer_socket, offer_addr) = build_peer(RTCDtlsRole::Server, None).await?;
+    let (answer_pc, answer_socket, answer_addr) =
+        build_peer(RTCDtlsRole::Client, answerer_read_backlog_bytes).await?;
     Ok(Peers {
         offer_pc,
         answer_pc,
@@ -108,33 +115,66 @@ async fn connect() -> Result<Peers> {
     })
 }
 
-#[tokio::test]
-async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<()> {
+/// One reliable, ordered channel in a scenario.
+struct ChannelPlan {
+    /// The SCTP stream id both sides agree on out-of-band.
+    negotiated_id: u16,
+    messages: usize,
+    /// Payload sizes, cycled. Every payload is its index in decimal, space-padded up to the size;
+    /// a size shorter than the index is just the index.
+    sizes: &'static [usize],
+}
+
+impl ChannelPlan {
+    fn payload(&self, index: usize) -> String {
+        let size = self.sizes[index % self.sizes.len()];
+        format!("{index:<size$}")
+    }
+}
+
+/// What the stalled answerer's application saw.
+struct Outcome {
+    /// Per channel, the index of every message received, in arrival order.
+    received: Vec<Vec<usize>>,
+    /// The most data-channel payload bytes the answerer held for its application at once,
+    /// sampled every iteration.
+    peak_backlog_bytes: usize,
+}
+
+/// Opens the planned channels, has the offerer send everything as fast as SCTP accepts it, and
+/// has the answerer pump the network but refuse to call `poll_read` for `CONSUMER_STALL` after
+/// the channels open — then drain until everything has arrived.
+async fn run_stalled_consumer(
+    channels: &[ChannelPlan],
+    answerer_read_backlog_bytes: Option<usize>,
+) -> Result<Outcome> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
         .try_init()
         .ok();
 
-    let mut p = connect().await?;
+    let mut p = connect(answerer_read_backlog_bytes).await?;
 
-    // Reliable and ordered on both sides — the contract this test is about.
-    let init = RTCDataChannelInit {
-        ordered: true,
-        negotiated: Some(NEGOTIATED_ID),
-        ..Default::default()
-    };
-    // `NEGOTIATED_ID` is the SCTP stream id the two sides agree on out-of-band. The handle
-    // returned here is a separate, connection-local identifier — it is what addresses the
-    // channel through `data_channel()` and what events carry.
-    let offer_dc = p
-        .offer_pc
-        .create_data_channel("backpressure", Some(init.clone()))?
-        .id();
-    let answer_dc = p
-        .answer_pc
-        .create_data_channel("backpressure", Some(init))?
-        .id();
+    // Reliable and ordered on both sides — the contract this test is about. The handle
+    // returned is a separate, connection-local identifier from the negotiated stream id — it
+    // is what addresses the channel through `data_channel()` and what events carry.
+    let mut offer_dcs = vec![];
+    let mut answer_dcs = vec![];
+    for channel in channels {
+        let init = RTCDataChannelInit {
+            ordered: true,
+            negotiated: Some(channel.negotiated_id),
+            ..Default::default()
+        };
+        let label = format!("backpressure-{}", channel.negotiated_id);
+        offer_dcs.push(
+            p.offer_pc
+                .create_data_channel(&label, Some(init.clone()))?
+                .id(),
+        );
+        answer_dcs.push(p.answer_pc.create_data_channel(&label, Some(init))?.id());
+    }
 
     let offer = p.offer_pc.create_offer(None)?;
     p.offer_pc
@@ -147,8 +187,12 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
 
     let mut offer_connected = false;
     let mut dc_open = false;
-    let mut sent = 0usize;
-    let mut received: Vec<usize> = Vec::with_capacity(MESSAGE_COUNT);
+    let mut sent = vec![0usize; channels.len()];
+    let mut received: Vec<Vec<usize>> = channels
+        .iter()
+        .map(|channel| Vec::with_capacity(channel.messages))
+        .collect();
+    let mut peak_backlog_bytes = 0usize;
 
     // The stall: until this instant the answerer pumps the network but never calls
     // `poll_read`, so its pipeline backlog grows past the bound and the SCTP handler parks
@@ -161,6 +205,12 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
 
     let start = Instant::now();
     let deadline = Duration::from_secs(60);
+    let done = |received: &[Vec<usize>]| {
+        received
+            .iter()
+            .zip(channels)
+            .all(|(got, channel)| got.len() >= channel.messages)
+    };
 
     while start.elapsed() < deadline {
         while let Some(msg) = p.offer_pc.poll_write() {
@@ -193,26 +243,44 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
 
         // The answerer consumes only once the stall is over. Before that, messages pile up in
         // its pipeline — which is exactly what drives the backlog past the bound.
+        peak_backlog_bytes = peak_backlog_bytes.max(p.answer_pc.data_read_backlog_bytes());
         if answerer_consuming {
             while let Some(TaggedRTCMessage { message, .. }) = p.answer_pc.poll_read() {
                 if let RTCMessage::DataChannelMessage(id, msg) = message {
-                    assert_eq!(id, answer_dc);
+                    let channel = answer_dcs
+                        .iter()
+                        .position(|dc| *dc == id)
+                        .expect("message on a planned channel");
                     let text = String::from_utf8_lossy(&msg.data);
-                    let index: usize = text.parse().expect("message payload is its index");
-                    received.push(index);
+                    let index: usize = text
+                        .trim_end()
+                        .parse()
+                        .expect("message payload is its index");
+                    assert_eq!(
+                        msg.data.len(),
+                        channels[channel].payload(index).len(),
+                        "message {index} arrived at the wrong size"
+                    );
+                    received[channel].push(index);
                 }
             }
         }
 
-        // Push as fast as SCTP will take it. A refusal here is the send buffer, not a
-        // failure: retry on the next iteration.
-        if offer_connected
-            && dc_open
-            && sent < MESSAGE_COUNT
-            && let Some(mut dc) = p.offer_pc.data_channel(offer_dc)
-            && dc.send_text(Instant::now(), sent.to_string()).is_ok()
-        {
-            sent += 1;
+        // Push as fast as SCTP will take it, keeping at most 1 MiB unacknowledged per channel
+        // so the offerer's own queue is not what absorbs the workload. A refusal here is the
+        // send buffer, not a failure: retry on the next iteration.
+        if offer_connected && dc_open {
+            for (index, channel) in channels.iter().enumerate() {
+                if sent[index] < channel.messages
+                    && let Some(mut dc) = p.offer_pc.data_channel(offer_dcs[index])
+                    && dc.outstanding_bytes() < 1 << 20
+                    && dc
+                        .send_text(Instant::now(), channel.payload(sent[index]))
+                        .is_ok()
+                {
+                    sent[index] += 1;
+                }
+            }
         }
 
         // Let the consumer start only once it has been stalled long enough for the backlog to
@@ -225,7 +293,7 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
             answerer_consuming = true;
         }
 
-        if answerer_consuming && received.len() >= MESSAGE_COUNT {
+        if answerer_consuming && done(&received) {
             break;
         }
 
@@ -291,23 +359,34 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
         offer_connected && dc_open,
         "peers never established a channel"
     );
-    assert_eq!(
-        sent, MESSAGE_COUNT,
-        "offerer could not put all messages on the wire, so the receive side was never \
-         the bottleneck and this test proved nothing"
-    );
+    for (index, channel) in channels.iter().enumerate() {
+        assert_eq!(
+            sent[index], channel.messages,
+            "offerer could not put all messages on the wire, so the receive side was never \
+             the bottleneck and this test proved nothing"
+        );
+    }
 
-    // The property. A parked stream that is never resumed shows up here as a short tail:
-    // everything up to the bound arrives and the rest is stranded in the reassembly queue
-    // forever, because the peer has been throttled and no new chunk will re-trigger the drain.
-    let expected: Vec<usize> = (0..MESSAGE_COUNT).collect();
+    p.offer_pc.close()?;
+    p.answer_pc.close()?;
+    Ok(Outcome {
+        received,
+        peak_backlog_bytes,
+    })
+}
+
+/// The property. A parked stream that is never resumed shows up here as a short tail:
+/// everything up to the bound arrives and the rest is stranded in the reassembly queue
+/// forever, because the peer has been throttled and no new chunk will re-trigger the drain.
+fn assert_complete_and_ordered(received: &[usize], messages: usize) {
+    let expected: Vec<usize> = (0..messages).collect();
     assert_eq!(
         received.len(),
-        MESSAGE_COUNT,
+        messages,
         "receiver got {} of {} messages — a stream parked by back-pressure was never \
          resumed (delivery stops at index {})",
         received.len(),
-        MESSAGE_COUNT,
+        messages,
         received
             .iter()
             .enumerate()
@@ -316,8 +395,59 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
             .unwrap_or(received.len()),
     );
     assert_eq!(received, expected, "ordered channel delivered out of order");
+}
 
-    p.offer_pc.close()?;
-    p.answer_pc.close()?;
+#[tokio::test]
+async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<()> {
+    let channel = ChannelPlan {
+        negotiated_id: NEGOTIATED_ID,
+        messages: MESSAGE_COUNT,
+        sizes: &[0],
+    };
+    let outcome = run_stalled_consumer(std::slice::from_ref(&channel), None).await?;
+    assert_complete_and_ordered(&outcome.received[0], MESSAGE_COUNT);
+    Ok(())
+}
+
+/// The byte bound, over a real connection: large messages would let 256 of them hold megabytes,
+/// so a stalled consumer must instead see the backlog stop near the configured byte budget —
+/// overshooting by at most one message — with two channels of different sizes sharing it, and
+/// then everything delivered once it resumes.
+#[tokio::test]
+async fn test_slow_consumer_backlog_is_bounded_by_bytes_with_mixed_sizes() -> Result<()> {
+    const BUDGET: usize = 64 * 1024;
+    const LARGEST: usize = 60_000;
+    let channels = [
+        ChannelPlan {
+            negotiated_id: NEGOTIATED_ID,
+            messages: 120,
+            sizes: &[1_000, 16_000, LARGEST],
+        },
+        ChannelPlan {
+            negotiated_id: NEGOTIATED_ID + 2,
+            messages: 120,
+            sizes: &[200, 8_000],
+        },
+    ];
+
+    let outcome = run_stalled_consumer(&channels, Some(BUDGET)).await?;
+
+    for (received, channel) in outcome.received.iter().zip(&channels) {
+        assert_complete_and_ordered(received, channel.messages);
+    }
+    assert!(
+        outcome.peak_backlog_bytes <= BUDGET + LARGEST,
+        "the stalled backlog held {} bytes, over the {BUDGET}-byte budget plus one \
+         {LARGEST}-byte message",
+        outcome.peak_backlog_bytes
+    );
+    // Without this the bound could pass by never being reached — a consumer that was never
+    // really stalled would also stay under it.
+    assert!(
+        outcome.peak_backlog_bytes >= BUDGET,
+        "the backlog peaked at {} bytes and never reached the {BUDGET}-byte budget, so the \
+         bound was never exercised",
+        outcome.peak_backlog_bytes
+    );
     Ok(())
 }

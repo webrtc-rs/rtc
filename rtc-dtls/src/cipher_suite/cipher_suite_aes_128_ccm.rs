@@ -2,6 +2,7 @@ use super::*;
 use crate::client_certificate_type::ClientCertificateType;
 use crate::crypto::crypto_ccm::{CryptoCcm, CryptoCcmTagLen};
 use crate::prf::*;
+use bytes::BytesMut;
 
 /// The shared AES-128-CCM implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes128Ccm {
@@ -104,16 +105,30 @@ impl CipherSuite for CipherSuiteAes128Ccm {
     }
 
     fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let ccm = self.ccm.as_mut().ok_or(Error::Other(
-            "CipherSuite has not been initialized, unable to encrypt".to_owned(),
-        ))?;
+        let ccm = self.ccm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to encrypt".to_owned())
+        })?;
         ccm.encrypt(pkt_rlh, raw)
     }
 
     fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>> {
-        let ccm = self.ccm.as_mut().ok_or(Error::Other(
-            "CipherSuite has not been initialized, unable to decrypt".to_owned(),
-        ))?;
+        let ccm = self.ccm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to decrypt".to_owned())
+        })?;
         ccm.decrypt(input)
+    }
+
+    fn encrypt_in_place(&mut self, pkt_rlh: &RecordLayerHeader, raw: &mut BytesMut) -> Result<()> {
+        let ccm = self.ccm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to encrypt".to_owned())
+        })?;
+        ccm.encrypt_in_place(pkt_rlh, raw)
+    }
+
+    fn decrypt_in_place(&mut self, input: &mut BytesMut) -> Result<()> {
+        let ccm = self.ccm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to decrypt".to_owned())
+        })?;
+        ccm.decrypt_in_place(input)
     }
 }

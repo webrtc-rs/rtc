@@ -655,3 +655,102 @@ fn test_handshake_cache_session_hash() -> Result<()> {
 
     Ok(())
 }
+
+/// A marshalled handshake message of `typ` (Finished carrying `body`, or ServerHelloDone).
+fn cached_message(typ: HandshakeType, message_sequence: u16, body: &[u8]) -> Vec<u8> {
+    let message = match typ {
+        HandshakeType::Finished => {
+            HandshakeMessage::Finished(handshake_message_finished::HandshakeMessageFinished {
+                verify_data: body.to_vec(),
+            })
+        }
+        _ => HandshakeMessage::ServerHelloDone(
+            handshake_message_server_hello_done::HandshakeMessageServerHelloDone,
+        ),
+    };
+    let mut handshake = Handshake::new(message);
+    handshake.handshake_header.message_sequence = message_sequence;
+    let mut raw = vec![];
+    handshake.marshal(&mut raw).unwrap();
+    raw
+}
+
+fn rule(typ: HandshakeType, epoch: u16, is_client: bool, optional: bool) -> HandshakeCachePullRule {
+    HandshakeCachePullRule {
+        typ,
+        epoch,
+        is_client,
+        optional,
+    }
+}
+
+#[test]
+fn test_handshake_cache_full_pull_map() -> Result<()> {
+    let mut h = HandshakeCache::new();
+    // Two client Finished at epoch 0 (the later one wins, as a ClientHello with a cookie
+    // does), one at epoch 1, and a server message of the same type.
+    let early = cached_message(HandshakeType::Finished, 0, &[0xa0]);
+    let late = cached_message(HandshakeType::Finished, 2, &[0xa2]);
+    let epoch1 = cached_message(HandshakeType::Finished, 3, &[0xa3]);
+    let server = cached_message(HandshakeType::Finished, 1, &[0xb1]);
+    let done = cached_message(HandshakeType::ServerHelloDone, 2, &[]);
+    h.push(early.clone(), 0, 0, HandshakeType::Finished, true);
+    h.push(late.clone(), 0, 2, HandshakeType::Finished, true);
+    h.push(epoch1.clone(), 1, 3, HandshakeType::Finished, true);
+    h.push(server.clone(), 0, 1, HandshakeType::Finished, false);
+    h.push(done.clone(), 0, 2, HandshakeType::ServerHelloDone, false);
+
+    // Latest message for the rule's type, epoch and sender.
+    assert_eq!(
+        h.pull_and_merge(&[rule(HandshakeType::Finished, 0, true, false)]),
+        late
+    );
+    assert_eq!(
+        h.pull_and_merge(&[rule(HandshakeType::Finished, 1, true, false)]),
+        epoch1
+    );
+    // Rule order, not cache order, sets the transcript order; unmatched rules are skipped.
+    assert_eq!(
+        h.pull_and_merge(&[
+            rule(HandshakeType::ServerHelloDone, 0, false, false),
+            rule(HandshakeType::Certificate, 0, false, true),
+            rule(HandshakeType::Finished, 0, false, false),
+        ]),
+        [done.clone(), server.clone()].concat()
+    );
+
+    let (seq, messages) = h.full_pull_map(2, &[rule(HandshakeType::Finished, 0, true, false)])?;
+    assert_eq!(seq, 3);
+    assert_eq!(
+        messages.get(&HandshakeType::Finished),
+        Some(&HandshakeMessage::Finished(
+            handshake_message_finished::HandshakeMessageFinished {
+                verify_data: vec![0xa2]
+            }
+        ))
+    );
+
+    // Optional messages may be missing without breaking the sequence check.
+    let (seq, messages) = h.full_pull_map(
+        1,
+        &[
+            rule(HandshakeType::Certificate, 0, false, true),
+            rule(HandshakeType::Finished, 0, false, false),
+            rule(HandshakeType::ServerHelloDone, 0, false, false),
+        ],
+    )?;
+    assert_eq!(seq, 3);
+    assert_eq!(messages.len(), 2);
+
+    // A missing mandatory message, or a gap in the sequence, fails.
+    assert!(
+        h.full_pull_map(0, &[rule(HandshakeType::Certificate, 0, false, false)])
+            .is_err()
+    );
+    assert!(
+        h.full_pull_map(0, &[rule(HandshakeType::Finished, 0, true, false)])
+            .is_err()
+    );
+
+    Ok(())
+}

@@ -100,25 +100,35 @@ impl RecordLayer {
 // two DTLS messages into the same datagram: in the same record or in
 // separate records.
 // https://tools.ietf.org/html/rfc6347#section-4.2.3
-pub(crate) fn unpack_datagram(buf: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let mut out = vec![];
-
+//
+// The framing of the whole datagram is checked before any record is returned, so a datagram
+// with a malformed record is rejected as a whole.
+pub(crate) fn unpack_datagram(buf: &[u8]) -> Result<impl Iterator<Item = &[u8]>> {
     let mut offset = 0;
     while buf.len() != offset {
-        if buf.len() - offset <= RECORD_LAYER_HEADER_SIZE {
-            return Err(Error::ErrInvalidPacketLength);
-        }
-
-        let pkt_len = RECORD_LAYER_HEADER_SIZE
-            + (((buf[offset + RECORD_LAYER_HEADER_SIZE - 2] as usize) << 8)
-                | buf[offset + RECORD_LAYER_HEADER_SIZE - 1] as usize);
-        if offset + pkt_len > buf.len() {
-            return Err(Error::ErrInvalidPacketLength);
-        }
-
-        out.push(buf[offset..offset + pkt_len].to_vec());
-        offset += pkt_len
+        offset += record_len(&buf[offset..])?;
     }
 
-    Ok(out)
+    let mut rest = buf;
+    Ok(std::iter::from_fn(move || {
+        let (record, tail) = rest.split_at(record_len(rest).ok()?);
+        rest = tail;
+        Some(record)
+    }))
+}
+
+// The length, header included, of the record at the start of `buf`.
+fn record_len(buf: &[u8]) -> Result<usize> {
+    if buf.len() <= RECORD_LAYER_HEADER_SIZE {
+        return Err(Error::ErrInvalidPacketLength);
+    }
+
+    let pkt_len = RECORD_LAYER_HEADER_SIZE
+        + (((buf[RECORD_LAYER_HEADER_SIZE - 2] as usize) << 8)
+            | buf[RECORD_LAYER_HEADER_SIZE - 1] as usize);
+    if pkt_len > buf.len() {
+        return Err(Error::ErrInvalidPacketLength);
+    }
+
+    Ok(pkt_len)
 }

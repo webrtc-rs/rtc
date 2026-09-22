@@ -15,7 +15,8 @@ use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
 use crate::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpRtxParameters,
+    RtpCodecKind,
 };
 use crate::rtp_transceiver::{RtpStreamId, SSRC};
 
@@ -713,12 +714,12 @@ impl MediaStreamTrack {
         &mut self,
         codec: RTCRtpCodec,
         ssrc: SSRC,
-        rid: &RtpStreamId,
+        rid: &str,
     ) -> bool {
         if let Some(coding) = self
             .codings
             .iter_mut()
-            .find(|coding| &coding.rtp_coding_parameters.rid == rid)
+            .find(|coding| coding.rtp_coding_parameters.rid == rid)
         {
             coding.codec = codec;
             coding.rtp_coding_parameters.ssrc = Some(ssrc);
@@ -735,6 +736,30 @@ impl MediaStreamTrack {
                 ..Default::default()
             });
             true
+        }
+    }
+
+    /// Records the repair-stream SSRC of the layer named by `rid`.
+    ///
+    /// A rid simulcast offer names rids rather than SSRCs, so it carries no `a=ssrc-group:FID`
+    /// and the pairing is only ever learned from a `repaired-rtp-stream-id` on the wire
+    /// (RFC 8852 section 4). This is the track's copy of what the receiver's coding parameters
+    /// also record: the receiver's copy is what the RTX resolution reads, while `stop` unbinds
+    /// from the track's, so a pairing written to only one of them leaves a repair flow bound at
+    /// teardown that is never unbound.
+    ///
+    /// Returns whether the layer was found. A layer this m= section never negotiated is not
+    /// created here — an rrid naming one names nothing.
+    pub(crate) fn set_rtx_ssrc_by_rid(&mut self, rid: &str, rtx_ssrc: SSRC) -> bool {
+        if let Some(coding) = self
+            .codings
+            .iter_mut()
+            .find(|coding| coding.rtp_coding_parameters.rid == rid)
+        {
+            coding.rtp_coding_parameters.rtx = Some(RTCRtpRtxParameters { ssrc: rtx_ssrc });
+            true
+        } else {
+            false
         }
     }
 

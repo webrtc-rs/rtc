@@ -6,7 +6,7 @@ use crate::checks::*;
 use crate::message::*;
 use shared::error::*;
 
-use crc::{CRC_32_ISO_HDLC, Crc, Table};
+use crc_fast::CrcAlgorithm;
 
 /// FINGERPRINT attribute.
 ///
@@ -32,16 +32,15 @@ pub const FINGERPRINT_SIZE: usize = 4; // 32 bit
 // up to (but excluding) the FINGERPRINT attribute itself, XOR'ed with
 // the 32-bit value 0x5354554e (the XOR helps in cases where an
 // application packet is also using CRC-32 in it).
-/// CRC-32 (ISO-HDLC) engine, built once at compile time.
-///
-/// `Crc::new` computes the lookup table; doing that per call made the table
-/// build cost more than the checksum itself for typical ~100-byte STUN
-/// messages (one fingerprint per ICE connectivity check / consent probe).
-static CRC_32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
-
 /// Computes the `FINGERPRINT` value over `b`: CRC-32 XORed with [`FINGERPRINT_XOR_VALUE`].
+///
+/// The CRC-32 (ISO-HDLC, the IEEE polynomial RFC 5389 names) comes from `crc-fast`, which folds
+/// with carry-less multiplication on x86/x86_64 (PCLMULQDQ) and aarch64 (PMULL), selected at
+/// runtime, and falls back to slice-by-16 tables elsewhere. At ~100 bytes — one fingerprint per
+/// connectivity check or consent probe — that measured ~3.5x faster than the slice-by-16 `crc`
+/// table it replaced on Apple M1; see `rtc-stun/benches/README.md`.
 pub fn fingerprint_value(b: &[u8]) -> u32 {
-    let checksum = CRC_32.checksum(b);
+    let checksum = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, b) as u32;
     checksum ^ FINGERPRINT_XOR_VALUE // XOR
 }
 

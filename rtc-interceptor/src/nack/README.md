@@ -56,6 +56,8 @@ let chain = Registry::new()
 | Stream filter                 | ✅    | ✅   | Via `stream_supports_nack()`                      |
 | Packet factory (copy/no-copy) | ✅    | ➖   | Always clone packets                              |
 | RFC4588 RTX support           | ✅    | ✅   | Retransmit on separate SSRC with modified payload |
+| History byte limit            | ➖    | ✅   | `with_max_bytes`; unbounded by default            |
+| History age limit             | ➖    | ✅   | `with_max_age`; 3 s by default, frees idle history |
 | Custom logger                 | ✅    | ➖   | Skipped                                           |
 
 ## Architecture Differences
@@ -67,7 +69,7 @@ let chain = Registry::new()
 | Logging         | `logging.LeveledLogger`                      | Not implemented                     |
 | Concurrency     | `sync.Mutex`, goroutines                     | Sans-I/O (no locks needed)          |
 | Timer/Ticker    | `time.Ticker` in goroutine                   | `handle_timeout()`/`poll_timeout()` |
-| RTP buffer      | `internal/rtpbuffer` with `RetainablePacket` | Simple `Vec<Option<rtp::Packet>>`   |
+| RTP buffer      | `internal/rtpbuffer` with `RetainablePacket` | `Vec` of packets with send times    |
 | Packet factory  | `PacketFactory` interface                    | Always clone                        |
 
 ## Test Comparison

@@ -1,3 +1,20 @@
+### RFC 8888 decoding in bulk (2026-09-21)
+
+`CCFB/*` marshals and unmarshals MTU-sized congestion-control feedback. Unmarshalling now decodes
+the metric words straight from a contiguous buffer; `/split` feeds a two-chunk `Buf`, whose split
+block takes the one-word-at-a-time fallback. Marshalling did not change.
+Measured with `python3 scripts/bench.py compare refs/bench/pre-simd --overlay-benches --rounds 2`
+on an Apple M1 Max, macOS 27.0, `rustc 1.99.0-nightly` (2026-08-04); before is the tree just ahead of
+the change. [SIMD.md](../../SIMD.md) has the full record.
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `CCFB/Unmarshal/1x590` | 684 ns | 157 ns |
+| `CCFB/Unmarshal/4x144` | 781 ns | 236 ns |
+| `CCFB/Unmarshal/4x144/split` | 1.64 µs | 602 ns |
+| `CCFB/Unmarshal/1x590/split` | 1.58 µs | 1.58 µs |
+| `CCFB/Marshal/*` | unchanged | |
+
 ### Benchmark Results
 
 MacBook Air M3 24 GB MacOS 26.2

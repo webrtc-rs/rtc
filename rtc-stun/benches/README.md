@@ -1,3 +1,22 @@
+### FINGERPRINT CRC: `crc-fast` (2026-09-21)
+
+`fingerprint_value` moved from a slice-by-16 `crc` table to `crc-fast`, which folds with carry-less
+multiplication (PCLMULQDQ on x86, PMULL on aarch64, detected at runtime) and keeps slice-by-16 as
+its fallback. `Fingerprint/value/<size>` times the CRC alone across STUN message sizes.
+Measured with `python3 scripts/bench.py compare refs/bench/pre-simd --overlay-benches --rounds 2`
+on an Apple M1 Max, macOS 27.0, `rustc 1.99.0-nightly` (2026-08-04); before is the tree just ahead of
+the change. [SIMD.md](../../SIMD.md) has the full record.
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `Fingerprint/value/20B` | 7.98 ns | 3.91 ns |
+| `Fingerprint/value/100B` | 26.2 ns | 6.96 ns |
+| `Fingerprint/value/200B` | 57.7 ns | 6.67 ns |
+| `Fingerprint/value/548B` | 133 ns | 16.6 ns |
+| `Fingerprint/value/1200B` | 276 ns | 55.0 ns |
+| `BenchmarkFingerprint_AddTo` | 56.9 ns | 40.2 ns |
+| `BenchmarkFingerprint_Check` | 50.4 ns | 28.9 ns |
+
 ### Benchmark Results
 
 MacBook Air M3 24 GB MacOS 26.2

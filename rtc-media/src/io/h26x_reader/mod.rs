@@ -14,12 +14,21 @@ pub mod sample_reader;
 pub use sample_reader::{H26xSample, H26xSampleReader};
 
 use bytes::{BufMut, BytesMut};
+use memchr::memmem;
 use shared::error::{Error, Result};
 use std::fmt;
 use std::io::Read;
+use std::sync::LazyLock;
 
 const NAL_PREFIX_3BYTES: [u8; 3] = [0, 0, 1];
 const NAL_PREFIX_4BYTES: [u8; 4] = [0, 0, 0, 1];
+
+/// Searches for the three-byte start code `00 00 01`, with SIMD where the target has it
+/// (SSE2/AVX2, NEON, wasm `simd128`) and a scalar fallback elsewhere. Built once rather than
+/// per search: [`memmem::find`] builds a new finder on every call and uses a scalar search
+/// below 64 bytes.
+static START_CODE_FINDER: LazyLock<memmem::Finder<'static>> =
+    LazyLock::new(|| memmem::Finder::new(&NAL_PREFIX_3BYTES));
 
 /// Wrapper class around reading buffer
 struct ReadBuffer {
@@ -40,6 +49,12 @@ impl ReadBuffer {
     #[inline]
     fn in_buffer(&self) -> usize {
         self.filled_end - self.read_end
+    }
+
+    /// The bytes read from the reader but not yet consumed.
+    #[inline]
+    fn unread(&self) -> &[u8] {
+        &self.buffer[self.read_end..self.filled_end]
     }
 
     fn consume(&mut self, consume: usize) -> &[u8] {
@@ -435,18 +450,6 @@ impl<R: Read> H26xReader<R> {
         }
     }
 
-    fn read1(&mut self) -> Result<Option<u8>> {
-        if self.buffer.in_buffer() == 0 {
-            self.buffer.fill_buffer(&mut self.reader)?;
-
-            if self.buffer.in_buffer() == 0 {
-                return Ok(None);
-            }
-        }
-
-        Ok(Some(self.buffer.consume(1)[0]))
-    }
-
     fn bit_stream_starts_with_prefix(&mut self) -> Result<usize> {
         let (prefix_buffer, n) = self.read4()?;
 
@@ -492,9 +495,23 @@ impl<R: Read> H26xReader<R> {
         }
     }
 
-    /// next_nal reads from stream and returns then next NAL,
-    /// and an error if there is incomplete frame data.
-    /// Returns all nil values when no more NALs are available.
+    /// next_nal reads from stream and returns then next NAL.
+    ///
+    /// A NAL unit ends at the next `01` preceded by two or more zeros, counting zeros across
+    /// reads and buffer refills. Three of those zeros are dropped as the start code (two if
+    /// there are only two); any further zeros stay at the end of the unit. A start code that
+    /// would leave the unit empty is kept as data instead. SEI units are skipped, except one
+    /// that ends the stream. At the end of the stream the remaining bytes are returned as the
+    /// last unit.
+    ///
+    /// Start codes are located with a vectorized substring search over the buffered bytes, and
+    /// the bytes between them are copied into the unit in bulk rather than byte by byte.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ErrIoEOF`] once no units remain. [`Error::ErrDataIsNotH264Stream`] or
+    /// [`Error::ErrDataIsNotH265Stream`] if the stream does not begin with a start code, and any
+    /// I/O error from the reader.
     pub fn next_nal(&mut self) -> Result<H26xNAL> {
         if !self.nal_prefix_parsed {
             self.bit_stream_starts_with_prefix()?;
@@ -502,39 +519,48 @@ impl<R: Read> H26xReader<R> {
         }
 
         loop {
-            let Some(read_byte) = self.read1()? else {
-                break;
-            };
+            if self.buffer.in_buffer() == 0 {
+                self.buffer.fill_buffer(&mut self.reader)?;
 
-            let nal_found = self.process_byte(read_byte);
-            if nal_found {
-                if self.is_hevc {
-                    // H.265 NAL unit type is in the first byte, bits 1-6
-                    if !self.nal_buffer.is_empty() {
-                        let nal_unit_type = H265NalUnitType::from((self.nal_buffer[0] & 0x7E) >> 1);
-                        // Skip SEI NAL units
-                        if nal_unit_type == H265NalUnitType::PrefixSEI
-                            || nal_unit_type == H265NalUnitType::SuffixSEI
-                        {
-                            self.nal_buffer.clear();
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    // H.264 NAL unit type is in the first byte, bits 3-7
-                    let nal_unit_type = H264NalUnitType::from(self.nal_buffer[0] & 0x1F);
-                    if nal_unit_type == H264NalUnitType::SEI {
-                        self.nal_buffer.clear();
-                        continue;
-                    } else {
-                        break;
-                    }
+                if self.buffer.in_buffer() == 0 {
+                    break;
                 }
             }
 
-            self.nal_buffer.put_u8(read_byte);
+            let Some(zeros) = self.append_until_start_code() else {
+                continue;
+            };
+
+            let count_of_consecutive_zero_bytes_in_prefix = if zeros > 2 { 3 } else { 2 };
+            // If the reader yields more data after a unit was returned at end of stream, zeros
+            // that ended that unit are still counted but no longer buffered. Treat the
+            // shortfall as an empty unit rather than underflowing.
+            let nal_unit_length = self
+                .nal_buffer
+                .len()
+                .saturating_sub(count_of_consecutive_zero_bytes_in_prefix);
+            if nal_unit_length == 0 {
+                // Nothing before the start code: its `01` is kept as data.
+                self.nal_buffer.put_u8(1);
+                continue;
+            }
+            self.nal_buffer.truncate(nal_unit_length);
+
+            let is_sei = if self.is_hevc {
+                // H.265 NAL unit type is in the first byte, bits 1-6
+                let nal_unit_type = H265NalUnitType::from((self.nal_buffer[0] & 0x7E) >> 1);
+                nal_unit_type == H265NalUnitType::PrefixSEI
+                    || nal_unit_type == H265NalUnitType::SuffixSEI
+            } else {
+                // H.264 NAL unit type is in the first byte, bits 3-7
+                H264NalUnitType::from(self.nal_buffer[0] & 0x1F) == H264NalUnitType::SEI
+            };
+            if is_sei {
+                // Skip SEI NAL units
+                self.nal_buffer.clear();
+                continue;
+            }
+            break;
         }
 
         if self.nal_buffer.is_empty() {
@@ -552,35 +578,42 @@ impl<R: Read> H26xReader<R> {
         }
     }
 
-    fn process_byte(&mut self, read_byte: u8) -> bool {
-        let mut nal_found = false;
+    /// Appends buffered bytes to `nal_buffer` up to the next `01` preceded by two or more
+    /// zeros, consumes that `01` without appending it, and returns the number of zeros before
+    /// it. Returns `None` once every buffered byte has been appended without finding one.
+    ///
+    /// Zeros carried over in `count_of_consecutive_zero_bytes` count towards a start code whose
+    /// `01` is one of the first two buffered bytes; any later one is a `00 00 01` in the
+    /// buffer. On return the count is the length of the zero run ending the appended bytes.
+    fn append_until_start_code(&mut self) -> Option<usize> {
+        let data = self.buffer.unread();
+        let carried = self.count_of_consecutive_zero_bytes;
 
-        match read_byte {
-            0 => {
-                self.count_of_consecutive_zero_bytes += 1;
-            }
-            1 => {
-                if self.count_of_consecutive_zero_bytes >= 2 {
-                    let count_of_consecutive_zero_bytes_in_prefix =
-                        if self.count_of_consecutive_zero_bytes > 2 {
-                            3
-                        } else {
-                            2
-                        };
-                    let nal_unit_length =
-                        self.nal_buffer.len() - count_of_consecutive_zero_bytes_in_prefix;
-                    if nal_unit_length > 0 {
-                        let _ = self.nal_buffer.split_off(nal_unit_length);
-                        nal_found = true;
-                    }
-                }
-                self.count_of_consecutive_zero_bytes = 0;
-            }
-            _ => {
-                self.count_of_consecutive_zero_bytes = 0;
-            }
+        let one = if carried >= 2 && data.first() == Some(&1) {
+            Some(0)
+        } else if carried >= 1 && data.starts_with(&[0, 1]) {
+            Some(1)
+        } else {
+            START_CODE_FINDER.find(data).map(|i| i + 2)
+        };
+
+        let span = &data[..one.unwrap_or(data.len())];
+        let trailing_zeros = span.iter().rev().take_while(|&&b| b == 0).count();
+        let zeros = if trailing_zeros == span.len() {
+            carried + trailing_zeros
+        } else {
+            trailing_zeros
+        };
+        self.nal_buffer.extend_from_slice(span);
+
+        let consumed = span.len() + usize::from(one.is_some());
+        self.buffer.consume(consumed);
+        if one.is_some() {
+            self.count_of_consecutive_zero_bytes = 0;
+            Some(zeros)
+        } else {
+            self.count_of_consecutive_zero_bytes = zeros;
+            None
         }
-
-        nal_found
     }
 }

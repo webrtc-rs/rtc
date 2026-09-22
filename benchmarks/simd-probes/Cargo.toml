@@ -1,0 +1,23 @@
+[package]
+name = "rtc-simd-probes"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autobins = false
+
+# Keep exploratory code independent of the production workspace and benchmark suite.
+[workspace]
+
+[dependencies]
+memchr = "=2.8.3"
+
+[profile.test]
+opt-level = 3
+
+[[bin]]
+name = "annexb_scan"
+path = "annexb_scan.rs"
+
+[[bin]]
+name = "receiver_loss"
+path = "receiver_loss.rs"

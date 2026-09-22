@@ -8,20 +8,47 @@ pub(crate) enum Comparison {
     After,
 }
 
-pub(crate) struct Iterator<'a, T> {
-    data: &'a [Option<T>],
+/// Storage that can be looked up by RTP sequence number.
+///
+/// A full-size slice indexes the whole `u16` space directly; the sample builder's
+/// packet ring holds only its reorder window and checks each entry's sequence number.
+pub(crate) trait SequenceLookup {
+    type Item;
+
+    /// Returns the entry stored for `seq`, if any.
+    fn lookup(&self, seq: u16) -> Option<&Self::Item>;
+}
+
+impl<T> SequenceLookup for [Option<T>] {
+    type Item = T;
+
+    fn lookup(&self, seq: u16) -> Option<&T> {
+        self[seq as usize].as_ref()
+    }
+}
+
+impl<T> SequenceLookup for Vec<Option<T>> {
+    type Item = T;
+
+    fn lookup(&self, seq: u16) -> Option<&T> {
+        self.as_slice().lookup(seq)
+    }
+}
+
+pub(crate) struct Iterator<'a, L: ?Sized> {
+    data: &'a L,
     sample: SampleSequenceLocation,
     i: u16,
 }
 
-impl<'a, T> std::iter::Iterator for Iterator<'a, T> {
-    type Item = Option<&'a T>;
+impl<'a, L: SequenceLookup + ?Sized> std::iter::Iterator for Iterator<'a, L> {
+    type Item = Option<&'a L::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.sample.compare(self.i) == Comparison::Inside {
-            let old_i = self.i as usize;
+            let old_i = self.i;
             self.i = self.i.wrapping_add(1);
-            return Some(self.data[old_i].as_ref());
+            return Some(self.data.lookup(old_i));
         }
 
         None
@@ -71,7 +98,7 @@ impl SampleSequenceLocation {
         Comparison::After
     }
 
-    pub(crate) fn range<'a, T>(&self, data: &'a [Option<T>]) -> Iterator<'a, T> {
+    pub(crate) fn range<'a, L: SequenceLookup + ?Sized>(&self, data: &'a L) -> Iterator<'a, L> {
         Iterator {
             data,
             sample: *self,

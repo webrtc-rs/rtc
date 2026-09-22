@@ -225,6 +225,7 @@ pub(crate) mod chain;
 pub(crate) mod noop;
 pub(crate) mod registry;
 
+pub(crate) mod bitmap;
 pub(crate) mod cc;
 pub(crate) mod flexfec;
 pub(crate) mod gcc;

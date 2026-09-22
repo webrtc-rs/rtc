@@ -149,7 +149,10 @@ impl RTCPeerConnection {
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);
         let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
-        let sctp_handler_context = SctpHandlerContext::new(now, sctp_transport);
+        let mut sctp_handler_context = SctpHandlerContext::new(now, sctp_transport);
+        if let Some(bytes) = setting_engine.sctp_read_backlog_bytes {
+            sctp_handler_context = sctp_handler_context.with_read_backlog_bytes(bytes);
+        }
 
         // Listed in full rather than filled from `Default`: the ICE and DTLS handler contexts
         // own a crypto provider, and deriving `Default` for them would mean resolving one
@@ -165,6 +168,9 @@ impl RTCPeerConnection {
             endpoint_handler_context: EndpointHandlerContext::default(),
             media_read_outs: VecDeque::new(),
             data_read_outs: VecDeque::new(),
+            data_read_bytes: 0,
+            read_belt: VecDeque::new(),
+            write_belt: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
@@ -243,7 +249,7 @@ impl RTCPeerConnection {
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group: None,
-            sctp_max_message_size: self.setting_engine.sctp_max_message_size.as_usize(),
+            sctp_max_message_size: self.sctp_transport().local_max_message_size() as usize,
             ignore_rid_pause_for_recv: false,
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine
@@ -388,7 +394,7 @@ impl RTCPeerConnection {
             connection_role,
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group,
-            sctp_max_message_size: self.setting_engine.sctp_max_message_size.as_usize(),
+            sctp_max_message_size: self.sctp_transport().local_max_message_size() as usize,
             ignore_rid_pause_for_recv,
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine

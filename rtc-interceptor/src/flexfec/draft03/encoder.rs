@@ -2,6 +2,7 @@
 
 use crate::flexfec::bit_array::BitArray;
 use crate::flexfec::coverage::ProtectionCoverage;
+use crate::flexfec::xor::xor_into;
 use shared::marshal::{Marshal, MarshalSize};
 
 /// Bytes of RTP header a repair packet recovers from, and the offset its payload starts at.
@@ -53,6 +54,83 @@ pub struct FlexFec03Encoder {
     ssrc: u32,
     next_sequence_number: u16,
     coverage: Option<ProtectionCoverage>,
+    /// The current block's media packets, serialised once per [`encode`](Self::encode) call and
+    /// kept between calls so the next block reuses the storage.
+    serialized: SerializedPackets,
+}
+
+/// Where one media packet's serialised bytes sit in [`SerializedPackets::bytes`].
+#[derive(Debug, Clone, Copy)]
+struct Span {
+    start: usize,
+    /// How many bytes `marshal_to` wrote.
+    written: usize,
+    /// `marshal_size`, which the length-recovery field carries.
+    size: usize,
+}
+
+/// A block's media packets serialised back to back into one reusable buffer.
+///
+/// # Why only the written prefix is kept
+///
+/// The recovery arithmetic is defined over each packet serialised into a freshly zeroed buffer of
+/// `marshal_size` bytes. `marshal_to` writes a prefix of that buffer and reports its length; the
+/// two differ only when a header's `extensions_padding` claims more than the header writes, and
+/// then the rest stays zero. XOR with zero is the identity, so the prefix plus `marshal_size` is
+/// all the XOR needs — which is what lets this buffer be reused without being zeroed each block.
+///
+/// The buffer keeps the high-water mark of the blocks it has served: a block's serialised media,
+/// at most [`MAX_MEDIA_PACKETS`](crate::MAX_MEDIA_PACKETS) packets.
+#[derive(Default)]
+struct SerializedPackets {
+    bytes: Vec<u8>,
+    /// One entry per media packet, `None` where serialisation failed.
+    spans: Vec<Option<Span>>,
+}
+
+/// Sizes only: the bytes are scratch, and an encoder's `Debug` output should not dump a block
+/// of media.
+impl std::fmt::Debug for SerializedPackets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SerializedPackets")
+            .field("packets", &self.spans.len())
+            .field("capacity", &self.bytes.len())
+            .finish()
+    }
+}
+
+impl SerializedPackets {
+    /// Serialise every packet of `packets`, replacing whatever the previous block left.
+    fn fill(&mut self, packets: &[rtp::Packet]) {
+        self.spans.clear();
+        let mut start = 0;
+        for packet in packets {
+            let size = packet.marshal_size();
+            let end = start + size;
+            if self.bytes.len() < end {
+                self.bytes.resize(end, 0);
+            }
+            let span = packet
+                .marshal_to(&mut self.bytes[start..end])
+                .ok()
+                .map(|written| Span {
+                    start,
+                    written: written.min(size),
+                    size,
+                });
+            self.spans.push(span);
+            start = end;
+        }
+    }
+
+    /// The bytes `marshal_to` wrote for packet `index`, and its `marshal_size`.
+    fn get(&self, index: usize) -> Option<(&[u8], usize)> {
+        let span = self.spans.get(index).copied().flatten()?;
+        Some((
+            &self.bytes[span.start..span.start + span.written],
+            span.size,
+        ))
+    }
 }
 
 impl FlexFec03Encoder {
@@ -66,6 +144,7 @@ impl FlexFec03Encoder {
             ssrc,
             next_sequence_number: 0,
             coverage: None,
+            serialized: SerializedPackets::default(),
         }
     }
 
@@ -120,28 +199,41 @@ impl FlexFec03Encoder {
 
         let num_fec_packets = coverage.num_fec_packets();
         let base_sequence_number = media_packets[0].header.sequence_number;
+
+        // Each media packet is serialised once here, however many repair packets cover it.
+        let mut serialized = std::mem::take(&mut self.serialized);
+        serialized.fill(media_packets);
+
         let mut repair_packets = Vec::with_capacity(num_fec_packets as usize);
         for fec_index in 0..num_fec_packets {
-            if let Some(packet) = self.encode_one(fec_index, base_sequence_number, media_packets) {
+            if let Some(packet) =
+                self.encode_one(fec_index, base_sequence_number, media_packets, &serialized)
+            {
                 repair_packets.push(packet);
             }
         }
+
+        self.serialized = serialized;
         repair_packets
     }
 
+    /// Build repair packet `fec_index` from the block serialised in `serialized`.
+    ///
+    /// Returns nothing, without spending a sequence number, when the repair packet would protect
+    /// nothing or a packet it protects could not be serialised.
     fn encode_one(
         &mut self,
         fec_index: u32,
         base_sequence_number: u16,
         media_packets: &[rtp::Packet],
+        serialized: &SerializedPackets,
     ) -> Option<rtp::Packet> {
         let coverage = self.coverage.as_ref()?;
-        let covered = coverage.covered_by(fec_index);
-        if covered.is_empty() {
-            // A repair packet protecting nothing carries no information.
-            return None;
-        }
         let mask = *coverage.mask(fec_index)?;
+        // The same indices `ProtectionCoverage::covered_by` lists, without collecting them.
+        let covered = || (0..media_packets.len()).filter(move |&index| mask.bit(index as u32));
+        // A repair packet protecting nothing carries no information.
+        let first_covered = covered().next()?;
 
         let mask2 = mask.mask2();
         let mask3 = mask.mask3_draft03();
@@ -154,23 +246,21 @@ impl FlexFec03Encoder {
             + if mask3 != 0 { MASK3_SIZE } else { 0 };
 
         // The repair payload must be long enough for the largest packet it protects: recovering a
-        // lost packet means XORing this back out, so anything shorter would truncate it.
-        let max_payload = covered
-            .iter()
-            .map(|&index| media_packets[index as usize].marshal_size() - BASE_RTP_HEADER_SIZE)
-            .max()?;
+        // lost packet means XORing this back out, so anything shorter would truncate it. A packet
+        // that failed to serialise leaves nothing to protect it with.
+        let mut max_payload = 0;
+        for index in covered() {
+            let (_, size) = serialized.get(index)?;
+            max_payload = max_payload.max(size - BASE_RTP_HEADER_SIZE);
+        }
 
         let mut payload = vec![0u8; header_size + max_payload];
         let (header, repair) = payload.split_at_mut(header_size);
 
         let mut protected_ssrc = None;
-        for &index in &covered {
-            let media_packet = &media_packets[index as usize];
-            let size = media_packet.marshal_size();
-            let mut buffer = vec![0u8; size];
-            media_packet.marshal_to(&mut buffer).ok()?;
-
-            protected_ssrc.get_or_insert(media_packet.header.ssrc);
+        for index in covered() {
+            let (buffer, size) = serialized.get(index)?;
+            protected_ssrc.get_or_insert(media_packets[index].header.ssrc);
 
             // Recovery fields are the XOR of the corresponding media header bytes, so a receiver
             // holding every packet but one can XOR the rest back out and be left with it.
@@ -190,9 +280,8 @@ impl FlexFec03Encoder {
                 header[byte] ^= buffer[byte];
             }
 
-            for (target, &source) in repair.iter_mut().zip(&buffer[BASE_RTP_HEADER_SIZE..]) {
-                *target ^= source;
-            }
+            // Everything after the fixed header — CSRCs, extensions, payload and padding.
+            xor_into(repair, &buffer[BASE_RTP_HEADER_SIZE..]);
         }
 
         header[8] = 1; // SSRCCount: draft-03 protects a single stream per repair packet.
@@ -226,7 +315,7 @@ impl FlexFec03Encoder {
                 // Upstream hardcodes a constant here. The repair stream is a stream in its own
                 // right, so it carries the media timestamp it was built from — which is at least
                 // monotonic with the media, rather than frozen for the life of the process.
-                timestamp: media_packets[covered[0] as usize].header.timestamp,
+                timestamp: media_packets[first_covered].header.timestamp,
                 ssrc: self.ssrc,
                 csrc: Vec::new(),
                 ..Default::default()
@@ -573,5 +662,321 @@ mod tests {
             repair[0].payload[0] & 0b1100_0000,
             "the two version bits are zeroed"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Equivalence with the encoder before serialisation was hoisted out of `encode_one`
+    // ---------------------------------------------------------------------------------------
+
+    /// The encoder as it stood before each block was serialised once into reusable storage and
+    /// the payload XOR moved into `xor_into`, kept verbatim as the definition of the output.
+    #[derive(Debug)]
+    struct ReferenceEncoder {
+        payload_type: u8,
+        ssrc: u32,
+        next_sequence_number: u16,
+        coverage: Option<ProtectionCoverage>,
+    }
+
+    impl ReferenceEncoder {
+        fn new(payload_type: u8, ssrc: u32) -> Self {
+            Self {
+                payload_type,
+                ssrc,
+                next_sequence_number: 0,
+                coverage: None,
+            }
+        }
+
+        fn encode(
+            &mut self,
+            media_packets: &[rtp::Packet],
+            num_fec_packets: u32,
+        ) -> Vec<rtp::Packet> {
+            if media_packets.is_empty() || num_fec_packets == 0 {
+                return Vec::new();
+            }
+
+            let consecutive = media_packets.windows(2).all(|pair| {
+                pair[1].header.sequence_number == pair[0].header.sequence_number.wrapping_add(1)
+            });
+            if !consecutive {
+                return Vec::new();
+            }
+
+            let num_media_packets = media_packets.len() as u32;
+            match &mut self.coverage {
+                Some(coverage) => coverage.update(num_media_packets, num_fec_packets),
+                None => match ProtectionCoverage::new(num_media_packets, num_fec_packets) {
+                    Some(coverage) => self.coverage = Some(coverage),
+                    None => return Vec::new(),
+                },
+            }
+            let Some(coverage) = &self.coverage else {
+                return Vec::new();
+            };
+            if coverage.num_media_packets() != num_media_packets {
+                // The block is longer than the masks can describe; the caller must split it.
+                return Vec::new();
+            }
+
+            let num_fec_packets = coverage.num_fec_packets();
+            let base_sequence_number = media_packets[0].header.sequence_number;
+            let mut repair_packets = Vec::with_capacity(num_fec_packets as usize);
+            for fec_index in 0..num_fec_packets {
+                if let Some(packet) =
+                    self.encode_one(fec_index, base_sequence_number, media_packets)
+                {
+                    repair_packets.push(packet);
+                }
+            }
+            repair_packets
+        }
+
+        fn encode_one(
+            &mut self,
+            fec_index: u32,
+            base_sequence_number: u16,
+            media_packets: &[rtp::Packet],
+        ) -> Option<rtp::Packet> {
+            let coverage = self.coverage.as_ref()?;
+            let covered = coverage.covered_by(fec_index);
+            if covered.is_empty() {
+                // A repair packet protecting nothing carries no information.
+                return None;
+            }
+            let mask = *coverage.mask(fec_index)?;
+
+            let mask2 = mask.mask2();
+            let mask3 = mask.mask3_draft03();
+            let header_size = BASE_HEADER_SIZE
+                + if mask2 != 0 || mask3 != 0 {
+                    MASK2_SIZE
+                } else {
+                    0
+                }
+                + if mask3 != 0 { MASK3_SIZE } else { 0 };
+
+            // The repair payload must be long enough for the largest packet it protects: recovering a
+            // lost packet means XORing this back out, so anything shorter would truncate it.
+            let max_payload = covered
+                .iter()
+                .map(|&index| media_packets[index as usize].marshal_size() - BASE_RTP_HEADER_SIZE)
+                .max()?;
+
+            let mut payload = vec![0u8; header_size + max_payload];
+            let (header, repair) = payload.split_at_mut(header_size);
+
+            let mut protected_ssrc = None;
+            for &index in &covered {
+                let media_packet = &media_packets[index as usize];
+                let size = media_packet.marshal_size();
+                let mut buffer = vec![0u8; size];
+                media_packet.marshal_to(&mut buffer).ok()?;
+
+                protected_ssrc.get_or_insert(media_packet.header.ssrc);
+
+                // Recovery fields are the XOR of the corresponding media header bytes, so a receiver
+                // holding every packet but one can XOR the rest back out and be left with it.
+                header[0] ^= buffer[0];
+                header[1] ^= buffer[1];
+                // The first two bits are the RTP version, which is not recovered — it is always 2.
+                header[0] &= 0b0011_1111;
+
+                let length_recovery = (size - BASE_RTP_HEADER_SIZE) as u16;
+                header[2] ^= (length_recovery >> 8) as u8;
+                header[3] ^= length_recovery as u8;
+
+                // Timestamp recovery. The sequence number at bytes 2..4 of the media header is *not*
+                // recovered this way — its position is taken by length recovery, and a lost packet's
+                // sequence number is implied by its position in the mask.
+                for byte in 4..8 {
+                    header[byte] ^= buffer[byte];
+                }
+
+                for (target, &source) in repair.iter_mut().zip(&buffer[BASE_RTP_HEADER_SIZE..]) {
+                    *target ^= source;
+                }
+            }
+
+            header[8] = 1; // SSRCCount: draft-03 protects a single stream per repair packet.
+            header[9..12].fill(0); // reserved
+            header[12..16].copy_from_slice(&protected_ssrc?.to_be_bytes());
+            header[16..18].copy_from_slice(&base_sequence_number.to_be_bytes());
+            header[18..20].copy_from_slice(&mask.mask1().to_be_bytes());
+
+            // The k-bit marks the last mask present. It is the top bit of each mask word, which is
+            // why mask1 is 15 bits rather than 16 and mask3 is 63 rather than 64.
+            if mask2 == 0 && mask3 == 0 {
+                header[18] |= 0b1000_0000;
+            } else {
+                header[20..24].copy_from_slice(&mask2.to_be_bytes());
+                if mask3 == 0 {
+                    header[20] |= 0b1000_0000;
+                } else {
+                    header[24..32].copy_from_slice(&mask3.to_be_bytes());
+                    header[24] |= 0b1000_0000;
+                }
+            }
+
+            let sequence_number = self.next_sequence_number;
+            self.next_sequence_number = self.next_sequence_number.wrapping_add(1);
+
+            Some(rtp::Packet {
+                header: rtp::header::Header {
+                    version: 2,
+                    payload_type: self.payload_type,
+                    sequence_number,
+                    // Upstream hardcodes a constant here. The repair stream is a stream in its own
+                    // right, so it carries the media timestamp it was built from — which is at least
+                    // monotonic with the media, rather than frozen for the life of the process.
+                    timestamp: media_packets[covered[0] as usize].header.timestamp,
+                    ssrc: self.ssrc,
+                    csrc: Vec::new(),
+                    ..Default::default()
+                },
+                payload: payload.into(),
+            })
+        }
+    }
+
+    use crate::flexfec::draft03::test_blocks::{self, BLOCK_SIZES, FEC_COUNTS, Rng, media_block};
+
+    fn assert_same_output(
+        encoder: &mut FlexFec03Encoder,
+        reference: &mut ReferenceEncoder,
+        media: &[rtp::Packet],
+        num_fec_packets: u32,
+        context: &str,
+    ) {
+        let expected = reference.encode(media, num_fec_packets);
+        let actual = encoder.encode(media, num_fec_packets);
+        assert_eq!(
+            expected.len(),
+            actual.len(),
+            "{context}: repair packet count"
+        );
+        for (index, (expected, actual)) in expected.iter().zip(&actual).enumerate() {
+            assert_eq!(expected, actual, "{context}: repair packet {index}");
+            assert_eq!(
+                expected.marshal().expect("marshal reference"),
+                actual.marshal().expect("marshal"),
+                "{context}: repair packet {index} on the wire"
+            );
+        }
+        assert_eq!(
+            reference.next_sequence_number,
+            encoder.next_sequence_number(),
+            "{context}: sequence numbers spent"
+        );
+    }
+
+    /// Byte-for-byte agreement over random blocks: every block size around the mask boundaries,
+    /// repair counts from one to more than the block holds, payloads of 0–1,500 bytes, CSRCs,
+    /// all three extension profiles, RTP padding, unwritten `extensions_padding`, and packets
+    /// that cannot be serialised at all.
+    ///
+    /// One encoder serves every block of a seed, so the reused serialisation buffer always holds
+    /// the previous block's bytes — a long block followed by a short one included — and the
+    /// coverage changes shape between calls.
+    #[test]
+    fn random_blocks_encode_exactly_as_the_reference_does() {
+        for seed in 0..24u64 {
+            let mut rng = Rng::new(seed);
+            let exotic = seed % 2 == 1;
+            let mut encoder = encoder().with_base_sequence_number(seed as u16 * 1000);
+            let mut reference = ReferenceEncoder::new(REPAIR_PT, REPAIR_SSRC);
+            reference.next_sequence_number = seed as u16 * 1000;
+
+            for &count in BLOCK_SIZES {
+                for &num_fec_packets in FEC_COUNTS {
+                    let media = media_block(&mut rng, count, exotic);
+                    let context = format!(
+                        "seed {seed}, {count} media, {num_fec_packets} repair, exotic {exotic}"
+                    );
+                    assert_same_output(
+                        &mut encoder,
+                        &mut reference,
+                        &media,
+                        num_fec_packets,
+                        &context,
+                    );
+                }
+            }
+        }
+    }
+
+    /// A block's shape repeated, as a steady sender produces: the coverage is reused and only the
+    /// serialised bytes change.
+    #[test]
+    fn a_repeated_block_shape_encodes_exactly_as_the_reference_does() {
+        let mut rng = Rng::new(99);
+        let mut encoder = encoder();
+        let mut reference = ReferenceEncoder::new(REPAIR_PT, REPAIR_SSRC);
+        for round in 0..50 {
+            let media = media_block(&mut rng, 48, round % 3 == 0);
+            assert_same_output(
+                &mut encoder,
+                &mut reference,
+                &media,
+                4,
+                &format!("round {round}"),
+            );
+        }
+    }
+
+    /// Short packets — header only, or a few bytes — and lengths either side of every vector
+    /// width, one length per packet so each repair packet XORs unequal lengths.
+    #[test]
+    fn short_and_boundary_lengths_encode_exactly_as_the_reference_does() {
+        let lengths: Vec<usize> = (0..=130).chain([255, 256, 257, 1499, 1500]).collect();
+        for num_fec_packets in [1, 2, 3, 8] {
+            let mut encoder = encoder();
+            let mut reference = ReferenceEncoder::new(REPAIR_PT, REPAIR_SSRC);
+            for window in lengths.chunks(10) {
+                let media: Vec<rtp::Packet> = window
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &len)| {
+                        media_packet(100 + index as u16, &vec![len as u8 ^ 0xA5; len])
+                    })
+                    .collect();
+                assert_same_output(
+                    &mut encoder,
+                    &mut reference,
+                    &media,
+                    num_fec_packets,
+                    &format!("lengths {window:?}, {num_fec_packets} repair"),
+                );
+            }
+        }
+    }
+
+    /// A packet that cannot be serialised costs only the repair packet covering it — no packet,
+    /// no sequence number — exactly as before.
+    #[test]
+    fn an_unserialisable_packet_drops_only_the_repair_packet_covering_it() {
+        let mut rng = Rng::new(7);
+        let mut media: Vec<rtp::Packet> = (0..6)
+            .map(|index| test_blocks::media_packet(&mut rng, 500 + index, false))
+            .collect();
+        media[3].header.extension = true;
+        media[3].header.extension_profile = 0x1234;
+        media[3].header.extensions = vec![Default::default(), Default::default()];
+        assert!(
+            media[3].marshal().is_err(),
+            "the RFC 3550 profile takes one extension"
+        );
+
+        let mut encoder = encoder();
+        let mut reference = ReferenceEncoder::new(REPAIR_PT, REPAIR_SSRC);
+        assert_same_output(
+            &mut encoder,
+            &mut reference,
+            &media,
+            2,
+            "one of two dropped",
+        );
+        assert_eq!(1, encoder.next_sequence_number());
     }
 }

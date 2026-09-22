@@ -192,6 +192,24 @@ jobs:
       - name: No ambient clock reads outside the allow-list
         run: python3 scripts/check-sans-io-deterministic-time.py
 
+  benchmarks:
+    name: Benchmarks build and run once
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Every benchmark target is built and run exactly once — criterion's `--test` mode, one
+      # iteration each, nothing timed — with both crypto providers wherever a crate supports both.
+      # This catches a benchmark that no longer builds, panics, or whose in-memory harness stalls,
+      # which would otherwise surface only when someone next needs a number.
+      #
+      # Nothing here gates on timing. Shared runners are too noisy for it, and a before/after figure
+      # only means something when both sides ran on one machine in one session; `scripts/bench.py
+      # compare` does that locally. See docs/benchmarking.md.
+      - name: Build and run every benchmark once
+        run: python3 scripts/bench.py check --providers all
+
   package_publication_order:
     name: cargo package (publication order)
     runs-on: ubuntu-latest

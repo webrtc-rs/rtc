@@ -57,6 +57,71 @@ pub(crate) struct BindingRequest {
     pub(crate) is_use_candidate: bool,
 }
 
+/// Whether a request sent at `timestamp` is at least `MAX_BINDING_REQUEST_TIMEOUT` old at `now`.
+///
+/// A request stamped later than `now` has not expired: the caller supplies the instants, and
+/// nothing guarantees they arrive in order.
+fn is_binding_request_expired(timestamp: Instant, now: Instant) -> bool {
+    now.checked_duration_since(timestamp)
+        .is_some_and(|duration| duration >= MAX_BINDING_REQUEST_TIMEOUT)
+}
+
+/// Outbound binding requests still awaiting a response, in the order they were sent.
+///
+/// Expiry is checked on every request sent and every response received, and almost always finds
+/// nothing, so the scan is skipped while even the oldest request is inside the timeout. That
+/// needs no ordering between timestamps, only a lower bound on them.
+#[derive(Debug, Default)]
+pub(crate) struct PendingBindingRequests {
+    requests: Vec<BindingRequest>,
+    /// Set whenever a request is pending, and no later than the oldest one's timestamp. Removing
+    /// a request can leave it too early, which costs one scan that then recomputes it.
+    oldest: Option<Instant>,
+}
+
+impl PendingBindingRequests {
+    pub(crate) fn len(&self) -> usize {
+        self.requests.len()
+    }
+
+    pub(crate) fn push(&mut self, request: BindingRequest) {
+        self.oldest = Some(match self.oldest {
+            Some(oldest) => oldest.min(request.timestamp),
+            None => request.timestamp,
+        });
+        self.requests.push(request);
+    }
+
+    /// Drops the requests that have expired as of `now`, returning how many were dropped.
+    pub(crate) fn remove_expired(&mut self, now: Instant) -> usize {
+        match self.oldest {
+            Some(oldest) if is_binding_request_expired(oldest, now) => {}
+            _ => return 0,
+        }
+
+        let initial_size = self.requests.len();
+        let mut oldest: Option<Instant> = None;
+        self.requests.retain(|request| {
+            if is_binding_request_expired(request.timestamp, now) {
+                return false;
+            }
+            oldest = Some(oldest.map_or(request.timestamp, |o| o.min(request.timestamp)));
+            true
+        });
+        self.oldest = oldest;
+        initial_size - self.requests.len()
+    }
+
+    /// Removes and returns the request sent with `transaction_id`, if it is still pending.
+    pub(crate) fn remove(&mut self, transaction_id: TransactionId) -> Option<BindingRequest> {
+        let index = self
+            .requests
+            .iter()
+            .position(|request| request.transaction_id == transaction_id)?;
+        Some(self.requests.remove(index))
+    }
+}
+
 #[derive(Default, Clone)]
 /// The ICE credentials for one side of a session, exchanged in SDP.
 pub struct Credentials {
@@ -153,7 +218,7 @@ pub struct Agent {
     pub(crate) selected_pair: Option<usize>,
 
     // LRU of outbound Binding request Transaction IDs
-    pub(crate) pending_binding_requests: Vec<BindingRequest>,
+    pub(crate) pending_binding_requests: PendingBindingRequests,
 
     // the following variables won't be changed after init_with_defaults()
     pub(crate) insecure_skip_verify: bool,
@@ -360,7 +425,7 @@ impl Agent {
             remote_candidates: vec![],
 
             // LRU of outbound Binding request Transaction IDs
-            pending_binding_requests: vec![],
+            pending_binding_requests: PendingBindingRequests::default(),
 
             candidate_types,
             network_types: config.network_types.clone(),
@@ -713,7 +778,7 @@ impl Agent {
         }
         self.ufrag_pwd.remote_credentials = None;
 
-        self.pending_binding_requests = vec![];
+        self.pending_binding_requests = PendingBindingRequests::default();
 
         self.candidate_pairs = vec![];
 
@@ -1204,24 +1269,9 @@ impl Agent {
     ///
     /// reference: (IETF ref-8445)[https://tools.ietf.org/html/rfc8445#appendix-B.1].
     pub(crate) fn invalidate_pending_binding_requests(&mut self, filter_time: Instant) {
-        let pending_binding_requests = &mut self.pending_binding_requests;
-        let initial_size = pending_binding_requests.len();
-
-        let mut temp = vec![];
-        for binding_request in pending_binding_requests.drain(..) {
-            if filter_time
-                .checked_duration_since(binding_request.timestamp)
-                .map(|duration| duration < MAX_BINDING_REQUEST_TIMEOUT)
-                .unwrap_or(true)
-            {
-                temp.push(binding_request);
-            }
-        }
-
-        *pending_binding_requests = temp;
-        let bind_requests_remaining = pending_binding_requests.len();
-        let bind_requests_removed = initial_size - bind_requests_remaining;
+        let bind_requests_removed = self.pending_binding_requests.remove_expired(filter_time);
         if bind_requests_removed > 0 {
+            let bind_requests_remaining = self.pending_binding_requests.len();
             trace!(
                 "[{}]: Discarded {} binding requests because they expired, still {} remaining",
                 self.get_name(),
@@ -1239,15 +1289,7 @@ impl Agent {
         id: TransactionId,
     ) -> Option<BindingRequest> {
         self.invalidate_pending_binding_requests(now);
-
-        let pending_binding_requests = &mut self.pending_binding_requests;
-        for i in 0..pending_binding_requests.len() {
-            if pending_binding_requests[i].transaction_id == id {
-                let valid_binding_request = pending_binding_requests.remove(i);
-                return Some(valid_binding_request);
-            }
-        }
-        None
+        self.pending_binding_requests.remove(id)
     }
 
     /// Processes STUN traffic from a remote candidate.

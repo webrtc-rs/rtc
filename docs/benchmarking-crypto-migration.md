@@ -67,6 +67,11 @@ silently mangles the revision.
 This is the strong case: the same benchmark source runs on both sides, so the only variable is the
 code under test. Used for **SRTP** and **STUN**.
 
+Steps 2–4 are now automated by `python3 scripts/bench.py compare <baseline> -p <crate> --rounds 3`,
+which also pins dependency versions across the two sides and alternates the runs. See
+[`benchmarking.md`](benchmarking.md#comparing-two-revisions). Step 1, confirming that the benchmark
+is unchanged, is still yours to do.
+
 **1. Confirm the benchmark exists and is unchanged.**
 
 ```bash

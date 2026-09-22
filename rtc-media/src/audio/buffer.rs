@@ -371,9 +371,104 @@ where
 
 #[cfg(test)]
 mod tests {
-    use byteorder::NativeEndian;
+    use byteorder::{BigEndian, LittleEndian, NativeEndian};
 
+    use super::layout::reference;
     use super::*;
+
+    /// Converts samples made by `make` both ways through the public [`Buffer`] conversions — the
+    /// `MaybeUninit` path — and checks each result against the reference layout loops, for every
+    /// channel count in [`reference::CHANNELS`] and each of `frame_counts`. Floats are compared
+    /// by their bits.
+    fn check_buffer_conversions<T, K>(
+        frame_counts: impl Iterator<Item = usize> + Clone,
+        make: impl Fn(usize) -> T,
+        key: impl Fn(&T) -> K,
+    ) where
+        T: Default + Copy,
+        K: PartialEq + std::fmt::Debug,
+    {
+        let keys = |samples: &[T]| samples.iter().map(&key).collect::<Vec<_>>();
+        for channels in reference::CHANNELS {
+            for frames in frame_counts.clone() {
+                let samples: Vec<T> = (0..channels * frames).map(&make).collect();
+
+                let mut expected = samples.clone();
+                reference::deinterleaved_by(&samples, &mut expected, channels, |s| *s);
+                let input = Buffer::<T, Interleaved>::new(samples.clone(), channels);
+                let output = Buffer::<T, Deinterleaved>::from(input.as_ref());
+                assert_eq!(keys(&output.samples), keys(&expected), "{channels} ch");
+                assert_eq!(
+                    (output.info.channels(), output.info.frames()),
+                    (channels, frames)
+                );
+                let output = Buffer::<T, Deinterleaved>::from(input);
+                assert_eq!(keys(&output.samples), keys(&expected), "{channels} ch");
+
+                let mut expected = samples.clone();
+                reference::interleaved_by(&samples, &mut expected, channels, |s| *s);
+                let input = Buffer::<T, Deinterleaved>::new(samples, channels);
+                let output = Buffer::<T, Interleaved>::from(input.as_ref());
+                assert_eq!(keys(&output.samples), keys(&expected), "{channels} ch");
+                assert_eq!(
+                    (output.info.channels(), output.info.frames()),
+                    (channels, frames)
+                );
+                let output = Buffer::<T, Interleaved>::from(input);
+                assert_eq!(keys(&output.samples), keys(&expected), "{channels} ch");
+            }
+        }
+    }
+
+    /// Decodes `i16` samples written in byte order `B` into each layout, from each layout, and
+    /// checks the results against the reference layout loops.
+    fn check_from_bytes<B: ByteOrder>(frame_counts: impl Iterator<Item = usize> + Clone) {
+        for channels in reference::CHANNELS {
+            for frames in frame_counts.clone() {
+                let samples: Vec<i16> = (0..channels * frames).map(reference::make_i16).collect();
+                let mut bytes = vec![0; 2 * samples.len()];
+                B::write_i16_into(&samples, &mut bytes);
+
+                let mut expected = samples.clone();
+                reference::deinterleaved_by(&samples, &mut expected, channels, |s| *s);
+                let output: Buffer<i16, Deinterleaved> =
+                    FromBytes::<Interleaved>::from_bytes::<B>(&bytes, channels).unwrap();
+                assert_eq!(output.samples, expected, "{channels} ch, {frames} frames");
+
+                let mut expected = samples.clone();
+                reference::interleaved_by(&samples, &mut expected, channels, |s| *s);
+                let output: Buffer<i16, Interleaved> =
+                    FromBytes::<Deinterleaved>::from_bytes::<B>(&bytes, channels).unwrap();
+                assert_eq!(output.samples, expected, "{channels} ch, {frames} frames");
+
+                let output: Buffer<i16, Interleaved> =
+                    FromBytes::<Interleaved>::from_bytes::<B>(&bytes, channels).unwrap();
+                assert_eq!(output.samples, samples, "{channels} ch, {frames} frames");
+                let output: Buffer<i16, Deinterleaved> =
+                    FromBytes::<Deinterleaved>::from_bytes::<B>(&bytes, channels).unwrap();
+                assert_eq!(output.samples, samples, "{channels} ch, {frames} frames");
+            }
+        }
+    }
+
+    fn check_all_conversions(frame_counts: impl Iterator<Item = usize> + Clone) {
+        check_buffer_conversions(frame_counts.clone(), reference::make_i16, |s| *s);
+        check_buffer_conversions(frame_counts.clone(), reference::make_i32, |s| *s);
+        check_buffer_conversions(frame_counts.clone(), reference::make_f32, |s| s.to_bits());
+        check_from_bytes::<LittleEndian>(frame_counts.clone());
+        check_from_bytes::<BigEndian>(frame_counts);
+    }
+
+    #[test]
+    fn conversions_match_reference_layouts() {
+        check_all_conversions(reference::sampled_frame_counts());
+    }
+
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "slow unoptimized; run with --release")]
+    fn conversions_match_reference_layouts_for_every_frame_count() {
+        check_all_conversions(reference::all_frame_counts());
+    }
 
     #[test]
     fn deinterleaved_from_interleaved() {

@@ -218,6 +218,11 @@ impl CcFeedbackReportBlock {
     ///
     /// `budget` is what remains of the report's block region; a `num_reports` claiming more than
     /// that is a truncated or malformed packet rather than a short read.
+    ///
+    /// The metric words are decoded in bulk, straight from the buffer's current chunk, when that
+    /// chunk holds all of them (see [`decode_metric_words`]), and one `get_u16` at a time when
+    /// the buffer is fragmented. Both paths yield the same blocks, consume the same bytes and
+    /// fail with the same errors, because every bounds check happens before either runs.
     fn unmarshal_from<B: Buf>(raw_packet: &mut B, budget: usize) -> Result<(Self, usize)> {
         if budget < REPORT_BLOCK_HEADER_LENGTH
             || raw_packet.remaining() < REPORT_BLOCK_HEADER_LENGTH
@@ -239,13 +244,25 @@ impl CcFeedbackReportBlock {
             return Err(Error::PacketTooShort);
         }
 
-        let mut metric_blocks = Vec::with_capacity(num_reports);
-        for _ in 0..num_reports {
-            metric_blocks.push(CcFeedbackMetricBlock::unmarshal_word(raw_packet.get_u16()));
-        }
-        if padded != num_reports {
-            raw_packet.advance(METRIC_BLOCK_LENGTH);
-        }
+        let words_len = METRIC_BLOCK_LENGTH * num_reports;
+        let metric_blocks = if raw_packet.chunk().len() >= words_len {
+            // Every metric word is in the current chunk — the usual case, since a datagram
+            // arrives as one buffer — so decode them straight from the slice.
+            let metric_blocks = decode_metric_words(&raw_packet.chunk()[..words_len]);
+            // The padding word, if any, may lie in the next chunk; `advance` crosses chunks.
+            raw_packet.advance(METRIC_BLOCK_LENGTH * padded);
+            metric_blocks
+        } else {
+            // A fragmented buffer: `get_u16` reassembles words that straddle a chunk boundary.
+            let mut metric_blocks = Vec::with_capacity(num_reports);
+            for _ in 0..num_reports {
+                metric_blocks.push(CcFeedbackMetricBlock::unmarshal_word(raw_packet.get_u16()));
+            }
+            if padded != num_reports {
+                raw_packet.advance(METRIC_BLOCK_LENGTH);
+            }
+            metric_blocks
+        };
 
         Ok((
             Self {
@@ -256,6 +273,30 @@ impl CcFeedbackReportBlock {
             consumed,
         ))
     }
+}
+
+/// Decode contiguous big-endian metric words, each exactly as
+/// [`unmarshal_word`](CcFeedbackMetricBlock::unmarshal_word) decodes it.
+///
+/// # Why this is plain Rust and not explicit SIMD
+///
+/// Over a slice of fixed two-byte chunks, collected into an exactly sized `Vec`, the compiler
+/// vectorises this loop itself: on AArch64 it decodes eight words per iteration (`rev16`, the
+/// received-bit mask, ECN and offset extraction) and widens the fields straight into
+/// [`CcFeedbackMetricBlock`]'s layout, which it knows. An explicit `wide::u16x8` version did the
+/// same arithmetic but then had to build each struct from the vector's lanes through its safe
+/// constructor — reinterpreting vector memory as the Rust-layout struct is not an option — and
+/// that conversion cost more than the arithmetic saved. Measured on an Apple M1 Max (a shared,
+/// noisy machine; medians): 580 words took about 120 ns here, 400 ns with `u16x8`, and 530 ns
+/// through `Buf::get_u16` one word at a time; 16,384 words 2.9 µs, 10.9 µs and 14.5 µs.
+///
+/// `words.len()` must be even; a trailing odd byte would be ignored.
+fn decode_metric_words(words: &[u8]) -> Vec<CcFeedbackMetricBlock> {
+    let (words, _) = words.as_chunks::<METRIC_BLOCK_LENGTH>();
+    words
+        .iter()
+        .map(|word| CcFeedbackMetricBlock::unmarshal_word(u16::from_be_bytes(*word)))
+        .collect()
 }
 
 impl fmt::Display for CcFeedbackReportBlock {

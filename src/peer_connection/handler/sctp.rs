@@ -67,6 +67,10 @@ pub(crate) struct SctpHandlerContext {
     /// nothing seeded it; that fallback was taken on **every client connection**, for the flush
     /// that emits the INIT chunk. Seeding at construction makes the `Option` unnecessary.
     now: Instant,
+
+    /// Undelivered inbound payload bytes the pipeline may hold before this handler stops
+    /// draining. See [`SCTP_PIPELINE_READ_BACKLOG_BYTES`].
+    read_backlog_bytes: usize,
 }
 
 impl SctpHandlerContext {
@@ -80,7 +84,20 @@ impl SctpHandlerContext {
             pending_readable: HashSet::new(),
             association_transport: HashMap::new(),
             now,
+            read_backlog_bytes: SCTP_PIPELINE_READ_BACKLOG_BYTES,
         }
+    }
+
+    /// Whether any stream has unread data left behind by back-pressure.
+    pub(crate) fn has_parked_streams(&self) -> bool {
+        !self.pending_readable.is_empty()
+    }
+
+    /// Overrides [`SCTP_PIPELINE_READ_BACKLOG_BYTES`]. `0` is raised to `1`: one message at a
+    /// time, since a zero budget could never admit anything.
+    pub(crate) fn with_read_backlog_bytes(mut self, bytes: usize) -> Self {
+        self.read_backlog_bytes = bytes.max(1);
+        self
     }
 
     /// Records the newest instant a caller has supplied.
@@ -103,37 +120,101 @@ impl SctpHandlerContext {
 /// the backlog reappears — unbounded — further up the pipeline. Leaving messages in the
 /// reassembly queue is not a leak; it is the mechanism.
 ///
-/// The bound is a message count, so the bytes held depend on message size; SCTP's own
+/// This bound is a message count, so on its own the bytes held depend on message size: 256
+/// messages at the 256 KiB maximum is 64 MiB. [`SCTP_PIPELINE_READ_BACKLOG_BYTES`] bounds the
+/// same backlog by bytes, and draining stops at whichever is reached first. SCTP's own
 /// `max_receive_buffer_size` (1 MiB by default, `SettingEngineBuilder::with_sctp_max_receive_buffer_size`)
-/// is the byte-denominated bound underneath it and is what the peer actually sees.
+/// bounds what sits in the reassembly queue underneath, and is what the peer actually sees.
 pub(crate) const SCTP_PIPELINE_READ_BACKLOG_LIMIT: usize = 256;
+
+/// Default for how many undelivered inbound payload bytes the pipeline may hold before this
+/// handler stops draining SCTP's reassembly queues; set with
+/// `SettingEngineBuilder::with_sctp_read_backlog_bytes`.
+///
+/// Matches SCTP's default receive buffer, so a stalled consumer holds at most about twice that
+/// per connection: this much delivered but unread, and a full receive window behind it.
+///
+/// **One message may overshoot it.** A message is admitted whenever the backlog is below the
+/// budget, however large the message is, so the bound is the budget plus one maximum-size
+/// message. The alternative — admitting a message only if it fits — would stall forever on a
+/// valid message larger than a configured budget.
+pub(crate) const SCTP_PIPELINE_READ_BACKLOG_BYTES: usize = 1 << 20;
+
+/// What the pipeline downstream of this handler is already holding: undelivered data-channel
+/// messages, and their payload bytes.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ReadBacklog {
+    pub(crate) messages: usize,
+    pub(crate) bytes: usize,
+}
+
+/// How much more may be pulled out of SCTP before the pipeline is over either bound.
+#[derive(Debug, Clone, Copy)]
+struct ReadBudget {
+    messages: usize,
+    bytes: usize,
+}
+
+impl ReadBudget {
+    fn exhausted(&self) -> bool {
+        self.messages == 0 || self.bytes == 0
+    }
+
+    fn consume(&mut self, payload_len: usize) {
+        self.messages -= 1;
+        self.bytes = self.bytes.saturating_sub(payload_len);
+    }
+}
 
 /// SctpHandler implements SCTP Protocol handling
 pub(crate) struct SctpHandler<'a> {
     ctx: &'a mut SctpHandlerContext,
-    /// Undelivered messages already sitting in `pipeline_context.read_outs`.
+    /// Undelivered messages, and their bytes, already sitting in the pipeline's
+    /// `data_read_outs`.
     ///
     /// Passed in rather than read from `ctx` because **this handler's own `read_outs` is not
     /// where the backlog forms**: the pipeline drains it into `intermediate_routs` inside the
     /// same `handle_read` call, so it is empty again by the time anything could observe it.
     /// Bounding against it would be a no-op. The queue that actually grows when the
     /// application stops consuming is the pipeline's, one hop downstream.
-    downstream_backlog: usize,
+    downstream_backlog: ReadBacklog,
+    /// Inbound messages this handler has handed to the pipeline through `poll_read`.
+    ///
+    /// A handler lives for one traversal, and `downstream_backlog` is a snapshot taken when it
+    /// was created, so neither sees what this traversal has already sent downstream. Without
+    /// this, `poll_read` resumes a parked stream every time its own queue empties — which the
+    /// pipeline's collection loop makes happen after every message — and one traversal drains
+    /// the whole reassembly queue however full the pipeline already is.
+    emitted: ReadBacklog,
 }
 
 impl<'a> SctpHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut SctpHandlerContext, downstream_backlog: usize) -> Self {
+    pub(crate) fn new(ctx: &'a mut SctpHandlerContext, downstream_backlog: ReadBacklog) -> Self {
         SctpHandler {
             ctx,
             downstream_backlog,
+            emitted: ReadBacklog::default(),
         }
     }
 
-    /// How many more messages may be pulled out of SCTP before the pipeline is over its bound.
-    fn read_budget(&self) -> usize {
-        SCTP_PIPELINE_READ_BACKLOG_LIMIT
-            .saturating_sub(self.downstream_backlog)
-            .saturating_sub(self.ctx.read_outs.len())
+    /// How much more may be pulled out of SCTP before the pipeline is over its bounds.
+    ///
+    /// Counts what this traversal has produced as well as what the pipeline held when it
+    /// began: messages already handed downstream, and messages read but not yet collected.
+    fn read_budget(&self) -> ReadBudget {
+        let pending_bytes: usize = self.ctx.read_outs.iter().map(|m| m.message.len()).sum();
+        ReadBudget {
+            messages: SCTP_PIPELINE_READ_BACKLOG_LIMIT
+                .saturating_sub(self.downstream_backlog.messages)
+                .saturating_sub(self.emitted.messages)
+                .saturating_sub(self.ctx.read_outs.len()),
+            bytes: self
+                .ctx
+                .read_backlog_bytes
+                .saturating_sub(self.downstream_backlog.bytes)
+                .saturating_sub(self.emitted.bytes)
+                .saturating_sub(pending_bytes),
+        }
     }
 
     /// Drain one stream while budget allows, recording it as pending if data is left behind.
@@ -147,7 +228,7 @@ impl<'a> SctpHandler<'a> {
         ch: AssociationHandle,
         id: StreamId,
         max_len: usize,
-        budget: &mut usize,
+        budget: &mut ReadBudget,
         messages: &mut Vec<SctpMessage>,
     ) -> Result<()> {
         // An SCTP DATA chunk may arrive in the same flight as the tail of the
@@ -164,7 +245,7 @@ impl<'a> SctpHandler<'a> {
 
         let mut stream = conn.stream(id)?;
         loop {
-            if *budget == 0 {
+            if budget.exhausted() {
                 // Leave the rest in the reassembly queue: that is what shrinks `a_rwnd`.
                 ctx_pending.insert((ch, id));
                 return Ok(());
@@ -177,6 +258,7 @@ impl<'a> SctpHandler<'a> {
             // scratch-buffer round-trip (`max_len` preserves the max-message-size bound
             // `read()` enforced via `ErrShortBuffer`).
             let payload = chunks.to_payload(max_len)?;
+            budget.consume(payload.len());
             messages.push(SctpMessage::Inbound(DataChannelMessage {
                 association_handle: ch.0,
                 stream_id: id,
@@ -184,7 +266,6 @@ impl<'a> SctpHandler<'a> {
                 payload,
                 negotiated: false,
             }));
-            *budget -= 1;
         }
     }
 
@@ -194,18 +275,18 @@ impl<'a> SctpHandler<'a> {
             return Ok(());
         }
         let mut budget = self.read_budget();
-        if budget == 0 {
+        if budget.exhausted() {
             return Ok(());
         }
 
-        let max_len = self.ctx.sctp_transport.internal_buffer.len();
+        let max_len = self.ctx.sctp_transport.local_max_message_size() as usize;
         let mut pending: Vec<(AssociationHandle, StreamId)> =
             self.ctx.pending_readable.iter().copied().collect();
         pending.sort_unstable();
 
         let mut drained_any = false;
         for (ch, id) in pending {
-            if budget == 0 {
+            if budget.exhausted() {
                 break;
             }
             let Some(transport) = self.ctx.association_transport.get(&ch).copied() else {
@@ -315,7 +396,7 @@ impl<'a>
 
             // Both are read before `sctp_transport` is split up below, which would otherwise
             // conflict with the borrow of `sctp_associations`.
-            let max_len = self.ctx.sctp_transport.internal_buffer.len();
+            let max_len = self.ctx.sctp_transport.local_max_message_size() as usize;
             let mut budget = self.read_budget();
             let mut inbound_transport = None;
 
@@ -535,7 +616,12 @@ impl<'a>
                 warn!("failed to resume parked SCTP streams: {}", err);
             }
         }
-        self.ctx.read_outs.pop_front()
+        let msg = self.ctx.read_outs.pop_front()?;
+        if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(data)) = &msg.message {
+            self.emitted.messages += 1;
+            self.emitted.bytes += data.payload.len();
+        }
+        Some(msg)
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
@@ -546,7 +632,9 @@ impl<'a>
                 msg.transport.peer_addr
             );
 
-            if message.payload.len() > self.ctx.sctp_transport.internal_buffer.len() {
+            if message.payload.len()
+                > self.ctx.sctp_transport.max_message_size().unwrap_or(0) as usize
+            {
                 return Err(Error::ErrOutboundPacketTooLarge);
             }
 
@@ -839,6 +927,12 @@ mod tests {
     use shared::{TransportProtocol, marshal::Marshal};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
+
+    /// A downstream backlog of `messages` data-channel messages holding no payload bytes, so
+    /// only the message-count bound is in play.
+    fn message_backlog(messages: usize) -> ReadBacklog {
+        ReadBacklog { messages, bytes: 0 }
+    }
 
     /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
     fn test_transport_id(kind: TransportKind) -> RTCTransportId {
@@ -1215,9 +1309,7 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch, conn);
         SctpHandlerContext::new(now, transport)
@@ -1271,7 +1363,7 @@ mod tests {
     ) -> (SctpHandlerContext, Vec<TaggedRTCMessageInternal>) {
         let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
         let mut flushed = vec![];
-        let mut handler = SctpHandler::new(&mut ctx, backlog);
+        let mut handler = SctpHandler::new(&mut ctx, message_backlog(backlog));
         for dgram in dgrams {
             handler.handle_read(raw_read(now, dgram)).expect("read");
         }
@@ -1338,7 +1430,7 @@ mod tests {
         let (mut ctx, cookie_ack, early_data) = client_with_data_before_cookie_ack();
 
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             for dgram in early_data {
                 handler
                     .handle_read(raw_read(now, dgram))
@@ -1357,7 +1449,7 @@ mod tests {
         );
 
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             for dgram in cookie_ack {
                 handler
                     .handle_read(raw_read(now, dgram))
@@ -1456,6 +1548,164 @@ mod tests {
         );
     }
 
+    /// Payloads of the inbound data-channel messages in `ctx.read_outs`, taking them.
+    fn take_inbound_payloads(ctx: &mut SctpHandlerContext) -> Vec<Bytes> {
+        ctx.read_outs
+            .drain(..)
+            .filter_map(|m| match m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::Sctp(data)) => Some(data.payload.freeze()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The byte bound engages on its own. With room for 256 messages but only 200 bytes, the
+    /// drain stops once the bytes are spent and parks the stream, exactly as the count bound
+    /// does — including the overshoot: the message that finds 8 bytes of budget left is still
+    /// admitted, whole.
+    #[test]
+    fn a_byte_budget_parks_the_stream_before_the_message_count_does() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx =
+            client_ctx(now, e.client_ep, e.client_ch, e.client_conn).with_read_backlog_bytes(200);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, ReadBacklog::default());
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+        }
+
+        // 64-byte messages against 200 bytes: 136, 72 and 8 bytes remain after the first three,
+        // and the fourth spends the rest.
+        assert_eq!(take_inbound_payloads(&mut ctx).len(), 4);
+        assert!(
+            !ctx.pending_readable.is_empty(),
+            "the stream must be remembered, or the edge-triggered Readable is lost forever"
+        );
+    }
+
+    /// One traversal may not refill past the bound. The pipeline collects a handler's output
+    /// with `while let Some(m) = handler.poll_read()`, and every call that finds the handler's
+    /// queue empty resumes parked streams — so a budget that forgot what the traversal had
+    /// already handed on would be spent afresh after each message, and one traversal would
+    /// drain the whole reassembly queue however far behind the application was.
+    #[test]
+    fn one_traversal_does_not_refill_past_the_bound() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx =
+            client_ctx(now, e.client_ep, e.client_ch, e.client_conn).with_read_backlog_bytes(200);
+        let mut collected = 0;
+        {
+            let mut handler = SctpHandler::new(&mut ctx, ReadBacklog::default());
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+            while handler.poll_read().is_some() {
+                collected += 1;
+            }
+        }
+
+        assert_eq!(collected, 4, "one traversal must stop at the byte bound");
+        assert!(
+            !ctx.pending_readable.is_empty(),
+            "the rest must stay parked"
+        );
+    }
+
+    /// Bytes already held downstream count against the budget, and releasing them resumes the
+    /// drain from where it stopped, in order and without loss.
+    #[test]
+    fn bytes_held_downstream_bound_the_drain_until_released() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx =
+            client_ctx(now, e.client_ep, e.client_ch, e.client_conn).with_read_backlog_bytes(200);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, ReadBacklog::default());
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+        }
+        let mut delivered = take_inbound_payloads(&mut ctx);
+        let held = ReadBacklog {
+            messages: delivered.len(),
+            bytes: delivered.iter().map(Bytes::len).sum(),
+        };
+
+        // The application has not read them: one message, well under the count bound, but
+        // over the byte bound. Nothing more may come out.
+        {
+            let mut handler = SctpHandler::new(&mut ctx, held);
+            assert!(handler.poll_read().is_none(), "the byte bound must hold");
+        }
+        assert!(!ctx.pending_readable.is_empty());
+
+        // Read at last: the drain resumes with no new inbound chunk, and everything arrives.
+        while !ctx.pending_readable.is_empty() {
+            delivered.extend(resume_one_drain(&mut ctx));
+        }
+        let expected: Vec<Bytes> = (0..8u8).map(|i| Bytes::from(vec![i; 64])).collect();
+        assert_eq!(
+            delivered, expected,
+            "resumed delivery must be complete and in order"
+        );
+    }
+
+    /// Everything one resumed drain produces: what `poll_read` hands over, then what it left
+    /// queued behind it.
+    fn resume_one_drain(ctx: &mut SctpHandlerContext) -> Vec<Bytes> {
+        let first = {
+            let mut handler = SctpHandler::new(ctx, ReadBacklog::default());
+            handler.poll_read()
+        };
+        let mut payloads: Vec<Bytes> = first
+            .into_iter()
+            .filter_map(|m| match m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::Sctp(data)) => Some(data.payload.freeze()),
+                _ => None,
+            })
+            .collect();
+        payloads.extend(take_inbound_payloads(ctx));
+        payloads
+    }
+
+    /// A budget smaller than every message — here the smallest there is, since `0` is raised to
+    /// `1` — slows delivery to one message per drain but never stops it.
+    #[test]
+    fn a_budget_smaller_than_a_message_still_makes_progress() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx =
+            client_ctx(now, e.client_ep, e.client_ch, e.client_conn).with_read_backlog_bytes(0);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, ReadBacklog::default());
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+        }
+        let mut delivered = take_inbound_payloads(&mut ctx);
+        assert_eq!(delivered.len(), 1, "one message per drain");
+
+        // The stream stays parked after its last message until one more drain finds it empty.
+        while !ctx.pending_readable.is_empty() {
+            let drained = resume_one_drain(&mut ctx);
+            assert!(drained.len() <= 1, "one message per drain");
+            delivered.extend(drained);
+        }
+        let expected: Vec<Bytes> = (0..8u8).map(|i| Bytes::from(vec![i; 64])).collect();
+        assert_eq!(delivered, expected);
+    }
+
     /// **The deadlock this feature would otherwise create.**
     ///
     /// `StreamEvent::Readable` is edge-triggered: `association/mod.rs` emits it when a *new*
@@ -1473,7 +1723,8 @@ mod tests {
 
         let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
         {
-            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            let mut handler =
+                SctpHandler::new(&mut ctx, message_backlog(SCTP_PIPELINE_READ_BACKLOG_LIMIT));
             for dgram in dgrams {
                 handler.handle_read(raw_read(now, dgram)).expect("read");
             }
@@ -1485,7 +1736,7 @@ mod tests {
         // packet arrives, and the peer — correctly throttled — sends nothing. The only call
         // is the one the pipeline makes when it wants data.
         let resumed = {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             handler.poll_read()
         };
 
@@ -1522,7 +1773,8 @@ mod tests {
 
         let mut ctx = client_ctx(now, e_a.client_ep, e_a.client_ch, e_a.client_conn);
         {
-            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            let mut handler =
+                SctpHandler::new(&mut ctx, message_backlog(SCTP_PIPELINE_READ_BACKLOG_LIMIT));
             for dgram in a_dgrams {
                 let mut msg = raw_read(now, dgram);
                 msg.transport.peer_addr = peer_a;
@@ -1534,7 +1786,8 @@ mod tests {
         // A datagram from a *different* peer arrives afterwards. Under the old single
         // `last_transport` this is the value A's resumed messages would inherit.
         {
-            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            let mut handler =
+                SctpHandler::new(&mut ctx, message_backlog(SCTP_PIPELINE_READ_BACKLOG_LIMIT));
             for dgram in b_dgrams {
                 let mut msg = raw_read(now, dgram);
                 msg.transport.peer_addr = peer_b;
@@ -1547,7 +1800,7 @@ mod tests {
         // Now let A resume, through the path that actually resumes it.
         let mut resumed = vec![];
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             while let Some(msg) = handler.poll_read() {
                 resumed.push(msg);
             }
@@ -1579,7 +1832,8 @@ mod tests {
 
         let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
         {
-            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            let mut handler =
+                SctpHandler::new(&mut ctx, message_backlog(SCTP_PIPELINE_READ_BACKLOG_LIMIT));
             for dgram in dgrams {
                 handler.handle_read(raw_read(now, dgram)).expect("read");
             }
@@ -1588,7 +1842,7 @@ mod tests {
 
         // With room, and with none: neither may produce a deadline at or before `now`.
         for backlog in [0, SCTP_PIPELINE_READ_BACKLOG_LIMIT] {
-            let mut handler = SctpHandler::new(&mut ctx, backlog);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(backlog));
             if let Some(eto) = handler.poll_timeout() {
                 assert!(
                     eto > now,
@@ -1616,7 +1870,7 @@ mod tests {
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
 
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             handler
                 .handle_timeout(Instant::now())
                 .expect("handle_timeout");
@@ -1670,7 +1924,7 @@ mod tests {
         let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             for d in ack_dgrams {
                 let msg = TaggedRTCMessageInternal {
                     now,
@@ -1729,16 +1983,14 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch_a, conn_a);
         transport.sctp_associations.insert(ch_b, conn_b);
         let mut ctx = SctpHandlerContext::new(now, transport);
 
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             handler
                 .handle_timeout(Instant::now())
                 .expect("handle_timeout");
@@ -1794,9 +2046,7 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(Endpoint::new(
             client_addr(),
             TransportProtocol::UDP,
@@ -1811,7 +2061,7 @@ mod tests {
         assert_eq!(ctx.now, t(0));
 
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now: t(7),
@@ -1826,7 +2076,7 @@ mod tests {
         );
 
         let flushed = {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             let mut out = vec![];
             while let Some(msg) = handler.poll_write() {
                 out.push(msg);
@@ -1884,7 +2134,7 @@ mod tests {
 
         // Ingest the whole burst. Every read arms the flush; none performs it.
         {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             for (i, d) in dgrams.iter().enumerate() {
                 handler
                     .handle_read(TaggedRTCMessageInternal {
@@ -1912,7 +2162,7 @@ mod tests {
 
         // One poll_write runs the single flush for the whole burst.
         let flushed = {
-            let mut handler = SctpHandler::new(&mut ctx, 0);
+            let mut handler = SctpHandler::new(&mut ctx, message_backlog(0));
             let mut out = vec![];
             while let Some(msg) = handler.poll_write() {
                 out.push(msg);

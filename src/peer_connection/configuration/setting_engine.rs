@@ -265,31 +265,21 @@ pub struct ReplayProtection {
 /// Maximum message size for SCTP data channels.
 ///
 /// Controls the maximum size of messages that can be sent through data channels.
-/// Per [RFC 8841](https://datatracker.ietf.org/doc/html/rfc8841), the default is 64KB.
+/// Per [RFC 8841](https://datatracker.ietf.org/doc/html/rfc8841), the default is 64KB. Capped at
+/// the SCTP receive buffer size (see [`SettingEngineBuilder::with_sctp_max_receive_buffer_size`]).
 #[derive(Copy, Clone)]
 #[non_exhaustive]
 pub enum SctpMaxMessageSize {
     /// Fixed maximum message size in bytes.
     Bounded(u32),
 
-    /// No practical limit (uses MAX_MESSAGE_SIZE internally).
+    /// As large as the SCTP receive buffer allows.
     Unbounded,
 }
 
 impl SctpMaxMessageSize {
     /// Default message size per RFC 8841 (64KB).
     pub const DEFAULT_MESSAGE_SIZE: u32 = 65536;
-
-    /// Maximum message size (256KB).
-    pub const MAX_MESSAGE_SIZE: u32 = 262144;
-
-    /// Returns the message size as `usize`.
-    pub fn as_usize(&self) -> usize {
-        match self {
-            Self::Bounded(result) => (*result).min(Self::MAX_MESSAGE_SIZE) as usize,
-            Self::Unbounded => Self::MAX_MESSAGE_SIZE as usize,
-        }
-    }
 }
 
 impl Default for SctpMaxMessageSize {
@@ -374,6 +364,9 @@ pub struct SettingEngine {
     /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
     /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
+    /// Overrides how many undelivered inbound data-channel bytes the pipeline may hold before
+    /// SCTP stops draining. `None` uses the default (1 MiB).
+    pub(crate) sctp_read_backlog_bytes: Option<usize>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1303,6 +1296,9 @@ impl SettingEngineBuilder {
     /// This controls the largest message that can be sent through a data channel.
     /// Larger messages will be fragmented or rejected depending on the configuration.
     ///
+    /// Capped at the SCTP receive buffer size ([`Self::with_sctp_max_receive_buffer_size`]),
+    /// since a message must fit in it to be reassembled.
+    ///
     /// # Parameters
     ///
     /// * `max_message_size` - Maximum size (Bounded or Unbounded)
@@ -1327,7 +1323,7 @@ impl SettingEngineBuilder {
     ///     .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(256 * 1024)) // 256KB
     ///     .build();
     ///
-    /// // Or unbounded (uses MAX_MESSAGE_SIZE internally)
+    /// // Or as large as the SCTP receive buffer (1MB by default)
     /// let setting_engine = SettingEngineBuilder::new()
     ///     .with_sctp_max_message_size(SctpMaxMessageSize::Unbounded)
     ///     .build();
@@ -1354,10 +1350,9 @@ impl SettingEngineBuilder {
     /// **Bounds.** RFC 9260 §3.3.2 requires an advertised initial a_rwnd of at least **1500
     /// bytes**; smaller values (including `0`) are raised to that floor here, because a
     /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
-    /// association never establishes. The window should also be **≥ the largest SCTP
-    /// message this endpoint will receive** ([`SettingEngineBuilder::with_sctp_max_message_size`], default
-    /// 64 KiB): a buffer smaller than one message cannot hold it for reassembly, so a
-    /// full-size inbound message would stall that receive direction. `0` here is *not*
+    /// association never establishes. It also **caps the largest SCTP message this endpoint
+    /// will receive** ([`SettingEngineBuilder::with_sctp_max_message_size`], default 64 KiB):
+    /// a buffer smaller than one message cannot hold it for reassembly. `0` here is *not*
     /// "unbounded" (unlike some other knobs) — to keep the default window, leave this
     /// unset (the default is `INITIAL_RECV_BUF_SIZE`, 1 MiB).
     pub fn with_sctp_max_receive_buffer_size(mut self, size: u32) -> Self {
@@ -1400,6 +1395,28 @@ impl SettingEngineBuilder {
     /// default, leave this unset.
     pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
         self.0.sctp_mtu = Some(mtu);
+        self
+    }
+
+    /// Overrides how many undelivered inbound data-channel payload bytes a connection may hold
+    /// before it stops reading from SCTP, in bytes. The default is 1 MiB.
+    ///
+    /// Inbound messages wait in the connection until the application reads them. Once the
+    /// application falls this far behind — or 256 messages behind, whichever comes first — the
+    /// connection leaves further data in SCTP's receive buffer, which shrinks the window
+    /// advertised to the peer and throttles it. Reading again resumes delivery. Media is never
+    /// held back by this.
+    ///
+    /// A message is admitted whenever the backlog is below this budget, however large the
+    /// message, so the backlog can exceed it by up to one maximum-size message
+    /// ([`SettingEngineBuilder::with_sctp_max_message_size`]); a budget smaller than a message
+    /// therefore slows delivery to one message at a time rather than stalling it. `0` is
+    /// treated as `1`.
+    ///
+    /// Lower it to cap per-connection memory when a server holds many connections whose
+    /// consumers may stall; raise it if an application reads in large, infrequent batches.
+    pub fn with_sctp_read_backlog_bytes(mut self, bytes: usize) -> Self {
+        self.0.sctp_read_backlog_bytes = Some(bytes);
         self
     }
 

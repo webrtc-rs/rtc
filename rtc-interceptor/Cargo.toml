@@ -19,9 +19,20 @@ rtp.workspace = true
 rtcp.workspace = true
 rand.workspace = true
 log.workspace = true
+wide.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
+criterion.workspace = true
 
 [[bench]]
 name = "congestion_control"
+harness = false
+
+[[bench]]
+name = "feedback"
+harness = false
+
+[[bench]]
+name = "flexfec"
 harness = false

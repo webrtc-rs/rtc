@@ -1,0 +1,46 @@
+[package]
+name = "rtc-bench"
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+description = "End-to-end benchmarks and the shared in-memory harness for the rtc workspace"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Provider features mirror the root crate's, so `--features crypto-aws-lc-rs` on this package
+# selects the backend exactly as it does on `rtc`, and `providers()` can list what was compiled in.
+[features]
+default = ["crypto-ring"]
+crypto-ring = ["rtc/crypto-ring"]
+crypto-aws-lc-rs = ["rtc/crypto-aws-lc-rs"]
+
+# The library has no benchmarks of its own. Without this, `cargo bench -p rtc-bench -- <args>`
+# also hands criterion's arguments to the library's libtest harness, which rejects them and aborts
+# the run before any benchmark starts.
+[lib]
+bench = false
+
+[dependencies]
+rtc = { path = "../..", default-features = false }
+bytes.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "peer_connection"
+harness = false
+
+[[bench]]
+name = "data_channel"
+harness = false
+
+[[bench]]
+name = "media"
+harness = false
+
+# Prints heap allocations per packet and per message; not a criterion benchmark.
+[[bench]]
+name = "allocations"
+harness = false

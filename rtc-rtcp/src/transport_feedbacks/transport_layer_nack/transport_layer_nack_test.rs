@@ -357,3 +357,55 @@ fn test_lost_packets_is_reset_when_crossing_16_bit_boundary() {
         ],
     )
 }
+
+/// The iterator's previous `next`, which searched for the next set bit from bit 0 on every
+/// call; kept as the reference the `trailing_zeros` version must match.
+fn reference_packet_list(pair: NackPair) -> Vec<u16> {
+    let mut out = vec![pair.packet_id];
+    let mut bitfield = pair.lost_packets;
+    loop {
+        let mut i = 0;
+        let mut found = None;
+        while bitfield != 0 {
+            if (bitfield & (1 << i)) != 0 {
+                bitfield &= !(1 << i);
+                found = Some(pair.packet_id.wrapping_add(i + 1));
+                break;
+            }
+            i += 1;
+        }
+        match found {
+            Some(seq) => out.push(seq),
+            None => return out,
+        }
+    }
+}
+
+/// Every 16-bit mask yields the base packet and then the same wrapping sequence numbers, in the
+/// same ascending order, as the per-position search — at base IDs that wrap and that do not —
+/// with an exact size hint at every step, and keeps returning `None` once exhausted.
+#[test]
+fn test_nack_iterator_matches_reference_for_every_mask() {
+    for packet_id in [0u16, 1, 42, 0x7fff, 65_519, 65_520, 65_534, 65_535] {
+        for lost_packets in 0..=u16::MAX {
+            let pair = NackPair {
+                packet_id,
+                lost_packets,
+            };
+            let expected = reference_packet_list(pair);
+            let mut iter = pair.into_iter();
+            let mut got = Vec::with_capacity(17);
+            loop {
+                let remaining = expected.len() - got.len();
+                assert_eq!(iter.size_hint(), (remaining, Some(remaining)));
+                match iter.next() {
+                    Some(seq) => got.push(seq),
+                    None => break,
+                }
+            }
+            assert_eq!(got, expected, "{pair:?}");
+            assert_eq!(iter.next(), None);
+            assert_eq!(pair.packet_list(), expected);
+        }
+    }
+}

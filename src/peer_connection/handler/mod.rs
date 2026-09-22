@@ -16,7 +16,7 @@ use crate::peer_connection::handler::dtls::{DtlsHandler, DtlsHandlerContext};
 use crate::peer_connection::handler::endpoint::{EndpointHandler, EndpointHandlerContext};
 use crate::peer_connection::handler::ice::{IceHandler, IceHandlerContext};
 use crate::peer_connection::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
-use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
+use crate::peer_connection::handler::sctp::{ReadBacklog, SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::message::{
     RTCMessage, TaggedRTCMessage,
@@ -30,6 +30,7 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Packet;
 use log::warn;
+use sansio::Protocol as _;
 use shared::TaggedBytesMut;
 use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
@@ -121,15 +122,62 @@ pub(crate) struct PipelineContext {
     pub(crate) media_read_outs: VecDeque<TaggedRTCMessage>,
     /// Data-channel messages ready for the application.
     ///
-    /// Its length *is* the back-pressure signal the SCTP handler bounds against, so a caller
-    /// that declines to drain it throttles the peer — and nothing else. No counter to keep in
-    /// step with it: the queue is the count.
+    /// Its length and [`Self::data_read_bytes`] *are* the back-pressure signal the SCTP handler
+    /// bounds against, so a caller that declines to drain it throttles the peer — and nothing
+    /// else. Push and pop through [`Self::push_data_read`] and [`Self::pop_data_read`], which
+    /// keep the byte count in step.
     pub(crate) data_read_outs: VecDeque<TaggedRTCMessage>,
+    /// Payload bytes held in [`Self::data_read_outs`].
+    pub(crate) data_read_bytes: usize,
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
 
+    // Scratch belts the packet traversals carry messages between handlers on. Kept between calls
+    // so a traversal reuses the last one's storage instead of allocating its own — every inbound
+    // datagram and every outbound packet takes one. Empty outside a traversal. See
+    // `release_belt` for the bound on what they retain. Events are too rare to be worth
+    // retaining storage for.
+    pub(crate) read_belt: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_belt: VecDeque<TaggedRTCMessageInternal>,
+
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
+}
+
+/// Capacity a scratch belt keeps between traversals.
+///
+/// A burst — a DTLS flight, a flush of many SCTP packets — can grow a belt well past what a
+/// single packet needs. Trimming it back afterwards keeps a burst from becoming a permanent part
+/// of every connection's footprint (at most 16 × 224 bytes per belt), while a traversal of a
+/// packet or two never reallocates.
+const RETAINED_BELT_CAPACITY: usize = 16;
+
+fn release_belt<T>(mut belt: VecDeque<T>) -> VecDeque<T> {
+    debug_assert!(belt.is_empty(), "a traversal must consume its whole belt");
+    if belt.capacity() > RETAINED_BELT_CAPACITY {
+        belt.shrink_to(RETAINED_BELT_CAPACITY);
+    }
+    belt
+}
+
+impl PipelineContext {
+    fn data_read_len(msg: &TaggedRTCMessage) -> usize {
+        match &msg.message {
+            RTCMessage::DataChannelMessage(_, message) => message.data.len(),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn push_data_read(&mut self, msg: TaggedRTCMessage) {
+        self.data_read_bytes += Self::data_read_len(&msg);
+        self.data_read_outs.push_back(msg);
+    }
+
+    pub(crate) fn pop_data_read(&mut self) -> Option<TaggedRTCMessage> {
+        let msg = self.data_read_outs.pop_front()?;
+        self.data_read_bytes -= Self::data_read_len(&msg);
+        Some(msg)
+    }
 }
 
 impl RTCPeerConnection {
@@ -189,7 +237,18 @@ impl RTCPeerConnection {
     /// without the other.
     #[doc(hidden)]
     pub fn poll_data_read(&mut self) -> Option<TaggedRTCMessage> {
-        self.pipeline_context.data_read_outs.pop_front()
+        self.resume_parked_data();
+        self.pipeline_context.pop_data_read()
+    }
+
+    /// Data-channel payload bytes received and waiting for the application to read.
+    ///
+    /// This is the backlog the connection bounds with
+    /// [`with_sctp_read_backlog_bytes`](crate::peer_connection::configuration::setting_engine::SettingEngineBuilder::with_sctp_read_backlog_bytes):
+    /// past it, further data stays in SCTP's receive buffer and the peer is throttled.
+    #[doc(hidden)]
+    pub fn data_read_backlog_bytes(&self) -> usize {
+        self.pipeline_context.data_read_bytes
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
@@ -197,7 +256,10 @@ impl RTCPeerConnection {
         // the application has not yet consumed. That backlog lives here, not in the handler's
         // own `read_outs` — the pipeline empties that within a single `handle_read` — and it
         // is data-channel output only, so unrelated media cannot throttle SCTP.
-        let downstream_backlog = self.pipeline_context.data_read_outs.len();
+        let downstream_backlog = ReadBacklog {
+            messages: self.pipeline_context.data_read_outs.len(),
+            bytes: self.pipeline_context.data_read_bytes,
+        };
         SctpHandler::new(
             &mut self.pipeline_context.sctp_handler_context,
             downstream_backlog,
@@ -241,23 +303,10 @@ impl RTCPeerConnection {
             &mut self.pipeline_context.stats,
         )
     }
-}
 
-impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedBytesMut;
-    type Eout = RTCPeerConnectionEvent;
-    type Error = Error;
-    type Time = Instant;
-
-    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        let mut intermediate_routs = VecDeque::new();
-        intermediate_routs.push_back(TaggedRTCMessageInternal {
-            now: msg.now,
-            transport: msg.transport,
-            message: RTCMessageInternal::Raw(msg.message),
-        });
-
+    /// One forward walk of every handler, starting from what is on `intermediate_routs`, with
+    /// whatever reaches the end routed to the application's queues.
+    fn traverse_read(&mut self, mut intermediate_routs: VecDeque<TaggedRTCMessageInternal>) {
         for_each_handler!(forward: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
                 if let Err(err) = handler.handle_read(msg) {
@@ -309,28 +358,68 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 // to apply SCTP back-pressure — without also declining media.
                 match &tagged.message {
                     RTCMessage::DataChannelMessage(..) => {
-                        self.pipeline_context.data_read_outs.push_back(tagged)
+                        self.pipeline_context.push_data_read(tagged)
                     }
                     _ => self.pipeline_context.media_read_outs.push_back(tagged),
                 }
             }
         }
 
+        self.pipeline_context.read_belt = release_belt(intermediate_routs);
+    }
+
+    /// Resumes SCTP streams parked by back-pressure, once the application has read everything
+    /// they were held back behind.
+    ///
+    /// A parked stream otherwise resumes only on the next traversal, which needs an inbound
+    /// datagram — and the peer, throttled by the very window that parking shrank, may have
+    /// nothing to send until its next zero-window probe or consent check. Reading is the
+    /// moment capacity appears, so reading is what resumes: a walk with nothing on the belt,
+    /// in which the SCTP handler's `poll_read` tops up from the parked streams.
+    fn resume_parked_data(&mut self) {
+        if self.pipeline_context.data_read_outs.is_empty()
+            && self
+                .pipeline_context
+                .sctp_handler_context
+                .has_parked_streams()
+        {
+            let belt = std::mem::take(&mut self.pipeline_context.read_belt);
+            self.traverse_read(belt);
+        }
+    }
+}
+
+impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedBytesMut;
+    type Eout = RTCPeerConnectionEvent;
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        let mut belt = std::mem::take(&mut self.pipeline_context.read_belt);
+        belt.push_back(TaggedRTCMessageInternal {
+            now: msg.now,
+            transport: msg.transport,
+            message: RTCMessageInternal::Raw(msg.message),
+        });
+        self.traverse_read(belt);
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.resume_parked_data();
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
             self.pipeline_context.media_read_outs.front(),
         ) {
             if data.now <= media.now {
-                self.pipeline_context.data_read_outs.pop_front()
+                self.pipeline_context.pop_data_read()
             } else {
                 self.pipeline_context.media_read_outs.pop_front()
             }
         } else if self.pipeline_context.data_read_outs.front().is_some() {
-            self.pipeline_context.data_read_outs.pop_front()
+            self.pipeline_context.pop_data_read()
         } else {
             self.pipeline_context.media_read_outs.pop_front()
         }
@@ -363,7 +452,15 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        let mut intermediate_wouts = VecDeque::new();
+        // Output from an earlier walk goes first, without another one. A walk can produce many
+        // datagrams — a DTLS flight, a flush of SCTP packets — and a caller drains them one call
+        // at a time; walking all eight handlers again for each would be work for nothing, since
+        // whatever a new walk produced would queue behind them anyway.
+        if let Some(out) = self.pipeline_context.write_outs.pop_front() {
+            return Some(out);
+        }
+
+        let mut intermediate_wouts = std::mem::take(&mut self.pipeline_context.write_belt);
 
         for_each_handler!(reverse: process_handler!(self, handler, {
             while let Some(msg) = intermediate_wouts.pop_front() {
@@ -386,6 +483,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 });
             }
         }
+        self.pipeline_context.write_belt = release_belt(intermediate_wouts);
 
         self.pipeline_context.write_outs.pop_front()
     }
@@ -400,6 +498,11 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
+        // As in `poll_write`: events already queued go first, without another walk.
+        if let Some(event) = self.pipeline_context.event_outs.pop_front() {
+            return Some(event);
+        }
+
         let mut intermediate_eouts = VecDeque::new();
 
         for_each_handler!(forward: process_handler!(self, handler, {
@@ -550,9 +653,7 @@ mod handler_test {
             };
             let tagged = TaggedRTCMessage { now: base, message };
             match tagged.message {
-                RTCMessage::DataChannelMessage(..) => {
-                    pc.pipeline_context.data_read_outs.push_back(tagged)
-                }
+                RTCMessage::DataChannelMessage(..) => pc.pipeline_context.push_data_read(tagged),
                 _ => pc.pipeline_context.media_read_outs.push_back(tagged),
             }
         }
@@ -596,12 +697,10 @@ mod handler_test {
             .build(base)
             .expect("build peer connection");
 
-        pc.pipeline_context
-            .data_read_outs
-            .push_back(TaggedRTCMessage {
-                now: base,
-                message: RTCMessage::DataChannelMessage(0, RTCDataChannelMessage::default()),
-            });
+        pc.pipeline_context.push_data_read(TaggedRTCMessage {
+            now: base,
+            message: RTCMessage::DataChannelMessage(0, RTCDataChannelMessage::default()),
+        });
         pc.pipeline_context
             .media_read_outs
             .push_back(TaggedRTCMessage {

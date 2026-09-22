@@ -1,6 +1,7 @@
 //! FlexFEC draft-03 recovery: rebuilding a lost media packet from a repair packet.
 
 use super::encoder::BASE_RTP_HEADER_SIZE;
+use crate::flexfec::xor::xor_into;
 use shared::marshal::{Marshal, MarshalSize, Unmarshal};
 
 /// Recovered media packets kept for matching against later repair packets.
@@ -84,6 +85,20 @@ pub struct FlexFec03Decoder {
     /// Media packets seen or recovered, ordered oldest first.
     recovered: Vec<rtp::Packet>,
     repair_packets: Vec<RepairState>,
+    /// Where each surviving protected packet is serialised during recovery; reused, never zeroed
+    /// (see [`recover`](Self::recover)).
+    scratch: Scratch,
+}
+
+/// Serialisation space reused across recoveries. Its contents mean nothing between uses, so
+/// `Debug` shows only its size.
+#[derive(Default)]
+struct Scratch(Vec<u8>);
+
+impl std::fmt::Debug for Scratch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Scratch({} bytes)", self.0.len())
+    }
 }
 
 impl FlexFec03Decoder {
@@ -94,6 +109,7 @@ impl FlexFec03Decoder {
             media_ssrc,
             recovered: Vec::new(),
             repair_packets: Vec::new(),
+            scratch: Scratch::default(),
         }
     }
 
@@ -261,12 +277,25 @@ impl FlexFec03Decoder {
     }
 
     /// Rebuild the one missing packet of `state` by XORing the others back out of the repair data.
-    fn recover(&self, state: &RepairState) -> Option<rtp::Packet> {
+    ///
+    /// Each surviving packet is serialised once, into a scratch buffer reused across packets and
+    /// calls, and folded into the recovery fields and the payload in the same pass. The scratch
+    /// buffer is never zeroed: `marshal_to` writes a prefix of it and reports the length, and
+    /// what a freshly zeroed buffer would hold beyond that prefix is zero, which XOR ignores. Only
+    /// the length-recovery term needs the full `marshal_size`.
+    ///
+    /// The payload is XORed over the whole repair payload and cut to the recovered length
+    /// afterwards; XOR is byte-wise, so the bytes kept are the ones a cut-first XOR produces.
+    fn recover(&mut self, state: &RepairState) -> Option<rtp::Packet> {
         let repair_payload = state.packet.payload.get(state.header.payload_offset..)?;
 
-        // The recovery fields occupy the first 8 bytes; the RTP header is 12.
-        let mut header = vec![0u8; BASE_RTP_HEADER_SIZE];
-        header[..8].copy_from_slice(state.packet.payload.get(..8)?);
+        // The recovered packet: a 12-byte RTP header, seeded with the 8 bytes of recovery fields,
+        // followed by the repair payload the survivors are XORed out of.
+        let mut recovered = Vec::with_capacity(BASE_RTP_HEADER_SIZE + repair_payload.len());
+        recovered.extend_from_slice(state.packet.payload.get(..8)?);
+        recovered.extend_from_slice(&[0; BASE_RTP_HEADER_SIZE - 8]);
+        recovered.extend_from_slice(repair_payload);
+        let (header, payload) = recovered.split_at_mut(BASE_RTP_HEADER_SIZE);
 
         let mut missing_sequence_number = 0u16;
         for protected in &state.protected {
@@ -275,16 +304,26 @@ impl FlexFec03Decoder {
                 continue;
             };
 
-            let mut marshalled = vec![0u8; packet.header.marshal_size()];
-            packet.header.marshal_to(&mut marshalled).ok()?;
-            // Bytes 2..4 of a media header are its sequence number; in the recovery fields that
-            // position carries the payload length instead, so substitute before XORing.
-            let payload_length = (packet.marshal_size() - BASE_RTP_HEADER_SIZE) as u16;
-            marshalled[2..4].copy_from_slice(&payload_length.to_be_bytes());
+            let size = packet.marshal_size();
+            let scratch = &mut self.scratch.0;
+            if scratch.len() < size {
+                scratch.resize(size, 0);
+            }
+            let written = packet.marshal_to(&mut scratch[..size]).ok()?.min(size);
+            let marshalled = &scratch[..written];
 
-            for index in 0..8 {
+            // Bytes 2..4 of a media header are its sequence number; in the recovery fields that
+            // position carries the payload length instead.
+            let payload_length = (size - BASE_RTP_HEADER_SIZE) as u16;
+            header[0] ^= marshalled[0];
+            header[1] ^= marshalled[1];
+            header[2] ^= (payload_length >> 8) as u8;
+            header[3] ^= payload_length as u8;
+            for index in 4..8 {
                 header[index] ^= marshalled[index];
             }
+
+            xor_into(payload, &marshalled[BASE_RTP_HEADER_SIZE..]);
         }
 
         // Version 2, and no padding: neither is recovered, both are known.
@@ -298,20 +337,7 @@ impl FlexFec03Decoder {
         header[2..4].copy_from_slice(&missing_sequence_number.to_be_bytes());
         header[8..12].copy_from_slice(&self.media_ssrc.to_be_bytes());
 
-        let mut payload = repair_payload[..payload_length].to_vec();
-        for protected in &state.protected {
-            let Some(packet) = &protected.packet else {
-                continue;
-            };
-            let mut marshalled = vec![0u8; packet.marshal_size()];
-            packet.marshal_to(&mut marshalled).ok()?;
-            for (target, &source) in payload.iter_mut().zip(&marshalled[BASE_RTP_HEADER_SIZE..]) {
-                *target ^= source;
-            }
-        }
-
-        header.extend_from_slice(&payload);
-        let mut buffer = header.as_slice();
+        let mut buffer = &recovered[..BASE_RTP_HEADER_SIZE + payload_length];
         rtp::Packet::unmarshal(&mut buffer).ok()
     }
 
@@ -438,4 +464,242 @@ fn sequence_order(a: u16, b: u16) -> std::cmp::Ordering {
 /// The shorter distance between two sequence numbers in either direction.
 fn sequence_distance(a: u16, b: u16) -> u16 {
     a.wrapping_sub(b).min(b.wrapping_sub(a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flexfec::draft03::encoder::FlexFec03Encoder;
+    use crate::flexfec::draft03::test_blocks::{
+        BLOCK_SIZES, FEC_COUNTS, MEDIA_SSRC, Rng, media_block,
+    };
+
+    const REPAIR_SSRC: u32 = 0x33B6_9A2A;
+    const REPAIR_PT: u8 = 49;
+
+    /// Positions draft-03's three packet masks can name: 15 + 31 + 63.
+    ///
+    /// `ProtectionCoverage` admits 110-packet blocks — RFC 8627's third mask is a bit wider — so
+    /// in a 110-packet draft-03 block the last packet is XORed into its repair packet without
+    /// being declared, and no loss under that repair packet recovers correctly. That predates
+    /// these tests; they hold 110-packet blocks to the reference's output but not to a round
+    /// trip.
+    const DRAFT03_MASK_POSITIONS: usize = 109;
+
+    /// `recover` as it stood before each protected packet was serialised once into a reused
+    /// scratch buffer and the payload XOR moved into `xor_into`, kept verbatim as the definition
+    /// of the result.
+    fn reference_recover(media_ssrc: u32, state: &RepairState) -> Option<rtp::Packet> {
+        let repair_payload = state.packet.payload.get(state.header.payload_offset..)?;
+
+        // The recovery fields occupy the first 8 bytes; the RTP header is 12.
+        let mut header = vec![0u8; BASE_RTP_HEADER_SIZE];
+        header[..8].copy_from_slice(state.packet.payload.get(..8)?);
+
+        let mut missing_sequence_number = 0u16;
+        for protected in &state.protected {
+            let Some(packet) = &protected.packet else {
+                missing_sequence_number = protected.sequence_number;
+                continue;
+            };
+
+            let mut marshalled = vec![0u8; packet.header.marshal_size()];
+            packet.header.marshal_to(&mut marshalled).ok()?;
+            // Bytes 2..4 of a media header are its sequence number; in the recovery fields that
+            // position carries the payload length instead, so substitute before XORing.
+            let payload_length = (packet.marshal_size() - BASE_RTP_HEADER_SIZE) as u16;
+            marshalled[2..4].copy_from_slice(&payload_length.to_be_bytes());
+
+            for index in 0..8 {
+                header[index] ^= marshalled[index];
+            }
+        }
+
+        // Version 2, and no padding: neither is recovered, both are known.
+        header[0] |= 0x80;
+        header[0] &= 0xBF;
+
+        let payload_length = u16::from_be_bytes([header[2], header[3]]) as usize;
+        if repair_payload.len() < payload_length {
+            return None;
+        }
+        header[2..4].copy_from_slice(&missing_sequence_number.to_be_bytes());
+        header[8..12].copy_from_slice(&media_ssrc.to_be_bytes());
+
+        let mut payload = repair_payload[..payload_length].to_vec();
+        for protected in &state.protected {
+            let Some(packet) = &protected.packet else {
+                continue;
+            };
+            let mut marshalled = vec![0u8; packet.marshal_size()];
+            packet.marshal_to(&mut marshalled).ok()?;
+            for (target, &source) in payload.iter_mut().zip(&marshalled[BASE_RTP_HEADER_SIZE..]) {
+                *target ^= source;
+            }
+        }
+
+        header.extend_from_slice(&payload);
+        let mut buffer = header.as_slice();
+        rtp::Packet::unmarshal(&mut buffer).ok()
+    }
+
+    /// The state `repair` reaches once every packet it protects has arrived except `lost`.
+    fn state_missing(repair: &rtp::Packet, media: &[rtp::Packet], lost: u16) -> RepairState {
+        let header = parse_repair_header(&repair.payload).expect("the encoder's header parses");
+        let protected = header
+            .protected_sequence_numbers
+            .iter()
+            .map(|&sequence_number| ProtectedPacket {
+                sequence_number,
+                packet: (sequence_number != lost)
+                    .then(|| {
+                        media
+                            .iter()
+                            .find(|packet| packet.header.sequence_number == sequence_number)
+                            .cloned()
+                    })
+                    .flatten(),
+            })
+            .collect();
+        RepairState {
+            packet: repair.clone(),
+            header,
+            protected,
+        }
+    }
+
+    fn wire(packet: &rtp::Packet) -> Vec<u8> {
+        packet.marshal().expect("marshal").to_vec()
+    }
+
+    /// Every single-loss position of every repair packet, over random blocks of every size around
+    /// the mask boundaries, with payloads of 0–1,500 bytes, CSRCs, all extension profiles, RTP
+    /// padding, unwritten `extensions_padding` and unserialisable packets.
+    ///
+    /// One decoder serves a whole seed, so its scratch buffer always holds bytes from an earlier,
+    /// often longer, packet. Ordinary blocks must also recover the lost packet itself.
+    #[test]
+    fn every_single_loss_recovers_exactly_as_the_reference_does() {
+        for seed in 0..6u64 {
+            let mut rng = Rng::new(seed);
+            let exotic = seed % 2 == 1;
+            let mut decoder = FlexFec03Decoder::new(REPAIR_SSRC, MEDIA_SSRC);
+
+            for &count in BLOCK_SIZES {
+                for &num_fec_packets in FEC_COUNTS {
+                    let media = media_block(&mut rng, count, exotic);
+                    let repair = FlexFec03Encoder::new(REPAIR_PT, REPAIR_SSRC)
+                        .encode(&media, num_fec_packets);
+
+                    for repair_packet in &repair {
+                        let header = parse_repair_header(&repair_packet.payload).expect("parses");
+                        for &lost in &header.protected_sequence_numbers {
+                            let state = state_missing(repair_packet, &media, lost);
+                            let context = format!(
+                                "seed {seed}, {count} media, {num_fec_packets} repair, lost {lost}"
+                            );
+
+                            let expected = reference_recover(MEDIA_SSRC, &state);
+                            let actual = decoder.recover(&state);
+                            assert_eq!(expected, actual, "{context}");
+
+                            if !exotic && count <= DRAFT03_MASK_POSITIONS {
+                                let original = media
+                                    .iter()
+                                    .find(|packet| packet.header.sequence_number == lost)
+                                    .expect("lost packet");
+                                let recovered = actual.expect("an ordinary block recovers");
+                                assert_eq!(wire(original), wire(&recovered), "{context}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Repair packets damaged in transit — recovery fields scrambled, repair payload cut short or
+    /// lengthened — give the same packet, or the same refusal, as before.
+    #[test]
+    fn damaged_repair_packets_recover_exactly_as_the_reference_does() {
+        let mut rng = Rng::new(1234);
+        let mut decoder = FlexFec03Decoder::new(REPAIR_SSRC, MEDIA_SSRC);
+        for round in 0..400 {
+            let count = 1 + rng.upto(20);
+            let media = media_block(&mut rng, count, round % 2 == 1);
+            let repair = FlexFec03Encoder::new(REPAIR_PT, REPAIR_SSRC).encode(&media, 1);
+            let Some(repair_packet) = repair.first() else {
+                continue;
+            };
+
+            let mut payload = repair_packet.payload.to_vec();
+            match rng.upto(3) {
+                0 => {
+                    let index = rng.upto(7);
+                    payload[index] ^= 1 << rng.upto(7);
+                }
+                1 => {
+                    let header_size = parse_repair_header(&payload)
+                        .expect("parses")
+                        .payload_offset;
+                    payload.truncate(header_size + rng.upto(payload.len() - header_size));
+                }
+                2 => payload.extend((0..rng.upto(40)).map(|_| rng.next() as u8)),
+                _ => {
+                    // The length-recovery field alone, to both sides of the true length.
+                    payload[2] = rng.next() as u8;
+                    payload[3] = rng.next() as u8;
+                }
+            }
+            let damaged = rtp::Packet {
+                header: repair_packet.header.clone(),
+                payload: payload.into(),
+            };
+
+            let Ok(header) = parse_repair_header(&damaged.payload) else {
+                continue;
+            };
+            let lost = header.protected_sequence_numbers[rng.upto(count - 1)];
+            let state = state_missing(&damaged, &media, lost);
+            assert_eq!(
+                reference_recover(MEDIA_SSRC, &state),
+                decoder.recover(&state),
+                "round {round}"
+            );
+        }
+    }
+
+    /// Through the public entry point: a fresh decoder fed the block minus one packet, then its
+    /// repair packets, hands back exactly the lost packet, for every loss position.
+    #[test]
+    fn every_single_loss_is_recovered_through_decode() {
+        let mut rng = Rng::new(77);
+        for &count in BLOCK_SIZES
+            .iter()
+            .filter(|&&count| count <= DRAFT03_MASK_POSITIONS)
+        {
+            for num_fec_packets in [1, 2, 5] {
+                let media = media_block(&mut rng, count, false);
+                let repair =
+                    FlexFec03Encoder::new(REPAIR_PT, REPAIR_SSRC).encode(&media, num_fec_packets);
+
+                for lost in 0..media.len() {
+                    let mut decoder = FlexFec03Decoder::new(REPAIR_SSRC, MEDIA_SSRC);
+                    let mut recovered = Vec::new();
+                    for (index, packet) in media.iter().enumerate() {
+                        if index != lost {
+                            recovered.extend(decoder.decode(packet.clone()));
+                        }
+                    }
+                    for packet in &repair {
+                        recovered.extend(decoder.decode(packet.clone()));
+                    }
+
+                    let context = format!("{count} media, {num_fec_packets} repair, lost {lost}");
+                    assert_eq!(1, recovered.len(), "{context}");
+                    assert_eq!(wire(&media[lost]), wire(&recovered[0]), "{context}");
+                }
+            }
+        }
+    }
 }

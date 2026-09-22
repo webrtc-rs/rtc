@@ -336,12 +336,12 @@ fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
     tid.0[..3].copy_from_slice("ABC".as_bytes());
 
     let remote_pwd = {
-        a.pending_binding_requests = vec![BindingRequest {
+        a.pending_binding_requests.push(BindingRequest {
             timestamp: Instant::now(),
             transaction_id: tid,
             destination: SocketAddr::from_str("0.0.0.0:0")?,
             is_use_candidate: false,
-        }];
+        });
         a.ufrag_pwd.remote_credentials = Some(Credentials {
             ufrag: "".to_string(),
             pwd: "".to_string(),
@@ -3384,5 +3384,379 @@ fn test_stats_snapshot_reports_the_callers_instant_throughout() -> Result<()> {
     // passed between the two calls.
     assert_eq!(a.get_candidate_pairs_stats(t(900))[0].timestamp, t(900));
 
+    Ok(())
+}
+
+fn transaction_id(id: u8) -> TransactionId {
+    TransactionId([id; TRANSACTION_ID_SIZE])
+}
+
+/// A pending request sent at `base + offset`, told apart from the others by `id`.
+fn pending_request(base: Instant, offset: Duration, id: u8) -> BindingRequest {
+    BindingRequest {
+        timestamp: base + offset,
+        transaction_id: transaction_id(id),
+        destination: SocketAddr::from(([10, 0, 0, id], 5000)),
+        is_use_candidate: false,
+    }
+}
+
+fn udp_host(address: &str, port: u16) -> Result<Candidate> {
+    CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: address.to_owned(),
+            port,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()
+}
+
+/// A request expires exactly `MAX_BINDING_REQUEST_TIMEOUT` after it was sent, and not before.
+#[test]
+fn test_binding_request_expiry_boundary() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    for (offset, id) in [(0, 1), (3_900, 2), (70_900, 3), (71_100, 4), (75_000, 5)] {
+        a.pending_binding_requests
+            .push(pending_request(base, ms(offset), id));
+    }
+
+    // At 75 s, requests 1-3 are 75 s, 71.1 s and 4.1 s old; 4 and 5 are 3.9 s and 0 s old.
+    a.invalidate_pending_binding_requests(base + ms(75_000));
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        2,
+        "binding invalidation due to timeout did not remove the correct number of binding requests"
+    );
+
+    let deadline = base + ms(71_100) + MAX_BINDING_REQUEST_TIMEOUT;
+    a.invalidate_pending_binding_requests(deadline - Duration::from_nanos(1));
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        2,
+        "a request a nanosecond short of the timeout is still pending"
+    );
+    a.invalidate_pending_binding_requests(deadline);
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        1,
+        "a request exactly at the timeout has expired"
+    );
+
+    assert!(
+        a.handle_inbound_binding_success(deadline, transaction_id(4))
+            .is_none()
+    );
+    assert!(
+        a.handle_inbound_binding_success(deadline, transaction_id(5))
+            .is_some(),
+        "the younger request must survive the pass that expired the older one"
+    );
+
+    a.close()?;
+    Ok(())
+}
+
+/// Instants come from the caller and need not arrive in order. A request stamped later than the
+/// instant it is checked against has not expired, and a request pushed after a younger one still
+/// expires on time.
+#[test]
+fn test_binding_request_expiry_with_out_of_order_instants() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    a.pending_binding_requests
+        .push(pending_request(base, ms(10_000), 1));
+    // Older than the request pushed before it.
+    a.pending_binding_requests
+        .push(pending_request(base, ms(5_000), 2));
+
+    a.invalidate_pending_binding_requests(base);
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        2,
+        "an instant earlier than every request expires none of them"
+    );
+
+    let now = base + ms(5_000) + MAX_BINDING_REQUEST_TIMEOUT;
+    a.invalidate_pending_binding_requests(now);
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        1,
+        "the older request expires even though it was not the first pushed"
+    );
+    assert!(
+        a.handle_inbound_binding_success(now, transaction_id(2))
+            .is_none()
+    );
+
+    // `now` is still earlier than request 1's timestamp, which is kept and matched.
+    let matched = a
+        .handle_inbound_binding_success(now, transaction_id(1))
+        .expect("a request stamped after `now` has not expired");
+    assert_eq!(matched.timestamp, base + ms(10_000));
+
+    a.close()?;
+    Ok(())
+}
+
+/// Answering the oldest request must not hide a younger request's expiry.
+#[test]
+fn test_binding_request_expiry_after_the_oldest_is_answered() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    for (offset, id) in [(0, 1), (3_000, 2), (3_000, 3)] {
+        a.pending_binding_requests
+            .push(pending_request(base, ms(offset), id));
+    }
+
+    assert!(
+        a.handle_inbound_binding_success(base + ms(1_000), transaction_id(1))
+            .is_some()
+    );
+
+    // Past the answered request's deadline, but not the others'.
+    a.invalidate_pending_binding_requests(base + ms(4_500));
+    assert_eq!(a.pending_binding_requests.len(), 2);
+
+    assert!(
+        a.handle_inbound_binding_success(base + ms(6_900), transaction_id(2))
+            .is_some(),
+        "request 2 is 3.9 s old"
+    );
+
+    a.invalidate_pending_binding_requests(base + ms(7_000));
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        0,
+        "request 3 reached the timeout"
+    );
+    assert!(
+        a.handle_inbound_binding_success(base + ms(7_000), transaction_id(3))
+            .is_none()
+    );
+
+    a.close()?;
+    Ok(())
+}
+
+/// A response is matched by transaction ID, once, after the expired requests have been pruned, and
+/// hands back the request it answers.
+#[test]
+fn test_binding_success_matches_after_pruning() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    for (offset, id) in [(0, 1), (1_000, 2), (3_500, 3)] {
+        a.pending_binding_requests
+            .push(pending_request(base, ms(offset), id));
+    }
+
+    let matched = a
+        .handle_inbound_binding_success(base + ms(4_200), transaction_id(2))
+        .expect("request 2 is 3.2 s old");
+    assert_eq!(matched.transaction_id, transaction_id(2));
+    assert_eq!(matched.timestamp, base + ms(1_000));
+    assert_eq!(matched.destination, SocketAddr::from(([10, 0, 0, 2], 5000)));
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        1,
+        "request 1 expired on the way and request 2 was taken"
+    );
+
+    assert!(
+        a.handle_inbound_binding_success(base + ms(4_300), transaction_id(1))
+            .is_none(),
+        "an expired request cannot be answered"
+    );
+    assert!(
+        a.handle_inbound_binding_success(base + ms(4_300), transaction_id(2))
+            .is_none(),
+        "a request is answered once"
+    );
+    assert!(
+        a.handle_inbound_binding_success(base + ms(4_300), transaction_id(9))
+            .is_none(),
+        "an unknown transaction matches nothing"
+    );
+
+    let matched = a
+        .handle_inbound_binding_success(base + ms(7_400), transaction_id(3))
+        .expect("request 3 is 3.9 s old");
+    assert_eq!(matched.destination, SocketAddr::from(([10, 0, 0, 3], 5000)));
+    assert_eq!(a.pending_binding_requests.len(), 0);
+
+    a.close()?;
+    Ok(())
+}
+
+/// End to end: the checks the agent sends are matched by responses that answer them in time, and
+/// a response to a check that has expired is discarded without validating its pair.
+#[test]
+fn test_binding_responses_match_checks_across_expiry() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let remote_pwd = "remote-password".to_owned();
+    let local_addr = SocketAddr::from_str("192.168.0.1:5000")?;
+
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig {
+            multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
+    a.add_local_candidate(udp_host("192.168.0.1", 5000)?)?;
+    for port in [6001, 6002, 6003] {
+        a.add_remote_candidate(udp_host("192.168.0.2", port)?)?;
+    }
+    a.start_connectivity_checks(base, false, "remote-ufrag".to_owned(), remote_pwd.clone())?;
+
+    // The checks sent since the last call, as (remote address, transaction ID).
+    let sent = |a: &mut Agent| -> Result<Vec<(SocketAddr, TransactionId)>> {
+        let mut checks = vec![];
+        while let Some(out) = a.poll_write() {
+            let mut m = Message {
+                raw: out.message.to_vec(),
+                ..Message::default()
+            };
+            m.decode()?;
+            checks.push((out.transport.peer_addr, m.transaction_id));
+        }
+        Ok(checks)
+    };
+    // Answers a check as the remote agent would.
+    let answer = |a: &mut Agent, now: Instant, check: (SocketAddr, TransactionId)| -> Result<()> {
+        let mut m = Message::new();
+        m.build(&[
+            Box::new(BINDING_SUCCESS),
+            Box::new(check.1),
+            Box::new(XorMappedAddress {
+                ip: local_addr.ip(),
+                port: local_addr.port(),
+            }),
+            Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                remote_pwd.clone(),
+                test_crypto_provider().crypto(),
+            )),
+            Box::new(FINGERPRINT),
+        ])?;
+        a.handle_inbound(now, &mut m, 0, check.0)
+    };
+    let state = |a: &Agent, remote_addr: SocketAddr| {
+        let remote_index = a.find_remote_candidate(remote_addr).expect("known remote");
+        let pair_index = a.find_pair(0, remote_index).expect("paired");
+        a.candidate_pairs[pair_index].state
+    };
+
+    a.handle_timeout(base)?;
+    let first = sent(&mut a)?;
+    assert_eq!(first.len(), 3, "one check per pair");
+
+    answer(&mut a, base + ms(100), first[0])?;
+    assert_eq!(state(&a, first[0].0), CandidatePairState::Succeeded);
+
+    // Only the pairs still in progress are checked again.
+    a.handle_timeout(base + ms(2_000))?;
+    let second = sent(&mut a)?;
+    assert_eq!(
+        second.iter().map(|check| check.0).collect::<Vec<_>>(),
+        vec![first[1].0, first[2].0]
+    );
+    assert_eq!(a.pending_binding_requests.len(), 4);
+
+    // At 4.5 s the first round has expired and the second has not.
+    answer(&mut a, base + ms(4_500), first[1])?;
+    assert_eq!(
+        state(&a, first[1].0),
+        CandidatePairState::InProgress,
+        "a response to an expired check must not validate its pair"
+    );
+    assert_eq!(a.pending_binding_requests.len(), 2);
+
+    answer(&mut a, base + ms(4_500), second[1])?;
+    assert_eq!(state(&a, first[2].0), CandidatePairState::Succeeded);
+    answer(&mut a, base + ms(4_600), second[0])?;
+    assert_eq!(state(&a, first[1].0), CandidatePairState::Succeeded);
+    assert_eq!(a.pending_binding_requests.len(), 0);
+
+    a.close()?;
+    Ok(())
+}
+
+/// A role switch leaves the checks in flight answerable. An ICE restart discards them, so a
+/// response from the old session matches nothing, and the new session's requests expire on their
+/// own schedule.
+#[test]
+fn test_pending_binding_requests_across_role_switch_and_restart() -> Result<()> {
+    let base = Instant::now();
+    let ms = Duration::from_millis;
+    let mut a = Agent::new(
+        base,
+        Arc::new(AgentConfig {
+            multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
+
+    a.pending_binding_requests
+        .push(pending_request(base, ms(0), 1));
+    a.pending_binding_requests
+        .push(pending_request(base, ms(0), 2));
+
+    let was_controlling = a.is_controlling;
+    a.switch_role(base + ms(100));
+    assert_ne!(a.is_controlling, was_controlling);
+    assert!(
+        a.handle_inbound_binding_success(base + ms(200), transaction_id(1))
+            .is_some(),
+        "a role switch must not orphan the checks already in flight"
+    );
+
+    a.apply_restart(base + ms(300), true)?;
+    assert_eq!(a.pending_binding_requests.len(), 0);
+    assert!(
+        a.handle_inbound_binding_success(base + ms(400), transaction_id(2))
+            .is_none(),
+        "a response to a check from before the restart must not match"
+    );
+
+    a.pending_binding_requests
+        .push(pending_request(base, ms(500), 3));
+    let deadline = base + ms(500) + MAX_BINDING_REQUEST_TIMEOUT;
+    a.invalidate_pending_binding_requests(deadline - Duration::from_nanos(1));
+    assert_eq!(a.pending_binding_requests.len(), 1);
+    a.invalidate_pending_binding_requests(deadline);
+    assert_eq!(a.pending_binding_requests.len(), 0);
+
+    a.close()?;
     Ok(())
 }

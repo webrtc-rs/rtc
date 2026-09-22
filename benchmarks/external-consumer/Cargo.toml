@@ -1,0 +1,22 @@
+[package]
+name = "rtc-external-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone on purpose. This stands in for an application that depends on rtc from its own
+# project, and such a project does not inherit the rtc repository's `.cargo/config.toml`: cargo
+# reads configuration from the directory it is invoked in and that directory's ancestors, not from
+# each dependency's. `python3 scripts/bench.py external` builds it from outside the repository to
+# measure exactly that; see README.md.
+[workspace]
+
+[dependencies]
+rtc-crypto = { path = "../../rtc-crypto" }
+
+[profile.release]
+opt-level = 3
+
+[lints.rust]
+# `aes_armv8` is the cfg that aes 0.8 needed on aarch64; the binary reports whether it was set.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aes_armv8)', 'cfg(aes_backend, values("soft"))'] }

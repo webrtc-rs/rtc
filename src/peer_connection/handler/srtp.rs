@@ -6,7 +6,6 @@ use crate::peer_connection::message::internal::{
 use interceptor::Packet;
 use log::debug;
 use shared::error::{Error, Result};
-use shared::marshal::{Marshal, Unmarshal};
 use shared::util::is_rtcp;
 use srtp::context::Context;
 use std::collections::VecDeque;
@@ -75,8 +74,9 @@ impl<'a>
                 }
             } else {
                 if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
-                    let mut decrypted = context.decrypt_rtp(&message)?;
-                    let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
+                    // Decrypted in the datagram's own buffer and parsed once, rather than copied
+                    // out to be decrypted and then parsed a second time.
+                    let rtp_packet = context.decrypt_rtp_packet(message)?;
 
                     self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                         now: msg.now,
@@ -125,8 +125,9 @@ impl<'a>
                 }
                 RTPMessage::Packet(Packet::Rtp(rtp_message)) => {
                     if let Some(context) = self.ctx.local_srtp_context.as_mut() {
-                        let packet = rtp_message.marshal()?;
-                        context.encrypt_rtp(&packet)?
+                        // Marshalled into a buffer with room for the auth tag and encrypted
+                        // there, using the header already in hand instead of re-parsing it.
+                        context.encrypt_rtp_packet(&rtp_message)?
                     } else {
                         return Err(Error::Other(format!(
                             "local_srtp_context is not set yet for rtp_packet {:?}",

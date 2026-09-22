@@ -22,7 +22,7 @@ use crate::flight::flight6::*;
 use crate::flight::*;
 use crate::fragment_buffer::*;
 use crate::handshake::handshake_cache::*;
-use crate::handshake::handshake_header::HandshakeHeader;
+use crate::handshake::handshake_header::{HANDSHAKE_HEADER_LENGTH, HandshakeHeader};
 use crate::handshake::*;
 use crate::handshaker::*;
 use crate::record_layer::record_layer_header::*;
@@ -32,10 +32,10 @@ use std::collections::VecDeque;
 
 use shared::{error::*, replay_detector::*};
 
+use crate::cipher_suite::MAX_CIPHER_SUITE_OVERHEAD;
 use crate::config::HandshakeConfig;
-use bytes::BytesMut;
+use bytes::{Buf, BufMut, BytesMut};
 use log::*;
-use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -52,6 +52,15 @@ pub(crate) const DEFAULT_REPLAY_PROTECTION_WINDOW: usize = 64;
 /// caller wants, and it is what `ConfigBuilder::build` accidentally used between P7 and this
 /// constant being introduced.
 pub(crate) const DEFAULT_MAXIMUM_RETRANSMIT_NUMBER: usize = 7;
+/// Most records held while waiting for the keys of the next epoch.
+///
+/// What legitimately waits is a peer's final flight arriving out of order (Finished ahead of
+/// ChangeCipherSpec, or ChangeCipherSpec ahead of the keys) plus whatever application data the
+/// peer sends straight after its Finished. Records beyond either budget are dropped; the
+/// handshake retransmits its flights and SCTP retransmits its data.
+pub(crate) const MAX_PENDING_RECORDS: usize = 64;
+/// Most bytes, summed over records, held while waiting for the keys of the next epoch.
+pub(crate) const MAX_PENDING_RECORD_BYTES: usize = 64 * 1024;
 
 pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
     "client finished",
@@ -69,7 +78,10 @@ pub struct DTLSConn {
     replay_protection_window: usize,
     replay_detector: Vec<Box<dyn ReplayDetector>>,
     incoming_decrypted_packets: VecDeque<BytesMut>, // Decrypted Application Data or error, pull by calling `Read`
-    incoming_encrypted_packets: VecDeque<Vec<u8>>,
+    // Records waiting for the next epoch's keys, bounded by MAX_PENDING_RECORDS and
+    // MAX_PENDING_RECORD_BYTES.
+    incoming_encrypted_packets: VecDeque<BytesMut>,
+    incoming_encrypted_bytes: usize,
     fragment_buffer: FragmentBuffer,
     pub(crate) cache: HandshakeCache, // caching of handshake messages for verifyData generation
     pub(crate) outgoing_packets: VecDeque<Packet>,
@@ -147,6 +159,7 @@ impl DTLSConn {
             replay_detector: vec![],
             incoming_decrypted_packets: VecDeque::new(),
             incoming_encrypted_packets: VecDeque::new(),
+            incoming_encrypted_bytes: 0,
             fragment_buffer: FragmentBuffer::new(),
             outgoing_packets: VecDeque::new(),
             outgoing_queued_packets: VecDeque::new(),
@@ -216,7 +229,7 @@ impl DTLSConn {
         };
 
         if self.is_handshake_completed() {
-            self.write_packets(vec![pkt]);
+            self.outgoing_packets.push_back(pkt);
         } else {
             self.outgoing_queued_packets.push_back(pkt);
         }
@@ -248,7 +261,7 @@ impl DTLSConn {
     }
 
     pub(crate) fn notify(&mut self, level: AlertLevel, desc: AlertDescription) {
-        self.write_packets(vec![Packet {
+        self.outgoing_packets.push_back(Packet {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
                 self.get_local_epoch(),
@@ -259,7 +272,7 @@ impl DTLSConn {
             ),
             should_encrypt: self.is_handshake_completed(),
             reset_local_sequence_number: false,
-        }]);
+        });
     }
 
     pub(crate) fn write_packets(&mut self, pkts: Vec<Packet>) {
@@ -272,35 +285,15 @@ impl DTLSConn {
         if self.is_handshake_completed() {
             while let Some(mut pkt) = self.outgoing_queued_packets.pop_front() {
                 pkt.record.record_layer_header.epoch = self.get_local_epoch();
-                self.write_packets(vec![pkt]);
+                self.outgoing_packets.push_back(pkt);
             }
         }
 
-        let mut raw_packets = vec![];
+        let already_queued = self.outgoing_compacted_raw_packets.len();
+        let mut datagram = BytesMut::new();
         while let Some(p) = self.outgoing_packets.pop_front() {
-            if let Content::Handshake(h) = &p.record.content {
-                let mut handshake_raw = vec![];
-                {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(handshake_raw.as_mut());
-                    p.record.marshal(&mut writer)?;
-                }
-                debug!(
-                    "Send [handshake:{}] -> {} (epoch: {}, seq: {})",
-                    srv_cli_str(self.is_client),
-                    h.handshake_header.handshake_type,
-                    p.record.record_layer_header.epoch,
-                    h.handshake_header.message_sequence
-                );
-                self.cache.push(
-                    handshake_raw[RECORD_LAYER_HEADER_SIZE..].to_vec(),
-                    p.record.record_layer_header.epoch,
-                    h.handshake_header.message_sequence,
-                    h.handshake_header.handshake_type,
-                    self.is_client,
-                );
-
-                let raw_handshake_packets = self.process_handshake_packet(&p, h)?;
-                raw_packets.extend_from_slice(&raw_handshake_packets);
+            let result = if let Content::Handshake(h) = &p.record.content {
+                self.process_handshake_packet(&p, h, &mut datagram)
             } else {
                 /*if let Content::Alert(a) = &p.record.content {
                     if a.alert_description == AlertDescription::CloseNotify {
@@ -308,25 +301,42 @@ impl DTLSConn {
                     }
                 }*/
 
-                let raw_packet = self.process_packet(p)?;
-                raw_packets.push(raw_packet);
+                self.process_packet(p)
+                    .map(|raw_packet| self.push_raw_packet(&mut datagram, raw_packet))
+            };
+
+            if let Err(err) = result {
+                // As before, nothing from a batch that failed part-way is sent.
+                self.outgoing_compacted_raw_packets.truncate(already_queued);
+                return Err(err);
             }
         }
 
-        if !raw_packets.is_empty() {
-            let compacted_raw_packets =
-                compact_raw_packets(&raw_packets, self.maximum_transmission_unit);
-
-            for compacted_raw_packets in compacted_raw_packets {
-                self.outgoing_compacted_raw_packets
-                    .push_back(compacted_raw_packets);
-            }
+        if !datagram.is_empty() {
+            self.outgoing_compacted_raw_packets.push_back(datagram);
         }
 
         Ok(())
     }
 
-    fn process_packet(&mut self, mut p: Packet) -> Result<Vec<u8>> {
+    // Appends an encoded record to the datagram being built, first queueing that datagram if
+    // the record would take it to the MTU. A record that starts a datagram becomes it, uncopied.
+    fn push_raw_packet(&mut self, datagram: &mut BytesMut, raw_packet: BytesMut) {
+        if !datagram.is_empty()
+            && datagram.len() + raw_packet.len() >= self.maximum_transmission_unit
+        {
+            self.outgoing_compacted_raw_packets
+                .push_back(std::mem::take(datagram));
+        }
+
+        if datagram.is_empty() {
+            *datagram = raw_packet;
+        } else {
+            datagram.extend_from_slice(&raw_packet);
+        }
+    }
+
+    fn process_packet(&mut self, mut p: Packet) -> Result<BytesMut> {
         let epoch = p.record.record_layer_header.epoch as usize;
         let seq = {
             while self.state.local_sequence_number.len() <= epoch {
@@ -346,32 +356,74 @@ impl DTLSConn {
         }
         p.record.record_layer_header.sequence_number = seq;
 
-        // Marshal straight into the Vec: `BufWriter` would heap-allocate an
-        // 8 KiB staging buffer for every outbound record.
-        let mut raw_packet = vec![];
-        p.record.marshal(&mut raw_packet)?;
+        // Marshal once into a buffer with room for the cipher's overhead, so the record is
+        // encrypted in place and handed on as the datagram without further copies.
+        let mut raw_packet = BytesMut::with_capacity(
+            RECORD_LAYER_HEADER_SIZE + p.record.content.size() + MAX_CIPHER_SUITE_OVERHEAD,
+        );
+        p.record.marshal(&mut (&mut raw_packet).writer())?;
 
         if p.should_encrypt
             && let Some(cipher_suite) = &mut self.state.cipher_suite
         {
-            raw_packet = cipher_suite.encrypt(&p.record.record_layer_header, &raw_packet)?;
+            cipher_suite.encrypt_in_place(&p.record.record_layer_header, &mut raw_packet)?;
         }
 
         Ok(raw_packet)
     }
 
-    fn process_handshake_packet(&mut self, p: &Packet, h: &Handshake) -> Result<Vec<Vec<u8>>> {
-        let mut raw_packets = vec![];
+    fn process_handshake_packet(
+        &mut self,
+        p: &Packet,
+        h: &Handshake,
+        datagram: &mut BytesMut,
+    ) -> Result<()> {
+        // Marshal the message once: the cache keeps these bytes and the records are fragmented
+        // from them.
+        let mut handshake_raw = Vec::with_capacity(h.size());
+        h.marshal(&mut handshake_raw)?;
+        debug!(
+            "Send [handshake:{}] -> {} (epoch: {}, seq: {})",
+            srv_cli_str(self.is_client),
+            h.handshake_header.handshake_type,
+            p.record.record_layer_header.epoch,
+            h.handshake_header.message_sequence
+        );
 
-        let handshake_fragments = DTLSConn::fragment_handshake(self.maximum_transmission_unit, h)?;
+        let result =
+            self.fragment_handshake(p, h, &handshake_raw[HANDSHAKE_HEADER_LENGTH..], datagram);
+        self.cache.push(
+            handshake_raw,
+            p.record.record_layer_header.epoch,
+            h.handshake_header.message_sequence,
+            h.handshake_header.handshake_type,
+            self.is_client,
+        );
+        result
+    }
 
+    // Splits the marshalled message body `content` into MTU-sized fragments and appends each,
+    // as its own record, to `datagram`.
+    fn fragment_handshake(
+        &mut self,
+        p: &Packet,
+        h: &Handshake,
+        content: &[u8],
+        datagram: &mut BytesMut,
+    ) -> Result<()> {
         let epoch = p.record.record_layer_header.epoch as usize;
 
         while self.state.local_sequence_number.len() <= epoch {
             self.state.local_sequence_number.push(0);
         }
 
-        for handshake_fragment in &handshake_fragments {
+        // A message with an empty body still goes out as one empty fragment.
+        let fragments = content
+            .chunks(self.maximum_transmission_unit)
+            .chain(content.is_empty().then_some(content));
+
+        let mut offset = 0;
+        for fragment in fragments {
             let seq = {
                 self.state.local_sequence_number[epoch] += 1;
                 self.state.local_sequence_number[epoch] - 1
@@ -384,77 +436,44 @@ impl DTLSConn {
             let record_layer_header = RecordLayerHeader {
                 protocol_version: p.record.record_layer_header.protocol_version,
                 content_type: p.record.record_layer_header.content_type,
-                content_len: handshake_fragment.len() as u16,
+                content_len: (HANDSHAKE_HEADER_LENGTH + fragment.len()) as u16,
                 epoch: p.record.record_layer_header.epoch,
                 sequence_number: seq,
             };
-
-            let mut record_layer_header_bytes = vec![];
-            {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(record_layer_header_bytes.as_mut());
-                record_layer_header.marshal(&mut writer)?;
-            }
-
-            //p.record.record_layer_header = record_layer_header;
-
-            let mut raw_packet = vec![];
-            raw_packet.extend_from_slice(&record_layer_header_bytes);
-            raw_packet.extend_from_slice(handshake_fragment);
-            if p.should_encrypt
-                && let Some(cipher_suite) = &mut self.state.cipher_suite
-            {
-                raw_packet = cipher_suite.encrypt(&record_layer_header, &raw_packet)?;
-            }
-
-            raw_packets.push(raw_packet);
-        }
-
-        Ok(raw_packets)
-    }
-
-    fn fragment_handshake(maximum_transmission_unit: usize, h: &Handshake) -> Result<Vec<Vec<u8>>> {
-        let mut content = vec![];
-        {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(content.as_mut());
-            h.handshake_message.marshal(&mut writer)?;
-        }
-
-        let mut fragmented_handshakes = vec![];
-
-        let mut content_fragments = split_bytes(&content, maximum_transmission_unit);
-        if content_fragments.is_empty() {
-            content_fragments = vec![vec![]];
-        }
-
-        let mut offset = 0;
-        for content_fragment in &content_fragments {
-            let content_fragment_len = content_fragment.len();
 
             let handshake_header_fragment = HandshakeHeader {
                 handshake_type: h.handshake_header.handshake_type,
                 length: h.handshake_header.length,
                 message_sequence: h.handshake_header.message_sequence,
                 fragment_offset: offset as u32,
-                fragment_length: content_fragment_len as u32,
+                fragment_length: fragment.len() as u32,
             };
+            offset += fragment.len();
 
-            offset += content_fragment_len;
+            //p.record.record_layer_header = record_layer_header;
 
-            let mut handshake_header_fragment_raw = vec![];
+            let mut raw_packet = BytesMut::with_capacity(
+                RECORD_LAYER_HEADER_SIZE
+                    + HANDSHAKE_HEADER_LENGTH
+                    + fragment.len()
+                    + MAX_CIPHER_SUITE_OVERHEAD,
+            );
             {
-                let mut writer =
-                    BufWriter::<&mut Vec<u8>>::new(handshake_header_fragment_raw.as_mut());
+                let mut writer = (&mut raw_packet).writer();
+                record_layer_header.marshal(&mut writer)?;
                 handshake_header_fragment.marshal(&mut writer)?;
             }
+            raw_packet.extend_from_slice(fragment);
+            if p.should_encrypt
+                && let Some(cipher_suite) = &mut self.state.cipher_suite
+            {
+                cipher_suite.encrypt_in_place(&record_layer_header, &mut raw_packet)?;
+            }
 
-            let mut fragmented_handshake = vec![];
-            fragmented_handshake.extend_from_slice(&handshake_header_fragment_raw);
-            fragmented_handshake.extend_from_slice(content_fragment);
-
-            fragmented_handshakes.push(fragmented_handshake);
+            self.push_raw_packet(datagram, raw_packet);
         }
 
-        Ok(fragmented_handshakes)
+        Ok(())
     }
 
     pub(crate) fn set_handshake_completed(&mut self) {
@@ -475,7 +494,10 @@ impl DTLSConn {
         // (i.e. until handshake completes). After that, discard them.
         let enqueue = !self.is_handshake_completed();
         for pkt in unpack_datagram(buf)? {
-            let (hs, alert, err) = self.handle_incoming_packet(pkt, enqueue);
+            // Each record gets a buffer of its own size: it is decrypted in place and an
+            // application payload is handed on without another copy, while a small record
+            // never keeps the rest of the datagram alive.
+            let (hs, alert, err) = self.handle_incoming_packet(BytesMut::from(pkt), enqueue);
             if let Some(alert) = alert {
                 self.outgoing_packets.push_back(Packet {
                     record: RecordLayer::new(
@@ -493,6 +515,7 @@ impl DTLSConn {
                 if alert.alert_level == AlertLevel::Fatal
                     || alert.alert_description == AlertDescription::CloseNotify
                 {
+                    self.release_handshake_buffers();
                     return Err(Error::ErrAlertFatalOrClose);
                 }
             }
@@ -519,9 +542,21 @@ impl DTLSConn {
             .as_ref()
             .is_some_and(|cs| cs.is_initialized());
         let mut is_handshake = false;
-        if cipher_ready {
-            while let Some(p) = self.incoming_encrypted_packets.pop_front() {
-                let (hs, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
+        if !cipher_ready {
+            return Ok(is_handshake);
+        }
+
+        // A record still ahead of the remote epoch (a Finished whose ChangeCipherSpec has not
+        // been processed yet) goes back in the queue, until the handshake completes. Each pass
+        // visits only the records queued before it; another pass runs when a ChangeCipherSpec
+        // in this one advanced the epoch past records queued ahead of it.
+        let enqueue = !self.is_handshake_completed();
+        loop {
+            let remote_epoch = self.state.remote_epoch;
+            let mut pending = std::mem::take(&mut self.incoming_encrypted_packets);
+            self.incoming_encrypted_bytes = 0;
+            while let Some(p) = pending.pop_front() {
+                let (hs, alert, err) = self.handle_incoming_packet(p, enqueue);
                 if hs {
                     is_handshake = true;
                     self.handshake_rx = Some(());
@@ -543,27 +578,62 @@ impl DTLSConn {
                     if alert.alert_level == AlertLevel::Fatal
                         || alert.alert_description == AlertDescription::CloseNotify
                     {
+                        self.release_handshake_buffers();
                         return Err(Error::ErrAlertFatalOrClose);
                     }
                 }
 
                 if let Some(err) = err {
+                    // Records this pass did not reach stay queued.
+                    for p in pending {
+                        self.enqueue_encrypted_packet(p);
+                    }
                     return Err(err);
                 }
             }
+
+            if self.state.remote_epoch == remote_epoch || self.incoming_encrypted_packets.is_empty()
+            {
+                return Ok(is_handshake);
+            }
+        }
+    }
+
+    // Holds a record that cannot be processed until the next epoch's keys are installed. Once
+    // MAX_PENDING_RECORDS or MAX_PENDING_RECORD_BYTES is reached, further records are dropped
+    // and the queued ones kept. Nothing about the record is authenticated yet, so the replay
+    // window is left alone.
+    fn enqueue_encrypted_packet(&mut self, pkt: BytesMut) {
+        if self.incoming_encrypted_packets.len() >= MAX_PENDING_RECORDS
+            || self.incoming_encrypted_bytes + pkt.len() > MAX_PENDING_RECORD_BYTES
+        {
+            debug!(
+                "{}: pending record queue full, dropping packet",
+                srv_cli_str(self.is_client)
+            );
+            return;
         }
 
-        Ok(is_handshake)
+        self.incoming_encrypted_bytes += pkt.len();
+        self.incoming_encrypted_packets.push_back(pkt);
+    }
+
+    // Frees what is buffered for a handshake that can no longer complete: records waiting for
+    // keys and partially reassembled handshake messages.
+    pub(crate) fn release_handshake_buffers(&mut self) {
+        self.incoming_encrypted_packets = VecDeque::new();
+        self.incoming_encrypted_bytes = 0;
+        self.fragment_buffer.release();
     }
 
     fn handle_incoming_packet(
         &mut self,
-        mut pkt: Vec<u8>,
+        mut pkt: BytesMut,
         enqueue: bool,
     ) -> (bool, Option<Alert>, Option<Error>) {
         // Parse the 13-byte header from the slice directly: `BufReader` would
         // heap-allocate an 8 KiB buffer for every inbound record.
-        let mut reader = pkt.as_slice();
+        let mut reader = &pkt[..];
         let h = match RecordLayerHeader::unmarshal(&mut reader) {
             Ok(h) => h,
             Err(err) => {
@@ -595,7 +665,7 @@ impl DTLSConn {
                     "{}: received packet of next epoch, queuing packet",
                     srv_cli_str(self.is_client)
                 );
-                self.incoming_encrypted_packets.push_back(pkt);
+                self.enqueue_encrypted_packet(pkt);
             }
             return (false, None, None);
         }
@@ -635,32 +705,29 @@ impl DTLSConn {
                         "{}: handshake not finished, queuing packet",
                         srv_cli_str(self.is_client)
                     );
-                    self.incoming_encrypted_packets.push_back(pkt);
+                    self.enqueue_encrypted_packet(pkt);
                 }
                 return (false, None, None);
             }
 
-            if let Some(cipher_suite) = &mut self.state.cipher_suite {
-                pkt = match cipher_suite.decrypt(&pkt) {
-                    Ok(pkt) => pkt,
-                    Err(err) => {
-                        debug!("{}: decrypt failed: {}", srv_cli_str(self.is_client), err);
+            if let Some(cipher_suite) = &mut self.state.cipher_suite
+                && let Err(err) = cipher_suite.decrypt_in_place(&mut pkt)
+            {
+                debug!("{}: decrypt failed: {}", srv_cli_str(self.is_client), err);
 
-                        // If we get an error for PSK we need to return an error.
-                        if cipher_suite.is_psk() {
-                            return (
-                                false,
-                                Some(Alert {
-                                    alert_level: AlertLevel::Fatal,
-                                    alert_description: AlertDescription::UnknownPskIdentity,
-                                }),
-                                None,
-                            );
-                        } else {
-                            return (false, None, None);
-                        }
-                    }
-                };
+                // If we get an error for PSK we need to return an error.
+                if cipher_suite.is_psk() {
+                    return (
+                        false,
+                        Some(Alert {
+                            alert_level: AlertLevel::Fatal,
+                            alert_description: AlertDescription::UnknownPskIdentity,
+                        }),
+                        None,
+                    );
+                } else {
+                    return (false, None, None);
+                }
             }
         }
 
@@ -715,7 +782,32 @@ impl DTLSConn {
             return (true, None, None);
         }
 
-        let mut reader = pkt.as_slice();
+        if h.content_type == ContentType::ApplicationData {
+            // Hand the decrypted payload on in the record's own buffer rather than copying it
+            // out through `RecordLayer::unmarshal`.
+            if h.epoch == 0 {
+                warn!(
+                    "{}: <- Unexpected ApplicationData Message",
+                    srv_cli_str(self.is_client),
+                );
+                return (
+                    false,
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::UnexpectedMessage,
+                    }),
+                    Some(Error::ErrApplicationDataEpochZero),
+                );
+            }
+
+            self.replay_detector[h.epoch as usize].accept();
+
+            pkt.advance(RECORD_LAYER_HEADER_SIZE);
+            self.incoming_decrypted_packets.push_back(pkt);
+            return (false, None, None);
+        }
+
+        let mut reader = &pkt[..];
         let r = match RecordLayer::unmarshal(&mut reader) {
             Ok(r) => r,
             Err(err) => {
@@ -762,7 +854,7 @@ impl DTLSConn {
                             "{}: CipherSuite not initialized, queuing packet",
                             srv_cli_str(self.is_client)
                         );
-                        self.incoming_encrypted_packets.push_back(pkt);
+                        self.enqueue_encrypted_packet(pkt);
                     }
                     return (false, None, None);
                 }
@@ -778,26 +870,6 @@ impl DTLSConn {
                     self.state.remote_epoch = new_remote_epoch;
                     self.replay_detector[h.epoch as usize].accept();
                 }
-            }
-            Content::ApplicationData(a) => {
-                if h.epoch == 0 {
-                    warn!(
-                        "{}: <- Unexpected ApplicationData Message",
-                        srv_cli_str(self.is_client),
-                    );
-                    return (
-                        false,
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::UnexpectedMessage,
-                        }),
-                        Some(Error::ErrApplicationDataEpochZero),
-                    );
-                }
-
-                self.replay_detector[h.epoch as usize].accept();
-
-                self.incoming_decrypted_packets.push_back(a.data);
             }
             _ => {
                 warn!(
@@ -829,40 +901,4 @@ impl DTLSConn {
     pub(crate) fn get_local_epoch(&self) -> u16 {
         self.state.local_epoch
     }
-}
-
-fn compact_raw_packets(raw_packets: &[Vec<u8>], maximum_transmission_unit: usize) -> Vec<BytesMut> {
-    let mut combined_raw_packets = vec![];
-    let mut current_combined_raw_packet = BytesMut::new();
-
-    for raw_packet in raw_packets {
-        if !current_combined_raw_packet.is_empty()
-            && current_combined_raw_packet.len() + raw_packet.len() >= maximum_transmission_unit
-        {
-            combined_raw_packets.push(current_combined_raw_packet);
-            current_combined_raw_packet = BytesMut::new();
-        }
-        current_combined_raw_packet.extend_from_slice(raw_packet);
-    }
-
-    if !current_combined_raw_packet.is_empty() {
-        combined_raw_packets.push(current_combined_raw_packet);
-    }
-
-    combined_raw_packets
-}
-
-fn split_bytes(bytes: &[u8], split_len: usize) -> Vec<Vec<u8>> {
-    let mut splits = vec![];
-    let num_bytes = bytes.len();
-    for i in (0..num_bytes).step_by(split_len) {
-        let mut j = i + split_len;
-        if j > num_bytes {
-            j = num_bytes;
-        }
-
-        splits.push(bytes[i..j].to_vec());
-    }
-
-    splits
 }

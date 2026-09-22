@@ -166,16 +166,16 @@ impl Cipher for CipherAesCmHmacSha1 {
             as usize
     }
 
-    fn encrypt_rtp(
+    fn encrypt_rtp_in_place(
         &mut self,
-        plaintext: &[u8],
+        packet: &mut BytesMut,
         header: &rtp::Header,
         roc: u32,
-    ) -> Result<BytesMut> {
-        let mut writer = BytesMut::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
-
-        // Write the plaintext to the destination buffer.
-        writer.extend_from_slice(plaintext);
+    ) -> Result<()> {
+        let header_len = header.marshal_size();
+        if packet.len() < header_len {
+            return Err(Error::ErrTooShortRtp);
+        }
 
         // Encrypt the payload
         let counter = generate_counter(
@@ -186,46 +186,42 @@ impl Cipher for CipherAesCmHmacSha1 {
         );
 
         self.srtp_cipher
-            .apply_keystream(&counter, &mut writer[header.marshal_size()..])
+            .apply_keystream(&counter, &mut packet[header_len..])
             .map_err(crypto_error)?;
 
         // Generate the auth tag.
-        let full_auth_tag = self.generate_srtp_auth_tag(&writer, roc)?;
+        let full_auth_tag = self.generate_srtp_auth_tag(packet, roc)?;
         let auth_tag = &full_auth_tag[..self.rtp_auth_tag_len()];
-        writer.extend_from_slice(auth_tag);
+        packet.extend_from_slice(auth_tag);
 
-        Ok(writer)
+        Ok(())
     }
 
-    fn decrypt_rtp(
+    fn decrypt_rtp_in_place(
         &mut self,
-        encrypted: &[u8],
+        packet: &mut BytesMut,
         header: &rtp::Header,
         roc: u32,
-    ) -> Result<BytesMut> {
-        let encrypted_len = encrypted.len();
+    ) -> Result<()> {
+        let encrypted_len = packet.len();
         if encrypted_len < self.rtp_auth_tag_len() {
             return Err(Error::SrtpTooSmall(encrypted_len, self.rtp_auth_tag_len()));
         }
 
-        let mut writer = BytesMut::with_capacity(encrypted_len - self.rtp_auth_tag_len());
-
         // Split the auth tag and the cipher text into two parts.
-        let actual_tag = &encrypted[encrypted_len - self.rtp_auth_tag_len()..];
-        let cipher_text = &encrypted[..encrypted_len - self.rtp_auth_tag_len()];
+        let tag_offset = encrypted_len - self.rtp_auth_tag_len();
+        let (cipher_text, actual_tag) = packet.split_at(tag_offset);
 
         // Generate the auth tag we expect to see from the ciphertext.
         let full_expected_tag = self.generate_srtp_auth_tag(cipher_text, roc)?;
         let expected_tag = &full_expected_tag[..self.rtp_auth_tag_len()];
 
-        // See if the auth tag actually matches.
-        // We use a constant time comparison to prevent timing attacks.
+        // See if the auth tag actually matches — before decrypting anything, so a forged packet
+        // never becomes plaintext. We use a constant time comparison to prevent timing attacks.
         if !constant_time_eq(actual_tag, expected_tag) {
             return Err(Error::RtpFailedToVerifyAuthTag);
         }
-
-        // Write cipher_text to the destination buffer.
-        writer.extend_from_slice(cipher_text);
+        packet.truncate(tag_offset);
 
         // Decrypt the ciphertext for the payload.
         let counter = generate_counter(
@@ -235,11 +231,15 @@ impl Cipher for CipherAesCmHmacSha1 {
             &self.srtp_session_salt,
         );
 
+        let header_len = header.marshal_size();
+        if packet.len() < header_len {
+            return Err(Error::ErrTooShortRtp);
+        }
         self.srtp_cipher
-            .apply_keystream(&counter, &mut writer[header.marshal_size()..])
+            .apply_keystream(&counter, &mut packet[header_len..])
             .map_err(crypto_error)?;
 
-        Ok(writer)
+        Ok(())
     }
 
     fn encrypt_rtcp(

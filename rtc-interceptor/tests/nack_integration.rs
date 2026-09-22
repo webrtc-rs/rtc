@@ -1323,3 +1323,141 @@ fn a_retransmission_is_tagged_and_an_original_is_not() {
         "the responder should have retransmitted exactly the packet that was asked for"
     );
 }
+
+// =============================================================================
+// Retransmission history limits
+// =============================================================================
+
+/// Sequence numbers the chain retransmits in answer to a NACK for `seqs`, sent at `now`.
+fn retransmitted_for(
+    chain: &mut impl Interceptor,
+    ssrc: u32,
+    seqs: &[u16],
+    now: Instant,
+) -> Vec<u16> {
+    let nack = create_nack_packet(
+        now,
+        0x11111111,
+        ssrc,
+        rtcp::transport_feedbacks::transport_layer_nack::nack_pairs_from_sequence_numbers(seqs),
+    );
+    chain.handle_read(nack).unwrap();
+    while chain.poll_read().is_some() {}
+    let mut retransmitted = Vec::new();
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            retransmitted.push(rtp.header.sequence_number);
+        }
+    }
+    retransmitted
+}
+
+/// A packet older than the age limit is not retransmitted, even if no timer has run to expire
+/// it: the lookup checks age itself.
+#[test]
+fn test_nack_responder_does_not_retransmit_past_max_age() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new()
+                .with_max_age(Some(Duration::from_secs(1)))
+                .build(),
+        )
+        .build();
+    let ssrc = 0xABCDEF01;
+    chain.bind_local_stream(&nack_stream_info(ssrc));
+
+    let base_time = Instant::now();
+    for seq in 0..10u16 {
+        let sent_at = base_time + Duration::from_millis(seq as u64 * 100);
+        chain
+            .handle_write(create_rtp_packet_with_time(sent_at, ssrc, seq, 0, 500))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    // At 1.25 s, packets sent at 0.25 s or earlier are more than 1 s old.
+    let retransmitted = retransmitted_for(
+        &mut chain,
+        ssrc,
+        &[1, 2, 3, 8],
+        base_time + Duration::from_millis(1_250),
+    );
+    assert_eq!(retransmitted, vec![3, 8]);
+}
+
+/// A stream that stops sending asks for one wake-up, when its newest packet ages out, and that
+/// wake-up releases its whole history — after which it asks for nothing.
+#[test]
+fn test_nack_responder_releases_an_idle_streams_history() {
+    let max_age = Duration::from_secs(3);
+    let mut chain = Registry::new()
+        .with(Slot::NackResponder, NackResponderBuilder::new().build())
+        .build();
+    let ssrc = 0xABCDEF02;
+    chain.bind_local_stream(&nack_stream_info(ssrc));
+
+    let base_time = Instant::now();
+    assert_eq!(
+        chain.poll_timeout(),
+        None,
+        "nothing sent, nothing to expire"
+    );
+    for seq in 0..20u16 {
+        let sent_at = base_time + Duration::from_millis(seq as u64 * 20);
+        chain
+            .handle_write(create_rtp_packet_with_time(sent_at, ssrc, seq, 0, 500))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    let newest = base_time + Duration::from_millis(19 * 20);
+    assert_eq!(chain.poll_timeout(), Some(newest + max_age));
+    assert_eq!(
+        retransmitted_for(
+            &mut chain,
+            ssrc,
+            &[19],
+            newest + max_age - Duration::from_millis(1)
+        ),
+        vec![19],
+        "still retransmittable just before the deadline"
+    );
+
+    chain.handle_timeout(newest + max_age).unwrap();
+    assert_eq!(
+        chain.poll_timeout(),
+        None,
+        "the history is gone: no further wake-up"
+    );
+    assert!(retransmitted_for(&mut chain, ssrc, &[0, 10, 19], newest + max_age).is_empty());
+}
+
+/// Past the byte limit the oldest packets go first, and what is left is still retransmitted.
+#[test]
+fn test_nack_responder_byte_limit_keeps_the_newest_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new()
+                .with_max_bytes(5 * 1_200)
+                .build(),
+        )
+        .build();
+    let ssrc = 0xABCDEF03;
+    chain.bind_local_stream(&nack_stream_info(ssrc));
+
+    let base_time = Instant::now();
+    for seq in 0..20u16 {
+        chain
+            .handle_write(create_rtp_packet_with_time(base_time, ssrc, seq, 0, 1_200))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    let all: Vec<u16> = (0..20).collect();
+    assert_eq!(
+        retransmitted_for(&mut chain, ssrc, &all, base_time),
+        vec![15, 16, 17, 18, 19]
+    );
+}

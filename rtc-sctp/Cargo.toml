@@ -31,6 +31,11 @@ rustc-hash.workspace = true
 [dev-dependencies]
 assert_matches.workspace = true
 lazy_static.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "bench"
+harness = false
 
 [[example]]
 name = "sctp_micro"

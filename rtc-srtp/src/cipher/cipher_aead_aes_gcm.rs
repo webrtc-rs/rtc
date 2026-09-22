@@ -38,38 +38,43 @@ impl Cipher for CipherAeadAesGcm {
         self.profile.aead_auth_tag_len()
     }
 
-    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
-        // Copy the whole packet once, then encrypt the payload region in place
-        // with the header region as AAD and a detached tag appended afterwards.
+    fn encrypt_rtp_in_place(
+        &mut self,
+        packet: &mut BytesMut,
+        header: &rtp::Header,
+        roc: u32,
+    ) -> Result<()> {
+        // Encrypt the payload region in place with the header region as AAD, then append the
+        // detached tag.
         let header_len = header.marshal_size();
+        if packet.len() < header_len {
+            return Err(Error::ErrTooShortRtp);
+        }
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        let mut writer = BytesMut::with_capacity(payload.len() + self.aead_auth_tag_len());
-        writer.extend_from_slice(payload);
-
-        let (aad, plaintext) = writer.split_at_mut(header_len);
+        let (aad, plaintext) = packet.split_at_mut(header_len);
         let mut tag = [0; CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN];
         self.srtp_cipher
             .seal_in_place(&nonce, aad, plaintext, &mut tag)
             .map_err(crypto_error)?;
 
-        writer.extend_from_slice(&tag);
-        Ok(writer)
+        packet.extend_from_slice(&tag);
+        Ok(())
     }
 
-    fn decrypt_rtp(
+    fn decrypt_rtp_in_place(
         &mut self,
-        ciphertext: &[u8],
+        packet: &mut BytesMut,
         header: &rtp::Header,
         roc: u32,
-    ) -> Result<BytesMut> {
+    ) -> Result<()> {
         let tag_len = self.aead_auth_tag_len();
-        if ciphertext.len() < tag_len {
+        if packet.len() < tag_len {
             return Err(Error::ErrFailedToVerifyAuthTag);
         }
 
         let payload_offset = header.marshal_size();
-        if ciphertext.len() < payload_offset + tag_len {
+        if packet.len() < payload_offset + tag_len {
             // Too short to hold header + tag; the AEAD would reject it and the
             // slice split below would panic.
             return Err(Error::ErrFailedToVerifyAuthTag);
@@ -77,16 +82,14 @@ impl Cipher for CipherAeadAesGcm {
 
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        let tag_offset = ciphertext.len() - tag_len;
-        let tag = &ciphertext[tag_offset..];
-        let mut writer = BytesMut::with_capacity(tag_offset);
-        writer.extend_from_slice(&ciphertext[..tag_offset]);
-
-        let (aad, encrypted_payload) = writer.split_at_mut(payload_offset);
+        let tag_offset = packet.len() - tag_len;
+        let (body, tag) = packet.split_at_mut(tag_offset);
+        let (aad, encrypted_payload) = body.split_at_mut(payload_offset);
         self.srtp_cipher
             .open_in_place(&nonce, aad, encrypted_payload, tag)
             .map_err(|_| Error::ErrFailedToVerifyAuthTag)?;
-        Ok(writer)
+        packet.truncate(tag_offset);
+        Ok(())
     }
 
     fn encrypt_rtcp(

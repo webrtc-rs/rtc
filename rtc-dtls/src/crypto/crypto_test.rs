@@ -1,8 +1,11 @@
 use super::crypto_ccm::*;
 use super::*;
 use crate::content::ContentType;
-use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
+use crate::record_layer::record_layer_header::{
+    PROTOCOL_VERSION1_2, ProtocolVersion, RECORD_LAYER_HEADER_SIZE,
+};
 use crate::signature_hash_algorithm::HashAlgorithm;
+use bytes::BytesMut;
 
 #[test]
 fn test_generate_key_signature() -> Result<()> {
@@ -346,6 +349,166 @@ fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
     assert_eq!(*call_count.lock().unwrap(), 2);
     assert_eq!(&*last_message.lock().unwrap(), handshake_bodies);
     assert_eq!(cert_verify, expected_signature);
+
+    Ok(())
+}
+
+/// The record-protection API shared by the record ciphers, so one test can drive them all.
+trait RecordCipher {
+    fn encrypt(&mut self, h: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>>;
+    fn encrypt_in_place(&mut self, h: &RecordLayerHeader, raw: &mut BytesMut) -> Result<()>;
+    fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>>;
+    fn decrypt_in_place(&mut self, r: &mut BytesMut) -> Result<()>;
+}
+
+macro_rules! impl_record_cipher {
+    ($($cipher:ty),*) => {$(
+        impl RecordCipher for $cipher {
+            fn encrypt(&mut self, h: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
+                <$cipher>::encrypt(self, h, raw)
+            }
+            fn encrypt_in_place(&mut self, h: &RecordLayerHeader, raw: &mut BytesMut) -> Result<()> {
+                <$cipher>::encrypt_in_place(self, h, raw)
+            }
+            fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>> {
+                <$cipher>::decrypt(self, r)
+            }
+            fn decrypt_in_place(&mut self, r: &mut BytesMut) -> Result<()> {
+                <$cipher>::decrypt_in_place(self, r)
+            }
+        }
+    )*};
+}
+
+impl_record_cipher!(
+    crypto_gcm::CryptoGcm,
+    CryptoCcm,
+    crypto_chacha20::CryptoChaCha20,
+    crypto_cbc::CryptoCbc
+);
+
+/// A cipher's name with a sender and a receiver keyed so each decrypts what the other
+/// encrypts.
+type RecordCipherPair = (&'static str, Box<dyn RecordCipher>, Box<dyn RecordCipher>);
+
+fn record_cipher_pairs() -> Result<Vec<RecordCipherPair>> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+    let (k16a, k16b, k32a, k32b) = ([0x11; 16], [0x22; 16], [0x33; 32], [0x44; 32]);
+    let (iv4a, iv4b, iv12a, iv12b, mac_a, mac_b) =
+        ([1; 4], [2; 4], [3; 12], [4; 12], [5; 20], [6; 20]);
+    let p = || provider.clone();
+    let ccm = |tag: &CryptoCcmTagLen| -> Result<(Box<dyn RecordCipher>, Box<dyn RecordCipher>)> {
+        Ok((
+            Box::new(CryptoCcm::new(p(), tag, &k16a, &iv4a, &k16b, &iv4b)?),
+            Box::new(CryptoCcm::new(p(), tag, &k16b, &iv4b, &k16a, &iv4a)?),
+        ))
+    };
+    let (ccm16_tx, ccm16_rx) = ccm(&CryptoCcmTagLen::CryptoCcmTagLength)?;
+    let (ccm8_tx, ccm8_rx) = ccm(&CryptoCcmTagLen::CryptoCcm8TagLength)?;
+    Ok(vec![
+        (
+            "AES-128-GCM",
+            Box::new(crypto_gcm::CryptoGcm::new(p(), &k16a, &iv4a, &k16b, &iv4b)?),
+            Box::new(crypto_gcm::CryptoGcm::new(p(), &k16b, &iv4b, &k16a, &iv4a)?),
+        ),
+        ("AES-128-CCM", ccm16_tx, ccm16_rx),
+        ("AES-128-CCM-8", ccm8_tx, ccm8_rx),
+        (
+            "CHACHA20-POLY1305",
+            Box::new(crypto_chacha20::CryptoChaCha20::new(
+                p(),
+                &k32a,
+                &iv12a,
+                &k32b,
+                &iv12b,
+            )?),
+            Box::new(crypto_chacha20::CryptoChaCha20::new(
+                p(),
+                &k32b,
+                &iv12b,
+                &k32a,
+                &iv12a,
+            )?),
+        ),
+        (
+            "AES-256-CBC",
+            Box::new(crypto_cbc::CryptoCbc::new(
+                p(),
+                &k32a,
+                &mac_a,
+                &k32b,
+                &mac_b,
+            )?),
+            Box::new(crypto_cbc::CryptoCbc::new(
+                p(),
+                &k32b,
+                &mac_b,
+                &k32a,
+                &mac_a,
+            )?),
+        ),
+    ])
+}
+
+/// Protecting and unprotecting in place produce what the copying calls do, interoperate with
+/// them in both directions, and reject the same tampering.
+#[test]
+fn test_record_ciphers_in_place_match_copying_calls() -> Result<()> {
+    for (name, mut sender, mut receiver) in record_cipher_pairs()? {
+        for (sequence_number, len) in [0usize, 1, 15, 16, 17, 100, 1200].into_iter().enumerate() {
+            let header = RecordLayerHeader {
+                content_type: ContentType::ApplicationData,
+                protocol_version: PROTOCOL_VERSION1_2,
+                epoch: 1,
+                sequence_number: sequence_number as u64,
+                content_len: len as u16,
+            };
+            let mut raw = vec![];
+            header.marshal(&mut raw)?;
+            raw.extend((0..len).map(|i| i as u8));
+
+            let mut in_place = BytesMut::from(&raw[..]);
+            sender.encrypt_in_place(&header, &mut in_place)?;
+            let copied = sender.encrypt(&header, &raw)?;
+            assert_eq!(in_place.len(), copied.len(), "{name}/{len}: record length");
+            for record in [&in_place[..], &copied[..]] {
+                assert_eq!(record[..11], raw[..11], "{name}/{len}: header");
+                let content_len = u16::from_be_bytes([record[11], record[12]]) as usize;
+                assert_eq!(content_len, record.len() - RECORD_LAYER_HEADER_SIZE);
+            }
+
+            for record in [&in_place[..], &copied[..]] {
+                let expected = receiver.decrypt(record)?;
+                assert_eq!(
+                    expected[RECORD_LAYER_HEADER_SIZE..],
+                    raw[RECORD_LAYER_HEADER_SIZE..]
+                );
+                let mut decrypted = BytesMut::from(record);
+                receiver.decrypt_in_place(&mut decrypted)?;
+                assert_eq!(
+                    &decrypted[..],
+                    &expected[..],
+                    "{name}/{len}: in-place decrypt"
+                );
+
+                let mut tampered = BytesMut::from(record);
+                let last = tampered.len() - 1;
+                tampered[last] ^= 0x01;
+                assert!(receiver.decrypt(&tampered).is_err(), "{name}/{len}: tamper");
+                assert!(
+                    receiver.decrypt_in_place(&mut tampered).is_err(),
+                    "{name}/{len}: tamper in place"
+                );
+            }
+        }
+
+        // ChangeCipherSpec is not encrypted and passes through untouched.
+        let change_cipher_spec = [0x14, 0xfe, 0xfd, 0, 1, 0, 0, 0, 0, 0, 9, 0, 1, 1];
+        assert_eq!(receiver.decrypt(&change_cipher_spec)?, change_cipher_spec);
+        let mut passthrough = BytesMut::from(&change_cipher_spec[..]);
+        receiver.decrypt_in_place(&mut passthrough)?;
+        assert_eq!(&passthrough[..], &change_cipher_spec[..]);
+    }
 
     Ok(())
 }

@@ -26,8 +26,12 @@ pub struct NackPair {
 }
 
 /// Iterates the individual sequence numbers a [`NackPair`] encodes.
+///
+/// Yields `packet_id` first, then `packet_id + i + 1` (wrapping) for each set bit `i` of the
+/// bitmask in ascending order.
 pub struct NackIterator {
     packet_id: u16,
+    /// Bits not yet yielded.
     bitfield: PacketBitmap,
     has_yielded_packet_id: bool,
 }
@@ -40,21 +44,21 @@ impl Iterator for NackIterator {
             self.has_yielded_packet_id = true;
 
             Some(self.packet_id)
+        } else if self.bitfield != 0 {
+            // The lowest remaining bit, found directly rather than by testing each position
+            // from bit 0 again; `bitfield - 1` borrows through exactly that bit to clear it.
+            let i = self.bitfield.trailing_zeros() as u16;
+            self.bitfield &= self.bitfield - 1;
+
+            Some(self.packet_id.wrapping_add(i + 1))
         } else {
-            let mut i = 0;
-
-            while self.bitfield != 0 {
-                if (self.bitfield & (1 << i)) != 0 {
-                    self.bitfield &= !(1 << i);
-
-                    return Some(self.packet_id.wrapping_add(i + 1));
-                }
-
-                i += 1;
-            }
-
             None
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = usize::from(!self.has_yielded_packet_id) + self.bitfield.count_ones() as usize;
+        (len, Some(len))
     }
 }
 

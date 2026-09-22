@@ -61,7 +61,14 @@ pub(crate) struct Chain {
     interceptors: Vec<Box<dyn Interceptor>>,
     read_outs: VecDeque<TaggedPacket>,
     write_outs: VecDeque<TaggedPacket>,
+    /// The belt a walk carries packets on, kept between walks so each one reuses the last one's
+    /// storage rather than allocating its own. Empty outside a walk.
+    belt: VecDeque<TaggedPacket>,
 }
+
+/// Capacity the belt keeps between walks: enough for any ordinary walk, so the common case never
+/// reallocates, without letting a burst of generated packets stay allocated for good.
+const RETAINED_BELT_CAPACITY: usize = 16;
 
 impl Chain {
     /// Build a chain from interceptors already in wire-to-application order.
@@ -95,10 +102,10 @@ impl Chain {
     /// bypass with.
     fn walk<'a, T>(
         interceptors: impl Iterator<Item = &'a mut Box<dyn Interceptor>>,
-        mut belt: VecDeque<T>,
+        belt: &mut VecDeque<T>,
         handle: fn(&mut dyn Interceptor, T) -> Result<(), Error>,
         poll: fn(&mut dyn Interceptor) -> Option<T>,
-    ) -> VecDeque<T> {
+    ) {
         for interceptor in interceptors {
             while let Some(next) = belt.pop_front() {
                 // An interceptor takes the packet and decides what becomes of it: hold it, drop
@@ -113,27 +120,38 @@ impl Chain {
                 belt.push_back(next);
             }
         }
-        belt
     }
 
-    fn drain_read(&mut self) {
-        let belt = Self::walk(
+    /// A read walk carrying `msg`, or nothing, with what comes out queued for `poll_read`.
+    fn walk_read(&mut self, msg: Option<TaggedPacket>) {
+        self.belt.extend(msg);
+        Self::walk(
             self.interceptors.iter_mut(),
-            VecDeque::new(),
+            &mut self.belt,
             |s, p| s.handle_read(p),
             |s| s.poll_read(),
         );
-        self.read_outs.extend(belt);
+        self.read_outs.append(&mut self.belt);
+        self.trim_belt();
     }
 
-    fn drain_write(&mut self) {
-        let belt = Self::walk(
+    /// A write walk carrying `msg`, or nothing, with what comes out queued for `poll_write`.
+    fn walk_write(&mut self, msg: Option<TaggedPacket>) {
+        self.belt.extend(msg);
+        Self::walk(
             self.interceptors.iter_mut().rev(),
-            VecDeque::new(),
+            &mut self.belt,
             |s, p| s.handle_write(p),
             |s| s.poll_write(),
         );
-        self.write_outs.extend(belt);
+        self.write_outs.append(&mut self.belt);
+        self.trim_belt();
+    }
+
+    fn trim_belt(&mut self) {
+        if self.belt.capacity() > RETAINED_BELT_CAPACITY {
+            self.belt.shrink_to(RETAINED_BELT_CAPACITY);
+        }
     }
 }
 
@@ -145,13 +163,7 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for Chain {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        let belt = Self::walk(
-            self.interceptors.iter_mut(),
-            VecDeque::from([msg]),
-            |s, p| s.handle_read(p),
-            |s| s.poll_read(),
-        );
-        self.read_outs.extend(belt);
+        self.walk_read(Some(msg));
         Ok(())
     }
 
@@ -159,19 +171,13 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for Chain {
     /// released a packet on `handle_timeout` with no inbound packet since to carry it forward.
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.read_outs.is_empty() {
-            self.drain_read();
+            self.walk_read(None);
         }
         self.read_outs.pop_front()
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        let belt = Self::walk(
-            self.interceptors.iter_mut().rev(),
-            VecDeque::from([msg]),
-            |s, p| s.handle_write(p),
-            |s| s.poll_write(),
-        );
-        self.write_outs.extend(belt);
+        self.walk_write(Some(msg));
         Ok(())
     }
 
@@ -179,7 +185,7 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for Chain {
     /// generated RTCP appears with no outbound packet to ride along with.
     fn poll_write(&mut self) -> Option<Self::Wout> {
         if self.write_outs.is_empty() {
-            self.drain_write();
+            self.walk_write(None);
         }
         self.write_outs.pop_front()
     }

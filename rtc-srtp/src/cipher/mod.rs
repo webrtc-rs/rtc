@@ -50,11 +50,44 @@ pub(crate) trait Cipher: Send {
     /// Retrieved RTCP index.
     fn get_rtcp_index(&self, input: &[u8]) -> usize;
 
+    /// Encrypts a marshalled RTP packet in place and appends its auth tag.
+    ///
+    /// `packet` holds the header and payload. Reserve `rtp_auth_tag_len() + aead_auth_tag_len()`
+    /// bytes of spare capacity and appending the tag does not reallocate.
+    fn encrypt_rtp_in_place(
+        &mut self,
+        packet: &mut BytesMut,
+        header: &rtp::Header,
+        roc: u32,
+    ) -> Result<()>;
+
+    /// Authenticates and decrypts a protected RTP packet in place, removing its auth tag.
+    ///
+    /// On error the contents of `packet` are unspecified — they may be partly decrypted — so the
+    /// caller must discard it rather than read it.
+    fn decrypt_rtp_in_place(
+        &mut self,
+        packet: &mut BytesMut,
+        header: &rtp::Header,
+        roc: u32,
+    ) -> Result<()>;
+
     /// Encrypt RTP payload.
-    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
+        let mut packet = BytesMut::with_capacity(
+            payload.len() + self.rtp_auth_tag_len() + self.aead_auth_tag_len(),
+        );
+        packet.extend_from_slice(payload);
+        self.encrypt_rtp_in_place(&mut packet, header, roc)?;
+        Ok(packet)
+    }
 
     /// Decrypt RTP payload.
-    fn decrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    fn decrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
+        let mut packet = BytesMut::from(payload);
+        self.decrypt_rtp_in_place(&mut packet, header, roc)?;
+        Ok(packet)
+    }
 
     /// Encrypt RTCP payload.
     fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;

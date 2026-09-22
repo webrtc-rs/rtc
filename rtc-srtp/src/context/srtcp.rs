@@ -28,7 +28,19 @@ impl Context {
         let index = self.cipher.get_rtcp_index(encrypted);
         let ssrc = u32::from_be_bytes([encrypted[4], encrypted[5], encrypted[6], encrypted[7]]);
 
-        if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector
+        // State for an SSRC not yet authenticated is kept only if this packet authenticates, for
+        // the reason given on `decrypt_rtp_under_state`.
+        let mut unknown = None;
+        let state = match self.srtcp_ssrc_states.get_mut(&ssrc) {
+            Some(state) => state,
+            None => unknown.insert(SrtcpSsrcState {
+                ssrc,
+                replay_detector: Some((self.new_srtcp_replay_detector)()),
+                ..Default::default()
+            }),
+        };
+
+        if let Some(replay_detector) = &mut state.replay_detector
             && !replay_detector.check(index as u64)
         {
             return Err(Error::SrtcpSsrcDuplicated(ssrc, index));
@@ -36,8 +48,11 @@ impl Context {
 
         let dst = self.cipher.decrypt_rtcp(encrypted, index, ssrc)?;
 
-        if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector {
+        if let Some(replay_detector) = &mut state.replay_detector {
             replay_detector.accept();
+        }
+        if let Some(state) = unknown {
+            self.srtcp_ssrc_states.insert(ssrc, state);
         }
 
         Ok(dst)

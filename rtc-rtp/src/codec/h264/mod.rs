@@ -13,6 +13,8 @@ use crate::packetizer::{Depacketizer, Payloader};
 use shared::error::{Error, Result};
 
 use bytes::{BufMut, Bytes, BytesMut};
+use memchr::memmem;
+use std::sync::LazyLock;
 
 /// H264Payloader payloads H264 packets
 #[derive(Default, Debug, Clone)]
@@ -58,20 +60,31 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 /// The Annex B start code (`00 00 00 01`) that delimits NAL units in a byte stream.
 pub static ANNEXB_NALUSTART_CODE: Bytes = Bytes::from_static(&[0x00, 0x00, 0x00, 0x01]);
 
-impl H264Payloader {
-    fn next_ind(nalu: &Bytes, start: usize) -> (isize, isize) {
-        let mut zero_count = 0;
+/// Searches for the three-byte start code `00 00 01`.
+///
+/// `memmem` uses SIMD where the target has it (SSE2/AVX2, NEON, wasm `simd128`) and a scalar
+/// fallback elsewhere. The finder is built once rather than per call: [`memmem::find`] builds
+/// a new one each time and, below 64 bytes, falls back to a scalar Rabin-Karp search, which is
+/// no faster than a byte loop on short units such as SPS and PPS.
+static START_CODE_FINDER: LazyLock<memmem::Finder<'static>> =
+    LazyLock::new(|| memmem::Finder::new(&[0x00, 0x00, 0x01]));
 
-        for (i, &b) in nalu[start..].iter().enumerate() {
-            if b == 0 {
-                zero_count += 1;
-                continue;
-            } else if b == 1 && zero_count >= 2 {
-                return ((start + i - zero_count) as isize, zero_count as isize + 1);
-            }
-            zero_count = 0
+impl H264Payloader {
+    /// Finds the first start code at or after `start`, returning its offset and length, or
+    /// `(-1, -1)` if there is none.
+    ///
+    /// A start code is `00 00 01` together with every zero immediately before it, down to
+    /// `start` but not past it, so a longer zero run is consumed as part of the prefix.
+    fn next_ind(nalu: &Bytes, start: usize) -> (isize, isize) {
+        let Some(relative) = START_CODE_FINDER.find(&nalu[start..]) else {
+            return (-1, -1);
+        };
+        let end = start + relative + 3;
+        let mut first = start + relative;
+        while first > start && nalu[first - 1] == 0 {
+            first -= 1;
         }
-        (-1, -1)
+        (first as isize, (end - first) as isize)
     }
 
     fn emit(&mut self, nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
@@ -183,6 +196,11 @@ impl H264Payloader {
 
 impl Payloader for H264Payloader {
     /// Payload fragments a H264 packet across one or more byte arrays
+    ///
+    /// `payload` is an Annex B byte stream, split at start codes found with a vectorized
+    /// substring search. SPS and PPS are held back and sent together as a STAP-A ahead of the
+    /// next unit, AUD and filler units are dropped, and every other unit is sent whole if it fits
+    /// `mtu` or as FU-A fragments if not. A payload without start codes is one NAL unit.
     fn payload(&mut self, mtu: usize, payload: &Bytes) -> Result<Vec<Bytes>> {
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);

@@ -2471,7 +2471,7 @@ fn test_handle_incoming_queued_packets_drains_when_cipher_ready() {
         0x00, 0x01, // content_len: 1
         0x00, // payload
     ];
-    conn.incoming_encrypted_packets.push_back(pkt.clone());
+    conn.enqueue_encrypted_packet(BytesMut::from(&pkt[..]));
     assert_eq!(conn.incoming_encrypted_packets.len(), 1);
 
     // Without cipher suite initialized: should NOT drain.
@@ -2543,7 +2543,7 @@ fn test_handle_incoming_queued_packets_sets_handshake_rx() {
         0x00, 0x01, // content_len: 1
         0x00, // payload
     ];
-    conn.incoming_encrypted_packets.push_back(pkt);
+    conn.enqueue_encrypted_packet(BytesMut::from(&pkt[..]));
 
     conn.handle_incoming_queued_packets().unwrap();
 
@@ -2589,8 +2589,7 @@ fn test_queued_packets_drained_when_cipher_ready() {
         0x00, 0x01, // content_len: 1
         0x00, // payload (dummy)
     ];
-    conn.incoming_encrypted_packets
-        .push_back(fake_epoch1_packet);
+    conn.enqueue_encrypted_packet(BytesMut::from(&fake_epoch1_packet[..]));
 
     // Without cipher suite: queue is not drained.
     conn.handle_incoming_queued_packets().unwrap();
@@ -2659,8 +2658,7 @@ fn test_handshake_rx_set_after_queue_processing() {
         0x00, 0x00, 0x04, // fragment_length: 4
         0xfe, 0xfd, 0x00, 0x00, // body (version + dummy)
     ];
-    conn.incoming_encrypted_packets
-        .push_back(fake_handshake_packet);
+    conn.enqueue_encrypted_packet(BytesMut::from(&fake_handshake_packet[..]));
 
     conn.handle_incoming_queued_packets().unwrap();
 
@@ -2669,4 +2667,152 @@ fn test_handshake_rx_set_after_queue_processing() {
         conn.handshake_rx.is_some(),
         "After fix: handshake_rx must be set when a queued packet yields hs=true"
     );
+}
+
+// --- Bounded queue of records waiting for the next epoch's keys ---
+
+/// A record of `content_type` at `epoch` with an opaque `payload_len`-byte body, as an
+/// unauthenticated peer can send it before any keys exist.
+fn opaque_record(
+    content_type: u8,
+    epoch: u16,
+    sequence_number: u64,
+    payload_len: usize,
+) -> Vec<u8> {
+    let mut record = vec![content_type, 0xfe, 0xfd];
+    record.extend_from_slice(&epoch.to_be_bytes());
+    record.extend_from_slice(&sequence_number.to_be_bytes()[2..]);
+    record.extend_from_slice(&(payload_len as u16).to_be_bytes());
+    record.resize(RECORD_LAYER_HEADER_SIZE + payload_len, 0);
+    record
+}
+
+fn assert_pending_within_budget(conn: &DTLSConn) {
+    assert!(conn.incoming_encrypted_packets.len() <= MAX_PENDING_RECORDS);
+    assert!(conn.incoming_encrypted_bytes <= MAX_PENDING_RECORD_BYTES);
+    assert_eq!(
+        conn.incoming_encrypted_bytes,
+        conn.incoming_encrypted_packets
+            .iter()
+            .map(|p| p.len())
+            .sum::<usize>()
+    );
+}
+
+/// Next-epoch records, distinct or repeated, small or MTU-sized, never grow the queue past
+/// its budgets; the earliest records are the ones kept.
+#[test]
+fn test_next_epoch_records_are_bounded() {
+    for (payload_len, distinct) in [(12, true), (12, false), (1200, true)] {
+        let mut conn = setup_dtls_conn_server_handshake_in_progress();
+        for sequence_number in 0..10_000u64 {
+            let sequence_number = if distinct { sequence_number } else { 0 };
+            let _ = conn.read(&opaque_record(22, 1, sequence_number, payload_len));
+            assert_pending_within_budget(&conn);
+        }
+        assert!(!conn.incoming_encrypted_packets.is_empty());
+        let expected = MAX_PENDING_RECORDS
+            .min(MAX_PENDING_RECORD_BYTES / (RECORD_LAYER_HEADER_SIZE + payload_len));
+        assert_eq!(conn.incoming_encrypted_packets.len(), expected);
+        let first = &conn.incoming_encrypted_packets[0];
+        assert_eq!(&first[5..11], &[0; 6], "the earliest record is kept");
+    }
+}
+
+/// The other two branches that queue records share the same budget: records of the current
+/// (non-zero) epoch while its keys are pending, and ChangeCipherSpec ahead of the keys. Neither
+/// marks the record as seen in the replay window.
+#[test]
+fn test_records_waiting_for_keys_share_the_budget() {
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    conn.state.remote_epoch = 1;
+    for sequence_number in 0..1_000u64 {
+        let _ = conn.read(&opaque_record(23, 1, sequence_number, 100));
+        let mut change_cipher_spec = opaque_record(20, 0, sequence_number, 1);
+        change_cipher_spec[RECORD_LAYER_HEADER_SIZE] = 1;
+        conn.read(&change_cipher_spec).unwrap();
+        assert_pending_within_budget(&conn);
+    }
+    assert_eq!(conn.incoming_encrypted_packets.len(), MAX_PENDING_RECORDS);
+    assert!(conn.replay_detector[1].check(0));
+    assert!(conn.replay_detector[0].check(0));
+}
+
+/// Draining the queue once the keys exist accounts for what leaves it.
+#[test]
+fn test_drain_releases_queued_bytes() {
+    use crate::cipher_suite::CipherSuite;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    for sequence_number in 0..8u64 {
+        let _ = conn.read(&opaque_record(23, 1, sequence_number, 64));
+    }
+    assert_eq!(conn.incoming_encrypted_packets.len(), 8);
+
+    let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
+    cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    )
+    .unwrap();
+    conn.state.cipher_suite = Some(cs);
+
+    // Still ahead of the remote epoch: kept for when its ChangeCipherSpec arrives.
+    conn.handle_incoming_queued_packets().unwrap();
+    assert_eq!(conn.incoming_encrypted_packets.len(), 8);
+    assert_pending_within_budget(&conn);
+
+    // The epoch advanced; the records fail authentication and are dropped.
+    conn.state.remote_epoch = 1;
+    conn.handle_incoming_queued_packets().unwrap();
+    assert!(conn.incoming_encrypted_packets.is_empty());
+    assert_eq!(conn.incoming_encrypted_bytes, 0);
+    assert!(conn.incoming_application_data().is_none());
+}
+
+/// Exhausting the retransmissions ends the handshake and frees what it had buffered.
+#[test]
+fn test_handshake_failure_releases_buffers() {
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    for sequence_number in 0..100u64 {
+        let _ = conn.read(&opaque_record(22, 1, sequence_number, 500));
+    }
+    // A partial handshake message: the first of two fragments of message 0.
+    let mut fragment = opaque_record(22, 0, 1, 12 + 2);
+    fragment[13..25].copy_from_slice(&[1, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 2]);
+    conn.read(&fragment).unwrap();
+    assert!(!conn.incoming_encrypted_packets.is_empty());
+    assert!(conn.fragment_buffer.size() > 0);
+
+    conn.current_handshake_state = HandshakeState::Waiting;
+    conn.retransmit = true;
+    conn.current_retransmit_count = conn.maximum_retransmit_number;
+    assert!(conn.handshake_timeout(Instant::now()).is_err());
+
+    assert!(conn.incoming_encrypted_packets.is_empty());
+    assert_eq!(conn.incoming_encrypted_bytes, 0);
+    assert_eq!(conn.fragment_buffer.size(), 0);
+}
+
+/// A fatal alert from the peer ends the association and frees what it had buffered.
+#[test]
+fn test_fatal_alert_releases_buffers() {
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    for sequence_number in 0..10u64 {
+        let _ = conn.read(&opaque_record(22, 1, sequence_number, 50));
+    }
+    assert!(!conn.incoming_encrypted_packets.is_empty());
+
+    let mut alert = opaque_record(21, 0, 1, 2);
+    alert[13..].copy_from_slice(&[2, 40]); // fatal handshake_failure
+    assert!(matches!(
+        conn.read(&alert),
+        Err(Error::ErrAlertFatalOrClose)
+    ));
+    assert!(conn.incoming_encrypted_packets.is_empty());
+    assert_eq!(conn.incoming_encrypted_bytes, 0);
 }

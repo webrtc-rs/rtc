@@ -18,6 +18,7 @@ pub mod cipher_suite_tls_psk_with_aes_128_ccm8;
 /// `TLS_PSK_WITH_AES_128_GCM_SHA256`, for pre-shared-key handshakes.
 pub mod cipher_suite_tls_psk_with_aes_128_gcm_sha256;
 
+use bytes::{Bytes, BytesMut};
 use crypto::RTCCryptoProvider;
 use crypto::{
     AeadAlgorithm, CbcAlgorithm, CryptoAlgorithm, HashAlgorithm, HmacAlgorithm, RTCCrypto,
@@ -270,7 +271,38 @@ pub trait CipherSuite: Send {
     ///
     /// Fails if authentication fails, or the record is malformed.
     fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>>;
+
+    /// Protects the record in `raw` — its header followed by the plaintext — in place, leaving
+    /// the encrypted record [`encrypt`](CipherSuite::encrypt) would return. Spare capacity of
+    /// [`MAX_CIPHER_SUITE_OVERHEAD`] bytes avoids a reallocation.
+    ///
+    /// The default implementation calls `encrypt` and replaces `raw` with its result.
+    ///
+    /// # Errors
+    ///
+    /// Fails if keys are not installed, or the cipher rejects the input.
+    fn encrypt_in_place(&mut self, pkt_rlh: &RecordLayerHeader, raw: &mut BytesMut) -> Result<()> {
+        *raw = BytesMut::from(Bytes::from(self.encrypt(pkt_rlh, raw)?));
+        Ok(())
+    }
+
+    /// Unprotects the record in `input` in place, leaving the header followed by the plaintext
+    /// that [`decrypt`](CipherSuite::decrypt) would return, without copying the plaintext.
+    ///
+    /// The default implementation calls `decrypt` and replaces `input` with its result.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails, or the record is malformed; `input` is then unspecified.
+    fn decrypt_in_place(&mut self, input: &mut BytesMut) -> Result<()> {
+        *input = BytesMut::from(Bytes::from(self.decrypt(input)?));
+        Ok(())
+    }
 }
+
+/// The most bytes any built-in suite adds when protecting a record (AES-CBC: IV, MAC and a
+/// full block of padding).
+pub const MAX_CIPHER_SUITE_OVERHEAD: usize = crate::crypto::crypto_cbc::CRYPTO_CBC_OVERHEAD;
 
 // Taken from https://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 // A cipher_suite is a specific combination of key agreement, cipher and MAC

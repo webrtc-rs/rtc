@@ -18,7 +18,6 @@ pub struct OggWriter<W: Write> {
     channel_count: u8,
     serial: u32,
     page_index: u32,
-    checksum_table: [u32; 256],
     previous_granule_position: u64,
     previous_timestamp: u32,
     last_payload_size: usize,
@@ -34,7 +33,6 @@ impl<W: Write> OggWriter<W> {
             channel_count,
             serial: rand::random::<u32>(),
             page_index: 0,
-            checksum_table: generate_checksum_table(),
 
             // Timestamp and Granule MUST start from 1
             // Only headers can have 0 values
@@ -153,11 +151,8 @@ impl<W: Write> OggWriter<W> {
             header_writer.write_all(payload)?; // inserting at 28th since Segment Table(1) + header length(27)
         }
 
-        let mut checksum = 0u32;
-        for v in &page {
-            checksum =
-                (checksum << 8) ^ self.checksum_table[(((checksum >> 24) as u8) ^ (*v)) as usize];
-        }
+        // The checksum field is still zero here, which is what the checksum is defined over.
+        let checksum = PageChecksum::of(&page);
         page[22..26].copy_from_slice(&checksum.to_le_bytes()); // Checksum - generating for page data and inserting at 22th position into 32 bits
 
         self.writer.write_all(&page)?;

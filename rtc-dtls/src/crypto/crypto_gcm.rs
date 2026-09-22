@@ -3,8 +3,9 @@
 // Mandatory as of TLS 1.2 (2008) and used by default by most clients.
 // RFC 5288 year 2008 https://tools.ietf.org/html/rfc5288
 
-use std::io::Cursor;
 use std::sync::Arc;
+
+use bytes::BytesMut;
 
 use crypto::{AeadAlgorithm, AeadCipher, RTCCryptoProvider};
 
@@ -15,6 +16,9 @@ use shared::error::*;
 
 const CRYPTO_GCM_TAG_LENGTH: usize = 16;
 const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
+const CRYPTO_GCM_EXPLICIT_NONCE_LENGTH: usize = 8;
+/// Bytes AES-GCM adds to a record: the explicit nonce and the tag.
+pub const CRYPTO_GCM_OVERHEAD: usize = CRYPTO_GCM_EXPLICIT_NONCE_LENGTH + CRYPTO_GCM_TAG_LENGTH;
 
 /// AES-GCM authenticated encryption for DTLS records, holding the per-direction keys.
 pub struct CryptoGcm {
@@ -57,8 +61,44 @@ impl CryptoGcm {
     ///
     /// Fails if the cipher rejects the input.
     pub fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
-        let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
+        // Assemble header + explicit nonce + payload once, then encrypt the
+        // payload region in place with a detached tag: one allocation and one
+        // payload copy instead of the former staging Vec + full re-copy.
+        let mut r = Vec::with_capacity(raw.len() + CRYPTO_GCM_OVERHEAD);
+        r.extend_from_slice(&raw[..RECORD_LAYER_HEADER_SIZE]);
+        r.extend_from_slice(&[0; CRYPTO_GCM_EXPLICIT_NONCE_LENGTH]);
+        r.extend_from_slice(&raw[RECORD_LAYER_HEADER_SIZE..]);
+        self.seal(pkt_rlh, &mut r)?;
+        Ok(r)
+    }
+
+    /// Protects the record in `raw` (header followed by plaintext) in place, leaving header plus
+    /// ciphertext. Reserve [`CRYPTO_GCM_OVERHEAD`] spare bytes to avoid a reallocation.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
+    pub fn encrypt_in_place(
+        &mut self,
+        pkt_rlh: &RecordLayerHeader,
+        raw: &mut BytesMut,
+    ) -> Result<()> {
+        // Open the gap for the explicit nonce between header and payload.
+        let len = raw.len();
+        raw.reserve(CRYPTO_GCM_OVERHEAD);
+        raw.resize(len + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH, 0);
+        raw.copy_within(
+            RECORD_LAYER_HEADER_SIZE..len,
+            RECORD_LAYER_HEADER_SIZE + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH,
+        );
+        self.seal(pkt_rlh, raw)
+    }
+
+    // Seals `r`, laid out as header, explicit-nonce gap and payload, then appends the tag and
+    // patches the header's length.
+    fn seal(&mut self, pkt_rlh: &RecordLayerHeader, r: &mut impl RecordBuf) -> Result<()> {
+        let payload_start = RECORD_LAYER_HEADER_SIZE + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH;
+        let payload_len = r.len() - payload_start;
 
         let mut nonce = [0u8; CRYPTO_GCM_NONCE_LENGTH];
         nonce[..4].copy_from_slice(&self.local_write_iv[..4]);
@@ -66,36 +106,22 @@ impl CryptoGcm {
             .random()
             .fill(&mut nonce[4..])
             .map_err(crypto_error)?;
+        r[RECORD_LAYER_HEADER_SIZE..payload_start].copy_from_slice(&nonce[4..]);
 
-        let additional_data = generate_aead_additional_data(pkt_rlh, payload.len());
-
-        // Assemble header + explicit nonce + payload once, then encrypt the
-        // payload region in place with a detached tag: one allocation and one
-        // payload copy instead of the former staging Vec + full re-copy.
-        let mut r = Vec::with_capacity(
-            RECORD_LAYER_HEADER_SIZE + 8 + payload.len() + CRYPTO_GCM_TAG_LENGTH,
-        );
-        r.extend_from_slice(raw);
-        r.extend_from_slice(&nonce[4..]);
-        r.extend_from_slice(payload);
+        let additional_data = generate_aead_additional_data(pkt_rlh, payload_len);
 
         let mut tag = [0; CRYPTO_GCM_TAG_LENGTH];
         self.local_gcm
-            .seal_in_place(
-                &nonce,
-                &additional_data,
-                &mut r[RECORD_LAYER_HEADER_SIZE + 8..],
-                &mut tag,
-            )
+            .seal_in_place(&nonce, &additional_data, &mut r[payload_start..], &mut tag)
             .map_err(crypto_error)?;
-        r.extend_from_slice(&tag);
+        r.extend(&tag);
 
         // Update recordLayer size to include explicit nonce
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
         r[RECORD_LAYER_HEADER_SIZE - 2..RECORD_LAYER_HEADER_SIZE]
             .copy_from_slice(&r_len.to_be_bytes());
 
-        Ok(r)
+        Ok(())
     }
 
     /// Unprotects one record.
@@ -104,45 +130,80 @@ impl CryptoGcm {
     ///
     /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>> {
-        let mut reader = Cursor::new(r);
-        let h = RecordLayerHeader::unmarshal(&mut reader)?;
-        if h.content_type == ContentType::ChangeCipherSpec {
-            // Nothing to encrypt with ChangeCipherSpec
+        let Some((h, nonce, ciphertext_len)) = self.open_params(r)? else {
             return Ok(r.to_vec());
-        }
+        };
+        let additional_data = generate_aead_additional_data(&h, ciphertext_len);
 
-        if r.len() <= (RECORD_LAYER_HEADER_SIZE + 8) {
-            return Err(Error::ErrNotEnoughRoomForNonce);
-        }
-
-        let mut nonce = [0u8; CRYPTO_GCM_NONCE_LENGTH];
-        nonce[..4].copy_from_slice(&self.remote_write_iv[..4]);
-        nonce[4..].copy_from_slice(&r[RECORD_LAYER_HEADER_SIZE..RECORD_LAYER_HEADER_SIZE + 8]);
-
-        let out = &r[RECORD_LAYER_HEADER_SIZE + 8..];
-        if out.len() < CRYPTO_GCM_TAG_LENGTH {
-            // Too short to hold the auth tag; the AEAD would reject it.
-            return Err(Error::Other(
-                "DTLS AES-GCM record too short for tag".to_string(),
-            ));
-        }
-        let tag_start = out.len() - CRYPTO_GCM_TAG_LENGTH;
-
-        let additional_data = generate_aead_additional_data(&h, tag_start);
-
-        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + tag_start);
+        let ciphertext_start = RECORD_LAYER_HEADER_SIZE + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH;
+        let (ciphertext, tag) = r[ciphertext_start..].split_at(ciphertext_len);
+        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + ciphertext_len);
         d.extend_from_slice(&r[..RECORD_LAYER_HEADER_SIZE]);
-        d.extend_from_slice(&out[..tag_start]);
+        d.extend_from_slice(ciphertext);
         self.remote_gcm
             .open_in_place(
                 &nonce,
                 &additional_data,
                 &mut d[RECORD_LAYER_HEADER_SIZE..],
-                &out[tag_start..],
+                tag,
             )
             .map_err(authentication_error)?;
 
         Ok(d)
+    }
+
+    /// Unprotects the record in `r` in place, leaving the header followed by the plaintext, as
+    /// [`Self::decrypt`] returns it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short; `r` is then unspecified.
+    pub fn decrypt_in_place(&mut self, r: &mut BytesMut) -> Result<()> {
+        let Some((h, nonce, ciphertext_len)) = self.open_params(r)? else {
+            return Ok(());
+        };
+        let additional_data = generate_aead_additional_data(&h, ciphertext_len);
+
+        let ciphertext_start = RECORD_LAYER_HEADER_SIZE + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH;
+        let (ciphertext, tag) = r[ciphertext_start..].split_at_mut(ciphertext_len);
+        self.remote_gcm
+            .open_in_place(&nonce, &additional_data, ciphertext, tag)
+            .map_err(authentication_error)?;
+
+        strip_decrypted_record(r, CRYPTO_GCM_EXPLICIT_NONCE_LENGTH, ciphertext_len);
+        Ok(())
+    }
+
+    // Checks a received record's length and returns its header, nonce and ciphertext length,
+    // or `None` for a ChangeCipherSpec record, which is not encrypted.
+    fn open_params(
+        &self,
+        r: &[u8],
+    ) -> Result<Option<(RecordLayerHeader, [u8; CRYPTO_GCM_NONCE_LENGTH], usize)>> {
+        let h = RecordLayerHeader::unmarshal(&mut &r[..])?;
+        if h.content_type == ContentType::ChangeCipherSpec {
+            // Nothing to encrypt with ChangeCipherSpec
+            return Ok(None);
+        }
+
+        let ciphertext_start = RECORD_LAYER_HEADER_SIZE + CRYPTO_GCM_EXPLICIT_NONCE_LENGTH;
+        if r.len() <= ciphertext_start {
+            return Err(Error::ErrNotEnoughRoomForNonce);
+        }
+
+        let mut nonce = [0u8; CRYPTO_GCM_NONCE_LENGTH];
+        nonce[..4].copy_from_slice(&self.remote_write_iv[..4]);
+        nonce[4..].copy_from_slice(&r[RECORD_LAYER_HEADER_SIZE..ciphertext_start]);
+
+        let out_len = r.len() - ciphertext_start;
+        if out_len < CRYPTO_GCM_TAG_LENGTH {
+            // Too short to hold the auth tag; the AEAD would reject it.
+            return Err(Error::Other(
+                "DTLS AES-GCM record too short for tag".to_string(),
+            ));
+        }
+
+        Ok(Some((h, nonce, out_len - CRYPTO_GCM_TAG_LENGTH)))
     }
 }
 

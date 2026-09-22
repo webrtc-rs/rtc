@@ -15,6 +15,7 @@ members = [
     "rtc-srtp",
     "rtc-stun",
     "rtc-turn",
+    "benchmarks/rtc-bench",
 ]
 resolver = "2"
 
@@ -63,9 +64,9 @@ serde_json = "1.0.114"
 thiserror = "2.0.18"
 zeroize = "1.8.2"
 pem = "3.0.3"
-aes = "0.8.4"
-ctr = "0.9.2"
-ccm = "0.5.0"
+aes = "0.9.3"
+ctr = "0.10.1"
+ccm = { version = "0.6.1", default-features = false }
 md-5 = "0.10.6"
 hmac = "0.12.1"
 sha1 = "0.10.6"
@@ -78,10 +79,16 @@ bytecheck = "0.8"
 url = "2.5.0"
 base64 = "0.22.1"
 crc = "3.0.1"
+# SIMD CRC (carry-less-multiply folding on x86/x86_64 and aarch64, runtime-detected; slice-by-16
+# tables elsewhere). Built without its default `ffi`/`panic-handler` features.
+crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 slab = "0.4.9"
 crc32c = "0.6"
 rustc-hash = "2"
 memchr = "2.1.1"
+# Portable SIMD vector types (SSE2/AVX2 on x86, NEON on aarch64, simd128 on wasm, scalar
+# elsewhere), selected at compile time; used for the explicit-SIMD kernels.
+wide = "1.7.1"
 socket2 = { version = "0.6", features = ["all"] }
 proc-macro2 = "1"
 quote = "1"

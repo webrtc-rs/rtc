@@ -544,3 +544,264 @@ fn decoding_consumes_exactly_the_declared_length() {
         "the trailing bytes must still be unread for the next packet"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// Bulk decoding — a contiguous buffer and a fragmented one must agree exactly
+// ---------------------------------------------------------------------------------------
+
+/// A `Buf` that exposes at most `chunk` bytes at a time, as a fragmented buffer does.
+struct Fragmented<'a> {
+    data: &'a [u8],
+    chunk: usize,
+}
+
+impl Buf for Fragmented<'_> {
+    fn remaining(&self) -> usize {
+        self.data.len()
+    }
+
+    fn chunk(&self) -> &[u8] {
+        &self.data[..self.data.len().min(self.chunk)]
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        self.data = &self.data[cnt..];
+    }
+}
+
+/// Every one of the 65,536 wire words: the bulk decoder must agree with `unmarshal_word`, and
+/// both with the definition — a clear received bit decodes as all zeros whatever the other 15
+/// bits hold, a set one splits into ECN and a 13-bit offset, reserved offsets included.
+#[test]
+fn every_metric_word_decodes_identically_in_bulk_and_one_at_a_time() {
+    let raw: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_be_bytes).collect();
+    let bulk = decode_metric_words(&raw);
+
+    assert_eq!(65_536, bulk.len());
+    for (word, block) in (0..=u16::MAX).zip(&bulk) {
+        let expected = if word & 0x8000 == 0 {
+            CcFeedbackMetricBlock::default()
+        } else {
+            CcFeedbackMetricBlock {
+                received: true,
+                ecn: Ecn::from_bits((word >> 13) as u8),
+                arrival_time_offset: word & 0x1FFF,
+            }
+        };
+        assert_eq!(expected, *block, "word {word:#06x}");
+        assert_eq!(CcFeedbackMetricBlock::unmarshal_word(word), *block);
+    }
+
+    // Every length around the compiled loop's eight-word stride, starting at every word, so its
+    // vector body and scalar remainder meet in every position.
+    for start in 0..16 {
+        for count in 0..40 {
+            let words = &raw[2 * start..2 * (start + count)];
+            assert_eq!(
+                bulk[start..start + count],
+                decode_metric_words(words)[..],
+                "{count} words from word {start}"
+            );
+        }
+    }
+}
+
+/// The same 65,536 words through `unmarshal_from`, contiguous and fragmented, split across two
+/// report blocks because `num_reports` stops at 65,535.
+#[test]
+fn every_metric_word_decodes_identically_contiguous_and_fragmented() {
+    let words: Vec<u16> = (0..=u16::MAX).collect();
+    for block_words in [&words[..65_535], &words[65_535..]] {
+        let mut data = vec![0x00, 0x00, 0x00, 0x07, 0x12, 0x34];
+        data.extend_from_slice(&(block_words.len() as u16).to_be_bytes());
+        data.extend(block_words.iter().flat_map(|word| word.to_be_bytes()));
+        if block_words.len() % 2 == 1 {
+            data.extend_from_slice(&[0xFF, 0xFF]); // padding is skipped, whatever it holds
+        }
+
+        let contiguous = unmarshal_block(&data).expect("contiguous");
+        assert_eq!(block_words.len(), contiguous.0.metric_blocks.len());
+        for (word, block) in block_words.iter().zip(&contiguous.0.metric_blocks) {
+            assert_eq!(CcFeedbackMetricBlock::unmarshal_word(*word), *block);
+        }
+
+        for chunk in [1, 3, 16] {
+            let mut fragmented = Fragmented { data: &data, chunk };
+            let decoded = CcFeedbackReportBlock::unmarshal_from(&mut fragmented, data.len())
+                .expect("fragmented");
+            assert_eq!(contiguous, decoded, "{chunk}-byte chunks");
+            assert_eq!(0, fragmented.remaining(), "padding consumed");
+        }
+    }
+}
+
+/// A deterministic generator (xorshift32), so a failure reproduces.
+struct Rng(u32);
+
+impl Rng {
+    fn next(&mut self) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 17;
+        self.0 ^= self.0 << 5;
+        self.0
+    }
+}
+
+/// A report's raw bytes with `counts[i]` metric words in block `i`: received packets with every
+/// ECN codepoint and offsets up to the reserved `0x1FFE`/`0x1FFF`, lost packets whose other 15
+/// bits hold stale junk, odd counts padded with non-zero bytes.
+fn raw_report(rng: &mut Rng, counts: &[usize]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&rng.next().to_be_bytes()); // sender SSRC
+    for &count in counts {
+        body.extend_from_slice(&rng.next().to_be_bytes()); // media SSRC
+        body.extend_from_slice(&(rng.next() as u16).to_be_bytes()); // begin_seq
+        body.extend_from_slice(&(count as u16).to_be_bytes());
+        for _ in 0..count {
+            let bits = rng.next();
+            let word = match bits % 8 {
+                0 => (bits >> 16) as u16 & 0x7FFF, // lost, stale bits
+                // Received, at or near the reserved offsets 0x1FFE and 0x1FFF.
+                1 => 0x8000 | ((bits >> 16) as u16 & 0x6000) | (0x1FFF - (bits >> 30) as u16),
+                _ => 0x8000 | (bits >> 16) as u16,
+            };
+            body.extend_from_slice(&word.to_be_bytes());
+        }
+        if count % 2 == 1 {
+            body.extend_from_slice(&[0xA5, 0x5A]);
+        }
+    }
+    body.extend_from_slice(&rng.next().to_be_bytes()); // report timestamp
+
+    let mut raw = vec![0x8B, 0xCD];
+    raw.extend_from_slice(&((HEADER_LENGTH + body.len()) as u16 / 4 - 1).to_be_bytes());
+    raw.extend_from_slice(&body);
+    raw
+}
+
+/// Block shapes: empty, odd, either side of the decoder's eight-word stride, and MTU-sized.
+const REPORT_SHAPES: &[&[usize]] = &[
+    &[],
+    &[0],
+    &[1],
+    &[3, 0, 5],
+    &[7, 8, 9],
+    &[15, 16, 17],
+    &[31, 1, 33, 2],
+    &[580],
+    &[143, 143, 143, 143],
+];
+
+/// A report split into two chunks at every byte offset decodes exactly as the contiguous report
+/// does, consuming exactly its own bytes — a following packet included.
+#[test]
+fn a_report_split_anywhere_decodes_as_the_contiguous_one() {
+    let mut rng = Rng(0x2545_F491);
+    let mut reports = vec![TWO_BLOCK_REPORT.to_vec()];
+    reports.extend(
+        REPORT_SHAPES
+            .iter()
+            .map(|counts| raw_report(&mut rng, counts)),
+    );
+
+    for raw in &reports {
+        let mut datagram = raw.clone();
+        datagram.extend_from_slice(EMPTY_REPORT);
+
+        let mut contiguous = datagram.as_slice();
+        let expected = CcFeedbackReport::unmarshal(&mut contiguous).expect("contiguous");
+        assert_eq!(EMPTY_REPORT.len(), contiguous.remaining());
+
+        for split in 0..=datagram.len() {
+            let (head, tail) = datagram.split_at(split);
+            let mut chained = Bytes::copy_from_slice(head).chain(Bytes::copy_from_slice(tail));
+            let decoded = CcFeedbackReport::unmarshal(&mut chained)
+                .unwrap_or_else(|e| panic!("split at {split}: {e}"));
+            assert_eq!(expected, decoded, "split at {split}");
+            assert_eq!(
+                EMPTY_REPORT.len(),
+                chained.remaining(),
+                "split at {split}: consumed exactly the report"
+            );
+
+            // And through the compound dispatcher, which carries on into the next packet.
+            let mut chained = Bytes::copy_from_slice(head).chain(Bytes::copy_from_slice(tail));
+            let packets = unmarshal(&mut chained).expect("compound");
+            assert_eq!(2, packets.len(), "split at {split}");
+            assert_eq!(
+                Some(&expected),
+                packets[0].as_any().downcast_ref::<CcFeedbackReport>(),
+                "split at {split}"
+            );
+        }
+    }
+}
+
+/// Every truncation of a report, split at every offset, fails with the same error the
+/// contiguous decoder gives — and a `num_reports` beyond the block's budget or the buffer does
+/// too.
+#[test]
+fn truncated_reports_fail_identically_contiguous_and_fragmented() {
+    let mut rng = Rng(0x9E37_79B9);
+    for counts in [&[3usize, 0, 5][..], &[7, 8, 9], &[17]] {
+        let raw = raw_report(&mut rng, counts);
+
+        for len in 0..raw.len() {
+            let truncated = &raw[..len];
+            let expected = CcFeedbackReport::unmarshal(&mut &truncated[..]);
+            assert!(expected.is_err(), "{counts:?} truncated to {len}");
+
+            for split in 0..=len {
+                let (head, tail) = truncated.split_at(split);
+                let mut chained = Bytes::copy_from_slice(head).chain(Bytes::copy_from_slice(tail));
+                assert_eq!(
+                    expected,
+                    CcFeedbackReport::unmarshal(&mut chained),
+                    "{counts:?} truncated to {len}, split at {split}"
+                );
+            }
+        }
+
+        // `num_reports` of the first block overstated, header length intact. By one on an odd
+        // count it claims the padding word as a report and still decodes; by more it runs past
+        // the block's budget. Either way both paths must agree.
+        for extra in [1u16, 2, 1000] {
+            let mut overstated = raw.clone();
+            let count = u16::from_be_bytes([overstated[14], overstated[15]]);
+            overstated[14..16].copy_from_slice(&(count + extra).to_be_bytes());
+            let expected = CcFeedbackReport::unmarshal(&mut overstated.as_slice());
+            if extra == 1000 {
+                assert_eq!(Err(Error::PacketTooShort), expected, "{counts:?}");
+            }
+            for chunk in [1, 2, 5] {
+                let mut fragmented = Fragmented {
+                    data: &overstated,
+                    chunk,
+                };
+                assert_eq!(
+                    expected,
+                    CcFeedbackReport::unmarshal(&mut fragmented),
+                    "{counts:?} with {extra} extra reports, {chunk}-byte chunks"
+                );
+            }
+        }
+    }
+}
+
+/// Fragments of every size, not just two: each metric word may straddle a chunk boundary.
+#[test]
+fn a_report_in_small_fragments_decodes_as_the_contiguous_one() {
+    let mut rng = Rng(0x0BAD_5EED);
+    for counts in REPORT_SHAPES {
+        let raw = raw_report(&mut rng, counts);
+        let expected = CcFeedbackReport::unmarshal(&mut raw.as_slice()).expect("contiguous");
+        for chunk in 1..=17 {
+            let mut fragmented = Fragmented { data: &raw, chunk };
+            assert_eq!(
+                Ok(expected.clone()),
+                CcFeedbackReport::unmarshal(&mut fragmented),
+                "{counts:?} in {chunk}-byte chunks"
+            );
+        }
+    }
+}

@@ -20,7 +20,10 @@ pub mod crypto_chacha20;
 pub mod crypto_gcm;
 
 use std::convert::TryFrom;
+use std::ops::DerefMut;
 use std::sync::Arc;
+
+use bytes::{Buf, BytesMut};
 
 use der_parser::oid;
 use der_parser::oid::Oid;
@@ -436,6 +439,22 @@ pub(crate) fn verify_server_cert(
     };
 
     Ok(chains)
+}
+
+// The buffers a record is protected in: a `Vec` for `encrypt`, a `BytesMut` for
+// `encrypt_in_place`.
+pub(crate) trait RecordBuf: DerefMut<Target = [u8]> + for<'a> Extend<&'a u8> {}
+impl<T: DerefMut<Target = [u8]> + for<'a> Extend<&'a u8>> RecordBuf for T {}
+
+// Turns a record decrypted in place — header, `prefix_len` bytes of explicit nonce or IV, the
+// plaintext, then tag, MAC or padding — into header followed by plaintext. Only the 13 header
+// bytes move; the header's length field is left as received.
+pub(crate) fn strip_decrypted_record(r: &mut BytesMut, prefix_len: usize, plaintext_len: usize) {
+    if prefix_len > 0 {
+        r.copy_within(..RECORD_LAYER_HEADER_SIZE, prefix_len);
+        r.advance(prefix_len);
+    }
+    r.truncate(RECORD_LAYER_HEADER_SIZE + plaintext_len);
 }
 
 pub(crate) fn generate_aead_additional_data(h: &RecordLayerHeader, payload_len: usize) -> [u8; 13] {

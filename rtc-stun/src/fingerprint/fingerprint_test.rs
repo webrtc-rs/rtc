@@ -72,3 +72,40 @@ fn test_fingerprint_check_bad() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn fingerprint_value_matches_the_check_value() {
+    // CRC-32/ISO-HDLC of "123456789" is 0xCBF43926 (the catalogue's check value).
+    assert_eq!(
+        fingerprint_value(b"123456789"),
+        0xCBF4_3926 ^ FINGERPRINT_XOR_VALUE
+    );
+}
+
+/// The accelerated CRC agrees with the table-driven `crc` implementation it replaced, at every
+/// length through a full MTU and at every alignment of the start within a 16-byte vector.
+#[test]
+fn fingerprint_value_matches_the_table_driven_crc() {
+    use crc::{CRC_32_ISO_HDLC, Crc, Table};
+    static REFERENCE: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
+
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let data: Vec<u8> = (0..1600)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    for offset in 0..16 {
+        for len in 0..=1500 {
+            let input = &data[offset..offset + len];
+            assert_eq!(
+                fingerprint_value(input),
+                REFERENCE.checksum(input) ^ FINGERPRINT_XOR_VALUE,
+                "offset {offset}, length {len}"
+            );
+        }
+    }
+}

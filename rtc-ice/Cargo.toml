@@ -31,6 +31,7 @@ uuid.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 regex.workspace = true
 env_logger.workspace = true
 chrono.workspace = true
@@ -48,3 +49,7 @@ ctrlc.workspace = true
 name = "ping_pong"
 path = "examples/ping_pong.rs"
 bench = false
+
+[[bench]]
+name = "bench"
+harness = false

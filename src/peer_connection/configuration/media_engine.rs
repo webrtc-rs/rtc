@@ -731,12 +731,16 @@ impl MediaEngine {
         &self,
         extension: RTCRtpHeaderExtensionCapability,
     ) -> (u16, bool, bool) {
-        if self.negotiated_header_extensions.is_empty() {
-            return (0, false, false);
-        }
+        self.negotiated_header_extension_id(&extension.uri)
+    }
 
+    /// [`get_header_extension_id`](Self::get_header_extension_id) by URI.
+    ///
+    /// Takes the URI borrowed, so a caller on the packet path can look one up without first
+    /// building an owned capability to ask with.
+    pub(crate) fn negotiated_header_extension_id(&self, uri: &str) -> (u16, bool, bool) {
         for (id, h) in &self.negotiated_header_extensions {
-            if extension.uri == h.uri {
+            if h.uri == uri {
                 return (*id, h.is_audio, h.is_video);
             }
         }

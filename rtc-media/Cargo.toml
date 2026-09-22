@@ -19,6 +19,9 @@ byteorder.workspace = true
 bytes.workspace = true
 rand.workspace = true
 thiserror.workspace = true
+memchr.workspace = true
+crc-fast.workspace = true
+wide.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -26,4 +29,16 @@ nearly_eq.workspace = true
 
 [[bench]]
 name = "bench"
+harness = false
+
+[[bench]]
+name = "h26x"
+harness = false
+
+[[bench]]
+name = "ogg"
+harness = false
+
+[[bench]]
+name = "pcm"
 harness = false

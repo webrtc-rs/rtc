@@ -37,3 +37,11 @@ winapi = { version = "0.3.9", features = [
     "winerror",
     "ws2ipdef",
 ] }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "replay_detector"
+harness = false
+required-features = ["replay"]

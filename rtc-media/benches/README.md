@@ -1,4 +1,39 @@
-### Benchmark Results
+# rtc-media benchmarks
+
+## Audio: `bench`
+
+```bash
+cargo bench --package rtc-media --bench bench
+```
+
+Buffer layout conversion (`Audio/Deinterleave/*`, `Audio/Interleave/*`, `Audio/FromBytes/*`); the
+source's opening comment describes each case. `i16`/`f32` sample conversion (`Audio/PCM/*`) is the
+`pcm` target.
+
+### Fast paths for mono, stereo and four channels (2026-09-21)
+
+Measured with `python3 scripts/bench.py compare refs/bench/pre-simd --overlay-benches --rounds 2`
+on an Apple M1 Max, macOS 27.0, `rustc 1.99.0-nightly` (2026-08-04); before is the tree just ahead of
+the change. [SIMD.md](../../SIMD.md) has the full record.
+
+Every case got 5–17× faster, allocation included; for example:
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `Audio/Deinterleave/i16/2ch/960` | 1.24 µs | 79.8 ns |
+| `Audio/Interleave/i16/2ch/960` | 938 ns | 81.5 ns |
+| `Audio/Deinterleave/f32/4ch/960` | 2.17 µs | 263 ns |
+| `Audio/FromBytes/le/interleaved-to-deinterleaved/i16/2ch/960` | 1.24 µs | 80.7 ns |
+| `Audio/Deinterleave/i32/4ch/100000` | 219 µs | 37.1 µs |
+| `Audio/Interleave/i32/4ch/100000` | 187 µs | 26.7 µs |
+
+The results below come from the earlier version of this benchmark, which measured only
+four-channel, 100,000-frame `i32` buffers. Its two labels were reversed relative to the
+operations: `Media/Buffer/Interleaved to Deinterleaved` timed the conversion *to* interleaved,
+and `Media/Buffer/Deinterleaved to Interleaved` the conversion *to* deinterleaved. Today these
+are `Audio/Interleave/i32/4ch/100000` and `Audio/Deinterleave/i32/4ch/100000` respectively.
+
+### Earlier results
 
 MacBook Air M3 24 GB MacOS 26.2
 
@@ -61,3 +96,54 @@ Found 5 outliers among 100 measurements (5.00%)
   4 (4.00%) high severe
 
 ```
+## PCM: `pcm`
+
+```bash
+cargo bench --package rtc-media --bench pcm
+```
+
+`Sample<i16>` ↔ `Sample<f32>` a slice at a time with `wide` (`slice`) against a loop over the
+per-sample `From` (`per-sample`); both are bit-identical. The slice API is new, so there is no
+before. Same machine and toolchain as above:
+
+| Benchmark | Per sample | Slice |
+|---|---:|---:|
+| `Audio/PCM/i16-to-f32/*/1920` | 402 ns | 230 ns |
+| `Audio/PCM/i16-to-f32/*/200000` | 42.0 µs | 24.4 µs |
+| `Audio/PCM/f32-to-i16/*/1920` | 191 ns | 191 ns |
+| `Audio/PCM/f32-to-i16/*/200000` | 19.9 µs | 19.9 µs |
+
+## H.264/H.265 Annex B reader: `h26x`
+
+```bash
+cargo bench --package rtc-media --bench h26x
+```
+
+`H26xReader` reading a synthetic ~1 MiB stream to the end. After it scanned for start codes with
+`memchr::memmem` and copied spans in bulk rather than a byte at a time (2026-09-21):
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `H26x/Reader/H264/1MiB` | 5.88 ms | 76.9 µs |
+| `H26x/Reader/H265/1MiB` | 5.65 ms | 79.3 µs |
+
+## Ogg pages: `ogg`
+
+```bash
+cargo bench --package rtc-media --bench ogg
+```
+
+Whole-page writing, and reading with and without checksum verification. After the page CRC moved
+from a byte-at-a-time table walk to `crc-fast` (2026-09-21):
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `Ogg/Write/80B` | 358 ns | 91.3 ns |
+| `Ogg/Write/1200B` | 3.52 µs | 155 ns |
+| `Ogg/Write/8192B` | 23.4 µs | 442 ns |
+| `Ogg/Write/65025B` | 184 µs | 3.15 µs |
+| `Ogg/Read/checksum/80B` | 337 ns | 107 ns |
+| `Ogg/Read/checksum/1200B` | 3.54 µs | 170 ns |
+| `Ogg/Read/checksum/8192B` | 23.4 µs | 548 ns |
+| `Ogg/Read/checksum/65025B` | 186 µs | 4.00 µs |
+| `Ogg/Read/no-checksum/*` | unchanged | |

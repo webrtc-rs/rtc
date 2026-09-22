@@ -11,9 +11,11 @@
 mod ogg_reader_test;
 
 use std::io::{Cursor, Read};
+use std::sync::LazyLock;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use bytes::BytesMut;
+use crc_fast::{CrcParams, Digest};
 
 use crate::io::ResetFn;
 use shared::error::{Error, Result};
@@ -52,7 +54,6 @@ pub enum OggHeaderType {
 pub struct OggReader<R: Read> {
     reader: R,
     bytes_read: usize,
-    checksum_table: [u32; 256],
     do_checksum: bool,
 }
 
@@ -300,7 +301,6 @@ impl<R: Read> OggReader<R> {
         let mut r = OggReader {
             reader,
             bytes_read: 0,
-            checksum_table: generate_checksum_table(),
             do_checksum,
         };
 
@@ -319,7 +319,6 @@ impl<R: Read> OggReader<R> {
         OggReader {
             reader,
             bytes_read: 0,
-            checksum_table: generate_checksum_table(),
             do_checksum,
         }
     }
@@ -373,25 +372,18 @@ impl<R: Read> OggReader<R> {
         self.reader.read_exact(&mut payload)?;
 
         if self.do_checksum {
-            let mut sum = 0;
+            // The checksum covers the page with its own checksum field zeroed. The three parts
+            // were read into separate buffers, so feed them in turn rather than reassembling
+            // the page.
+            let mut header = h;
+            header[22..26].fill(0);
 
-            for (index, v) in h.iter().enumerate() {
-                // Don't include expected checksum in our generation
-                if index > 21 && index < 26 {
-                    sum = self.update_checksum(0, sum);
-                    continue;
-                }
-                sum = self.update_checksum(*v, sum);
-            }
+            let mut sum = PageChecksum::new();
+            sum.update(&header);
+            sum.update(&size_buffer);
+            sum.update(&payload);
 
-            for v in &size_buffer {
-                sum = self.update_checksum(*v, sum);
-            }
-            for v in &payload[..] {
-                sum = self.update_checksum(*v, sum);
-            }
-
-            if sum != checksum {
+            if sum.finish() != checksum {
                 return Err(Error::ErrChecksumMismatch);
             }
         }
@@ -415,26 +407,43 @@ impl<R: Read> OggReader<R> {
     pub fn reset_reader(&mut self, mut reset: ResetFn<R>) {
         self.reader = reset(self.bytes_read);
     }
-
-    fn update_checksum(&self, v: u8, sum: u32) -> u32 {
-        (sum << 8) ^ self.checksum_table[(((sum >> 24) as u8) ^ v) as usize]
-    }
 }
 
-pub(crate) fn generate_checksum_table() -> [u32; 256] {
-    let mut table = [0u32; 256];
-    const POLY: u32 = 0x04c11db7;
+/// The Ogg page checksum's parameters: CRC-32 over polynomial `0x04c11db7`, not reflected, initial
+/// value zero and no final XOR ([framing spec]). None of the catalogued CRC-32s matches — MPEG-2
+/// starts from all ones and CKSUM inverts the result — so it is built from its parameters, once:
+/// `CrcParams::new` derives the folding constants.
+///
+/// [framing spec]: https://xiph.org/ogg/doc/framing.html
+static PAGE_CHECKSUM: LazyLock<CrcParams> =
+    LazyLock::new(|| CrcParams::new("CRC-32/OGG", 32, 0x04c1_1db7, 0, false, 0, 0x89a1_897f));
 
-    for (i, t) in table.iter_mut().enumerate() {
-        let mut r = (i as u32) << 24;
-        for _ in 0..8 {
-            if (r & 0x80000000) != 0 {
-                r = (r << 1) ^ POLY;
-            } else {
-                r <<= 1;
-            }
-        }
-        *t = r;
+/// An Ogg page checksum, computed incrementally.
+///
+/// `crc-fast` folds the data with carry-less multiplication — PCLMULQDQ/VPCLMULQDQ on x86 and
+/// x86_64, PMULL on aarch64, selected at runtime — and uses slice-by-16 tables on other targets or
+/// CPUs without those instructions. It replaced a byte-at-a-time table walk that every reader and
+/// writer rebuilt its own table for; see `rtc-media/benches/README.md` for the measurements.
+pub(crate) struct PageChecksum(Digest);
+
+impl PageChecksum {
+    pub(crate) fn new() -> Self {
+        Self(Digest::new_with_params(*PAGE_CHECKSUM))
     }
-    table
+
+    pub(crate) fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    pub(crate) fn finish(&self) -> u32 {
+        // A 32-bit CRC; the upper half of crc-fast's u64 result is always zero.
+        self.0.finalize() as u32
+    }
+
+    /// The checksum of `data` in one call.
+    pub(crate) fn of(data: &[u8]) -> u32 {
+        let mut sum = Self::new();
+        sum.update(data);
+        sum.finish()
+    }
 }

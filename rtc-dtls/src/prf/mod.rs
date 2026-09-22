@@ -274,7 +274,7 @@ pub(crate) fn prf_mac(
     protocol_version: ProtocolVersion,
     payload: &[u8],
 ) -> Result<Vec<u8>> {
-    let mut msg = vec![0u8; 13];
+    let mut msg = [0u8; 13];
     msg[..2].copy_from_slice(&epoch.to_be_bytes());
     msg[2..8].copy_from_slice(&sequence_number.to_be_bytes()[2..]);
     msg[8] = content_type as u8;

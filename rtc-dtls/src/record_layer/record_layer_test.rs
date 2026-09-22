@@ -52,7 +52,8 @@ fn test_udp_decode() -> Result<()> {
     ];
 
     for (name, data, wanted, wanted_err) in tests {
-        let dtls_pkts = unpack_datagram(&data);
+        let dtls_pkts =
+            unpack_datagram(&data).map(|pkts| pkts.map(<[u8]>::to_vec).collect::<Vec<_>>());
         if let Some(err) = wanted_err {
             if let Err(dtls) = dtls_pkts {
                 assert_eq!(err.to_string(), dtls.to_string());

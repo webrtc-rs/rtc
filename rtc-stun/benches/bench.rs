@@ -1,4 +1,4 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rtc_stun::addr::{AlternateServer, MappedAddress};
@@ -7,7 +7,7 @@ use rtc_stun::attributes::{
     ATTR_REALM, ATTR_SOFTWARE, ATTR_USERNAME, ATTR_XORMAPPED_ADDRESS,
 };
 use rtc_stun::error_code::{CODE_STALE_NONCE, ErrorCode, ErrorCodeAttribute};
-use rtc_stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
+use rtc_stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE, fingerprint_value};
 use rtc_stun::integrity::MessageIntegrity;
 use rtc_stun::message::TransactionId;
 use rtc_stun::message::{
@@ -199,6 +199,19 @@ fn benchmark_fingerprint(c: &mut Criterion) {
             })
         });
     }
+
+    // The CRC alone, across the sizes STUN messages come in: a bare header, a connectivity check
+    // with USERNAME, PRIORITY, ICE-CONTROLLING and MESSAGE-INTEGRITY (~100 bytes), a TURN
+    // allocation with credentials, and a TURN data indication carrying a media-sized packet.
+    let mut group = c.benchmark_group("Fingerprint/value");
+    for size in [20usize, 100, 200, 548, 1200] {
+        let message: Vec<u8> = (0..size).map(|i| (i * 131 + 7) as u8).collect();
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_function(format!("{size}B"), |b| {
+            b.iter(|| fingerprint_value(std::hint::black_box(&message)))
+        });
+    }
+    group.finish();
 }
 
 fn benchmark_message_build_overhead(c: &mut Criterion) {

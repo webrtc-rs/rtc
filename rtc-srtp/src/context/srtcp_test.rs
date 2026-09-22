@@ -315,3 +315,57 @@ fn test_rtcp_short_packet_errors() -> Result<()> {
 
     Ok(())
 }
+
+/// A forged SRTCP packet must not leave state behind for an SSRC the context has never
+/// authenticated; the SSRC's first authentic packet still creates it.
+#[test]
+fn test_rejected_rtcp_for_unknown_ssrcs_leaves_no_state() -> Result<()> {
+    for profile in [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+    ] {
+        let context = |salt: u8| {
+            Context::new(
+                &vec![0x5a; profile.key_len()],
+                &vec![salt; profile.salt_len()],
+                profile,
+                None,
+                Some(srtcp_replay_protection(64)),
+                test_crypto_provider().crypto(),
+            )
+        };
+        let report = |ssrc: u32| {
+            rtcp::packet::marshal(&[Box::new(rtcp::receiver_report::ReceiverReport {
+                ssrc,
+                ..Default::default()
+            }) as Box<dyn rtcp::packet::Packet>])
+        };
+        let (mut sender, mut forger, mut receiver) = (context(1)?, context(2)?, context(1)?);
+
+        for ssrc in 0..100 {
+            let forged = forger.encrypt_rtcp(&report(ssrc)?)?;
+            assert!(receiver.decrypt_rtcp(&forged).is_err(), "{profile:?}");
+        }
+        assert!(
+            receiver.srtcp_ssrc_states.is_empty(),
+            "{profile:?}: rejected packets created state for {} SSRCs",
+            receiver.srtcp_ssrc_states.len()
+        );
+
+        let authentic = sender.encrypt_rtcp(&report(42)?)?;
+        assert_eq!(
+            receiver.decrypt_rtcp(&authentic)?,
+            report(42)?,
+            "{profile:?}"
+        );
+        assert_eq!(receiver.srtcp_ssrc_states.len(), 1, "{profile:?}");
+        assert!(
+            matches!(
+                receiver.decrypt_rtcp(&authentic),
+                Err(Error::SrtcpSsrcDuplicated(42, _))
+            ),
+            "{profile:?}: a replay of the first packet must be rejected"
+        );
+    }
+    Ok(())
+}

@@ -81,3 +81,47 @@ does not save you from a bad starting estimate.
 
 A real-socket run against an induced-impairment path. That needs `dnctl`/`pfctl` under root on
 macOS, which was not available. Every number above is simulated.
+
+# Feedback interceptors: `feedback`
+
+```bash
+cargo bench --package rtc-interceptor --bench feedback
+```
+
+The NACK generator and responder, receiver reports and the TWCC receiver, driven through their
+public interceptors with loss, bursts, outages and sequence gaps; the source's opening comment
+describes each case. After the bitmap and gap handling moved to whole-word and whole-slice
+operations (2026-09-21), selected cases:
+Measured with `python3 scripts/bench.py compare refs/bench/pre-simd --overlay-benches --rounds 2`
+on an Apple M1 Max, macOS 27.0, `rustc 1.99.0-nightly` (2026-08-04); before is the tree just ahead of
+the change. [SIMD.md](../../SIMD.md) has the full record.
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `Feedback/NackGenerator/loss-1pct/512/16-streams` | 6.84 µs | 2.20 µs |
+| `Feedback/NackGenerator/loss-1pct/8192/16-streams` | 107 µs | 13.3 µs |
+| `Feedback/NackGenerator/loss-10pct/512/16-streams` | 13.0 µs | 7.98 µs |
+| `Feedback/NackResponder/absent` | 472 ns | 284 ns |
+| `Feedback/ReceiverReport/video-outage/16-streams` | 1.32 ms | 843 µs |
+| `Feedback/ReceiverReport/video-1000pps/16-streams` | 837 µs | 838 µs |
+| `Feedback/TwccReceiver/gap-8000` | 32.0 µs | 29.0 µs |
+| `Feedback/TwccReceiver/steady` | 9.46 µs | 9.66 µs (within noise) |
+
+# FlexFEC: `flexfec`
+
+```bash
+cargo bench --package rtc-interceptor --bench flexfec
+```
+
+FlexFEC-03 encoding and single-loss recovery for blocks of 10 and 48 media packets of about 1,150
+bytes. After encoding serialized each packet once per block into a reused buffer, recovery once per
+surviving packet, and the XOR moved to `wide` (2026-09-21), same conditions as above:
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `FlexFec/Encode/10x2` | 1.35 µs | 793 ns |
+| `FlexFec/Encode/48x2` | 5.95 µs | 3.60 µs |
+| `FlexFec/Encode/48x10` | 6.69 µs | 4.79 µs |
+| `FlexFec/Recover/10x2` | 1.95 µs | 1.65 µs |
+| `FlexFec/Recover/48x2` | 10.6 µs | 8.75 µs |
+| `FlexFec/RecoverRepair/48x2` | 6.43 µs | 4.78 µs |

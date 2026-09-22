@@ -1,3 +1,20 @@
+### H.264 packetization: `memmem` start-code search (2026-09-21)
+
+`H264/Payload/*` runs `H264Payloader::payload` at MTU 1200. The start-code scan moved from a byte
+loop to a prebuilt `memchr::memmem::Finder` (portable SIMD with a scalar fallback).
+Measured with `python3 scripts/bench.py compare refs/bench/pre-simd --overlay-benches --rounds 2`
+on an Apple M1 Max, macOS 27.0, `rustc 1.99.0-nightly` (2026-08-04); before is the tree just ahead of
+the change. [SIMD.md](../../SIMD.md) has the full record.
+
+| Benchmark | Before | After |
+|---|---:|---:|
+| `H264/Payload/AccessUnit/1200` | 725 ns | 150 ns |
+| `H264/Payload/AccessUnit/16384` | 8.24 µs | 1.55 µs |
+| `H264/Payload/AccessUnit/102400` | 52.1 µs | 10.2 µs |
+| `H264/Payload/Slices/16x150` | 1.76 µs | 633 ns |
+| `H264/Payload/AllOnes/16384` | 8.60 µs | 1.45 µs |
+| `H264/Payload/AllZeros/16384` | 7.74 µs | 1.45 µs |
+
 ### Benchmark Results
 
 MacBook Air M3 24 GB MacOS 26.2

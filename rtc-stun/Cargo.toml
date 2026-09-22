@@ -27,10 +27,12 @@ lazy_static.workspace = true
 url.workspace = true
 rand.workspace = true
 base64.workspace = true
-crc.workspace = true
+crc-fast.workspace = true
 
 [dev-dependencies]
 clap.workspace = true
+# The table-driven CRC the fingerprint used before crc-fast, kept as the reference in tests.
+crc.workspace = true
 criterion.workspace = true
 
 [[bench]]

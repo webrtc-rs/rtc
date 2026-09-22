@@ -271,6 +271,8 @@ impl DTLSConn {
                         self.current_retransmit_count,
                         self.maximum_retransmit_number,
                     );
+                    // The handshake is over: nothing buffered for it can be used any more.
+                    self.release_handshake_buffers();
                     Some(HandshakeState::Errored)
                 } else {
                     Some(HandshakeState::Sending)

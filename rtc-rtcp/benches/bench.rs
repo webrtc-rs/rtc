@@ -1,8 +1,36 @@
+//! RTCP marshal and unmarshal benchmarks.
+//!
+//! Most groups here time one small packet of each type. `CCFB/*` is different: RFC 8888
+//! congestion-control feedback is sized by the receiver's byte budget rather than by a fixed
+//! layout, so it is measured at the size a receiver actually sends — one MTU.
+//!
+//! * `CCFB/Unmarshal/<streams>x<metrics>` decodes one report from a `Bytes` buffer, as the
+//!   compound-packet path hands it over. Shapes follow `CcFeedbackRecorder`'s budget for a
+//!   1,200-byte report: one stream with 590 metric blocks, or four streams splitting it at 144
+//!   each. Metric blocks mix received packets (mostly ECT(0), some Not-ECT and CE, offsets
+//!   spread over the 13-bit range) with lost ones in short bursts.
+//! * `CCFB/Unmarshal/<shape>/split` decodes the same bytes from a two-chunk `Buf` whose
+//!   boundary falls inside a report block, so part of it takes the fragmented-buffer path.
+//! * `CCFB/Marshal/<shape>` encodes into a reused, already-sized buffer, so allocation is not
+//!   part of the number.
+//!
+//! Throughput is the report's size in bytes. Deliberately not measured: building the report
+//! from observed arrivals (`CcFeedbackRecorder` in `rtc-interceptor`, whose per-packet
+//! bookkeeping costs far more than the wire codec), the format's 16,384-metric maximum (no
+//! MTU-bound report comes near it), and compound dispatch.
+//!
+//! Run with:
+//!
+//! ```text
+//! cargo bench --package rtc-rtcp --bench bench
+//! cargo bench --package rtc-rtcp --bench bench -- CCFB
+//! ```
+
 // Silence warning on `..Default::default()` with no effect:
 #![allow(clippy::needless_update)]
 
-use bytes::{Bytes, BytesMut};
-use criterion::{Criterion, criterion_group, criterion_main};
+use bytes::{Buf, Bytes, BytesMut};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rtc_rtcp::{
     goodbye::Goodbye,
     payload_feedbacks::picture_loss_indication::PictureLossIndication,
@@ -10,6 +38,9 @@ use rtc_rtcp::{
     reception_report::ReceptionReport,
     sender_report::SenderReport,
     source_description::{SdesType, SourceDescription},
+    transport_feedbacks::cc_feedback_report::{
+        CcFeedbackMetricBlock, CcFeedbackReport, CcFeedbackReportBlock, Ecn,
+    },
     transport_feedbacks::transport_layer_nack::{NackPair, TransportLayerNack},
 };
 use shared::marshal::{Marshal, MarshalSize, Unmarshal};
@@ -357,6 +388,93 @@ fn benchmark_compound(c: &mut Criterion) {
     });
 }
 
+/// One report block of `count` metric blocks: received packets, mostly ECT(0) with some Not-ECT
+/// and CE, arrival offsets growing with age across most of the 13-bit range, and lost packets in
+/// bursts of one to three.
+fn cc_feedback_block(media_ssrc: u32, count: usize, seed: u32) -> CcFeedbackReportBlock {
+    let mut state = seed | 1;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    let mut metric_blocks = Vec::with_capacity(count);
+    while metric_blocks.len() < count {
+        let bits = next();
+        if bits % 16 == 0 {
+            let burst = 1 + (bits >> 8) as usize % 3;
+            for _ in 0..burst.min(count - metric_blocks.len()) {
+                metric_blocks.push(CcFeedbackMetricBlock::default());
+            }
+            continue;
+        }
+        let ecn = match (bits >> 4) % 10 {
+            0 | 1 => Ecn::NotEct,
+            2 => Ecn::Ce,
+            _ => Ecn::Ect0,
+        };
+        // Older packets arrived longer before the report timestamp.
+        let age = (count - metric_blocks.len()) as u32 * 13 + (bits >> 20) % 16;
+        metric_blocks.push(CcFeedbackMetricBlock {
+            received: true,
+            ecn,
+            arrival_time_offset: age.min(0x1FFF) as u16,
+        });
+    }
+    CcFeedbackReportBlock {
+        media_ssrc,
+        begin_sequence: (seed as u16).wrapping_mul(7),
+        metric_blocks,
+    }
+}
+
+fn benchmark_cc_feedback_report(c: &mut Criterion) {
+    let mut group = c.benchmark_group("CCFB");
+
+    // `CcFeedbackRecorder`'s split of a 1,200-byte budget: 12 bytes of report overhead, then 8
+    // per stream, the rest two bytes per metric block, shared evenly.
+    for (streams, metrics) in [(1u32, 590usize), (4, 144)] {
+        let report = CcFeedbackReport {
+            sender_ssrc: 0x902f9e2e,
+            report_blocks: (0..streams)
+                .map(|stream| cc_feedback_block(0xbc5e9a40 + stream, metrics, 0x9E37 + stream))
+                .collect(),
+            report_timestamp: 0x6D2E_1B40,
+        };
+        let raw = report.marshal().unwrap().freeze();
+        assert_eq!(
+            report,
+            CcFeedbackReport::unmarshal(&mut raw.clone()).unwrap(),
+            "marshal or unmarshal not correct"
+        );
+        let shape = format!("{streams}x{metrics}");
+        group.throughput(Throughput::Bytes(raw.len() as u64));
+
+        group.bench_function(format!("Unmarshal/{shape}"), |b| {
+            b.iter(|| CcFeedbackReport::unmarshal(&mut raw.clone()).unwrap());
+        });
+
+        // A boundary a third of the way in: inside the first block's metric words.
+        let (head, tail) = raw.split_at(raw.len() / 3);
+        let (head, tail) = (Bytes::copy_from_slice(head), Bytes::copy_from_slice(tail));
+        assert_eq!(
+            report,
+            CcFeedbackReport::unmarshal(&mut head.clone().chain(tail.clone())).unwrap()
+        );
+        group.bench_function(format!("Unmarshal/{shape}/split"), |b| {
+            b.iter(|| CcFeedbackReport::unmarshal(&mut head.clone().chain(tail.clone())).unwrap());
+        });
+
+        let mut buf = vec![0u8; report.marshal_size()];
+        group.bench_function(format!("Marshal/{shape}"), |b| {
+            b.iter(|| report.marshal_to(&mut buf).unwrap());
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_sender_report,
@@ -365,6 +483,7 @@ criterion_group!(
     benchmark_transport_layer_nack,
     benchmark_goodbye,
     benchmark_source_description,
-    benchmark_compound
+    benchmark_compound,
+    benchmark_cc_feedback_report
 );
 criterion_main!(benches);

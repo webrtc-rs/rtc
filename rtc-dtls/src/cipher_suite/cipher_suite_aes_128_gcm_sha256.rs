@@ -1,6 +1,7 @@
 use super::*;
 use crate::crypto::crypto_gcm::*;
 use crate::prf::*;
+use bytes::BytesMut;
 
 /// The shared AES-128-GCM with SHA-256 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes128GcmSha256 {
@@ -99,16 +100,30 @@ impl CipherSuite for CipherSuiteAes128GcmSha256 {
     }
 
     fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.gcm.as_mut().ok_or(Error::Other(
-            "CipherSuite has not been initialized, unable to encrypt".to_owned(),
-        ))?;
+        let cg = self.gcm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to encrypt".to_owned())
+        })?;
         cg.encrypt(pkt_rlh, raw)
     }
 
     fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.gcm.as_mut().ok_or(Error::Other(
-            "CipherSuite has not been initialized, unable to decrypt".to_owned(),
-        ))?;
+        let cg = self.gcm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to decrypt".to_owned())
+        })?;
         cg.decrypt(input)
+    }
+
+    fn encrypt_in_place(&mut self, pkt_rlh: &RecordLayerHeader, raw: &mut BytesMut) -> Result<()> {
+        let cg = self.gcm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to encrypt".to_owned())
+        })?;
+        cg.encrypt_in_place(pkt_rlh, raw)
+    }
+
+    fn decrypt_in_place(&mut self, input: &mut BytesMut) -> Result<()> {
+        let cg = self.gcm.as_mut().ok_or_else(|| {
+            Error::Other("CipherSuite has not been initialized, unable to decrypt".to_owned())
+        })?;
+        cg.decrypt_in_place(input)
     }
 }

@@ -6,15 +6,18 @@
 // Removed in TLS 1.3 year 2018.
 // RFC 3268 year 2002 https://tools.ietf.org/html/rfc3268
 
+use bytes::BytesMut;
 use crypto::{CbcAlgorithm, CbcCipher, HmacAlgorithm, Mac, RTCCryptoProvider, constant_time_eq};
-use std::io::Cursor;
 use std::sync::Arc;
 
 use crate::content::*;
-use crate::crypto::{authentication_error, crypto_error};
+use crate::crypto::{RecordBuf, authentication_error, crypto_error, strip_decrypted_record};
 use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 use shared::error::*;
+
+/// Most bytes AES-CBC adds to a record: the IV, the SHA-1 MAC and a full block of padding.
+pub const CRYPTO_CBC_OVERHEAD: usize = 16 + 20 + 16;
 
 /// AES-CBC encryption with a separate HMAC for DTLS records, holding the per-direction keys.
 pub struct CryptoCbc {
@@ -71,8 +74,40 @@ impl CryptoCbc {
     ///
     /// Fails if the cipher rejects the input.
     pub fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let mut payload = raw[RECORD_LAYER_HEADER_SIZE..].to_vec();
-        let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
+        let mut r = Vec::with_capacity(raw.len() + CRYPTO_CBC_OVERHEAD);
+        r.extend_from_slice(&raw[..RECORD_LAYER_HEADER_SIZE]);
+        r.extend_from_slice(&[0; Self::BLOCK_SIZE]);
+        r.extend_from_slice(&raw[RECORD_LAYER_HEADER_SIZE..]);
+        self.seal(pkt_rlh, &mut r)?;
+        Ok(r)
+    }
+
+    /// Protects the record in `raw` (header followed by plaintext) in place, leaving header plus
+    /// ciphertext. Reserve [`CRYPTO_CBC_OVERHEAD`] spare bytes to avoid a reallocation.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
+    pub fn encrypt_in_place(
+        &mut self,
+        pkt_rlh: &RecordLayerHeader,
+        raw: &mut BytesMut,
+    ) -> Result<()> {
+        // Open the gap for the IV between header and payload.
+        let len = raw.len();
+        raw.reserve(CRYPTO_CBC_OVERHEAD);
+        raw.resize(len + Self::BLOCK_SIZE, 0);
+        raw.copy_within(
+            RECORD_LAYER_HEADER_SIZE..len,
+            RECORD_LAYER_HEADER_SIZE + Self::BLOCK_SIZE,
+        );
+        self.seal(pkt_rlh, raw)
+    }
+
+    // Protects `r`, laid out as header, IV gap and payload: appends the MAC and padding, fills
+    // in the IV, encrypts, and patches the header's length.
+    fn seal(&mut self, pkt_rlh: &RecordLayerHeader, r: &mut impl RecordBuf) -> Result<()> {
+        let payload_start = RECORD_LAYER_HEADER_SIZE + Self::BLOCK_SIZE;
 
         // Generate + Append MAC
         let h = pkt_rlh;
@@ -83,30 +118,25 @@ impl CryptoCbc {
             h.sequence_number,
             h.content_type,
             h.protocol_version,
-            &payload,
+            &r[payload_start..],
         )?;
-        payload.extend_from_slice(&mac);
+        r.extend(&mac);
 
-        let padding_len = Self::BLOCK_SIZE - (payload.len() % Self::BLOCK_SIZE);
-        payload.resize(payload.len() + padding_len, (padding_len - 1) as u8);
+        let padding_len = Self::BLOCK_SIZE - ((r.len() - payload_start) % Self::BLOCK_SIZE);
+        r.extend(std::iter::repeat_n(&((padding_len - 1) as u8), padding_len));
 
         let mut iv = [0; Self::BLOCK_SIZE];
         self.provider.random().fill(&mut iv).map_err(crypto_error)?;
+        r[RECORD_LAYER_HEADER_SIZE..payload_start].copy_from_slice(&iv);
         self.local_cipher
-            .encrypt_blocks(&iv, &mut payload)
+            .encrypt_blocks(&iv, &mut r[payload_start..])
             .map_err(crypto_error)?;
-
-        // Prepend unencrypte header with encrypted payload
-        let mut r = vec![];
-        r.extend_from_slice(raw);
-        r.extend_from_slice(&iv);
-        r.extend_from_slice(&payload);
 
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
         r[RECORD_LAYER_HEADER_SIZE - 2..RECORD_LAYER_HEADER_SIZE]
             .copy_from_slice(&r_len.to_be_bytes());
 
-        Ok(r)
+        Ok(())
     }
 
     /// Unprotects one record.
@@ -115,11 +145,48 @@ impl CryptoCbc {
     ///
     /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>> {
-        let mut reader = Cursor::new(r);
-        let h = RecordLayerHeader::unmarshal(&mut reader)?;
+        let Some((h, iv)) = Self::open_params(r)? else {
+            return Ok(r.to_vec());
+        };
+
+        let body = &r[RECORD_LAYER_HEADER_SIZE + Self::BLOCK_SIZE..];
+        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + body.len());
+        d.extend_from_slice(&r[..RECORD_LAYER_HEADER_SIZE]);
+        d.extend_from_slice(body);
+        let plaintext_len = self.open(&h, &iv, &mut d[RECORD_LAYER_HEADER_SIZE..])?;
+        d.truncate(RECORD_LAYER_HEADER_SIZE + plaintext_len);
+
+        Ok(d)
+    }
+
+    /// Unprotects the record in `r` in place, leaving the header followed by the plaintext, as
+    /// [`Self::decrypt`] returns it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short; `r` is then unspecified.
+    pub fn decrypt_in_place(&mut self, r: &mut BytesMut) -> Result<()> {
+        let Some((h, iv)) = Self::open_params(r)? else {
+            return Ok(());
+        };
+
+        let plaintext_len = self.open(
+            &h,
+            &iv,
+            &mut r[RECORD_LAYER_HEADER_SIZE + Self::BLOCK_SIZE..],
+        )?;
+        strip_decrypted_record(r, Self::BLOCK_SIZE, plaintext_len);
+
+        Ok(())
+    }
+
+    // Checks a received record's length and returns its header and IV, or `None` for a
+    // ChangeCipherSpec record, which is not encrypted.
+    fn open_params(r: &[u8]) -> Result<Option<(RecordLayerHeader, [u8; Self::BLOCK_SIZE])>> {
+        let h = RecordLayerHeader::unmarshal(&mut &r[..])?;
         if h.content_type == ContentType::ChangeCipherSpec {
             // Nothing to encrypt with ChangeCipherSpec
-            return Ok(r.to_vec());
+            return Ok(None);
         }
 
         if r.len() < RECORD_LAYER_HEADER_SIZE + Self::BLOCK_SIZE {
@@ -127,17 +194,28 @@ impl CryptoCbc {
         }
 
         let body = &r[RECORD_LAYER_HEADER_SIZE..];
-        let iv = &body[0..Self::BLOCK_SIZE];
+        let mut iv = [0; Self::BLOCK_SIZE];
+        iv.copy_from_slice(&body[0..Self::BLOCK_SIZE]);
         let body = &body[Self::BLOCK_SIZE..];
 
         if body.is_empty() || !body.len().is_multiple_of(Self::BLOCK_SIZE) {
             return Err(Error::ErrInvalidPacketLength);
         }
 
-        let mut decrypted = body.to_vec();
+        Ok(Some((h, iv)))
+    }
+
+    // Decrypts `body` in place and checks its padding and MAC, returning the plaintext length.
+    fn open(
+        &mut self,
+        h: &RecordLayerHeader,
+        iv: &[u8; Self::BLOCK_SIZE],
+        body: &mut [u8],
+    ) -> Result<usize> {
         self.remote_cipher
-            .decrypt_blocks(iv, &mut decrypted)
+            .decrypt_blocks(iv, body)
             .map_err(authentication_error)?;
+        let decrypted: &[u8] = body;
 
         let padding_value = decrypted.last().copied().ok_or(Error::ErrInvalidMac)?;
         let padding_len = padding_value as usize + 1;
@@ -145,9 +223,12 @@ impl CryptoCbc {
             return Err(Error::ErrInvalidMac);
         }
         let padding_start = decrypted.len() - padding_len;
-        let expected_padding = vec![padding_value; padding_len];
-        let padding_valid = constant_time_eq(&decrypted[padding_start..], &expected_padding);
-        decrypted.truncate(padding_start);
+        let expected_padding = [padding_value; 256];
+        let padding_valid = constant_time_eq(
+            &decrypted[padding_start..],
+            &expected_padding[..padding_len],
+        );
+        let decrypted = &decrypted[..padding_start];
 
         if decrypted.len() < Self::MAC_SIZE {
             return Err(Error::ErrInvalidMac);
@@ -168,11 +249,7 @@ impl CryptoCbc {
             return Err(Error::ErrInvalidMac);
         }
 
-        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + decrypted.len());
-        d.extend_from_slice(&r[..RECORD_LAYER_HEADER_SIZE]);
-        d.extend_from_slice(decrypted);
-
-        Ok(d)
+        Ok(decrypted.len())
     }
 }
 
