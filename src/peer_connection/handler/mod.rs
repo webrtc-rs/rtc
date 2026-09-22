@@ -243,7 +243,6 @@ impl RTCPeerConnection {
     }
 
     fn pump_reads(&mut self) {
-
         let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
 
         use sansio::Protocol;
@@ -326,7 +325,6 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-
         self.pump_reads();
 
         if let (Some(data), Some(media)) = (
