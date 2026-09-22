@@ -249,7 +249,6 @@ impl RTCPeerConnection {
         use sansio::Protocol;
         for_each_handler!(forward: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
-                warn!("handler {} pop_front: {:?}", handler.name(), msg.message); // TEMP
                 if let Err(err) = handler.handle_read(msg) {
                     warn!("{}.handle_read got error: {}", handler.name(), err);
                 }
