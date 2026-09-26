@@ -102,9 +102,17 @@ impl DTLSConn {
             };
 
             if previous_handshake_state == self.current_handshake_state
-                && previous_handshake_state == HandshakeState::Waiting
+                && matches!(
+                    previous_handshake_state,
+                    HandshakeState::Waiting | HandshakeState::Finished
+                )
             {
-                // wait for timeout or incoming packet
+                // Wait for a timeout or an incoming packet. `Finished` self transitions for the same
+                // reason `Waiting` does, and has to terminate for a stronger one: an association
+                // re-entered here after completing (the RFC 6347 4.2.4 last flight retransmission)
+                // has already passed the loop head guard, which only returns while
+                // `!is_handshake_completed()`. `send()` queues the flight and yields `Finished`,
+                // `finish()` yields `Finished` again, and without this the loop would spin.
                 return Ok(());
             }
         }
@@ -164,7 +172,13 @@ impl DTLSConn {
             self.write_packets(pkts);
         }
 
-        if self.current_flight.is_last_send_flight() {
+        // A Sending reached after the association has completed is an RFC 6347 4.2.4
+        // retransmission of our own last flight (the peer repeated its final flight), so it returns
+        // to Finished and never re-arms the receive timer. Only `Flight6` (the server) overrides
+        // `is_last_send_flight`, so on its own that check would send the client — whose last flight
+        // is `Flight5` — back into Waiting, where a failed `Flight5::parse` would strand a completed
+        // association forever. Gating on completion keeps both roles terminal here.
+        if self.current_flight.is_last_send_flight() || self.is_handshake_completed() {
             Ok(HandshakeState::Finished)
         } else {
             self.current_retransmit_timer = Some(now + self.handshake_config.retransmit_interval);
@@ -281,8 +295,27 @@ impl DTLSConn {
                 Some(HandshakeState::Waiting)
             }
         } else if self.current_handshake_state == HandshakeState::Finished {
-            // Retransmit last flight
-            Some(HandshakeState::Sending)
+            // RFC 6347 4.2.4: retransmit our last flight because the peer repeated its own, which
+            // means ours was lost. Count it against the same budget as any handshake
+            // retransmission, so a peer — or an attacker replaying unauthenticated epoch-0
+            // handshake records — cannot make a completed association regenerate its flight (a full
+            // Flight5 with certificate, for a client) without limit. Once the budget is spent, stop
+            // answering and stay Finished: the association is established, so exhausting
+            // retransmissions here must never take it to Errored the way the Waiting branch does —
+            // that would tear down a live connection.
+            self.current_retransmit_count += 1;
+            if self.current_retransmit_count > self.maximum_retransmit_number {
+                warn!(
+                    "[handshake:{}] {} last-flight retransmit budget spent ({} > {}), staying Finished",
+                    srv_cli_str(self.state.is_client),
+                    self.current_flight,
+                    self.current_retransmit_count,
+                    self.maximum_retransmit_number,
+                );
+                None
+            } else {
+                Some(HandshakeState::Sending)
+            }
         } else {
             None
         };
