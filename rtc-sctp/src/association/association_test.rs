@@ -1630,3 +1630,6 @@ fn test_reconfig_backoff_must_double_once() -> Result<()> {
     );
     Ok(())
 }
+
+#[path = "message_selection_test.rs"]
+mod message_selection_test;

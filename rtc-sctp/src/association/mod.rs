@@ -16,7 +16,7 @@ use crate::chunk::{
     chunk_init::ChunkInit,
     chunk_init::ChunkInitAck,
     chunk_payload_data::ChunkPayloadData,
-    chunk_payload_data::{MessageReliability, PayloadProtocolIdentifier},
+    chunk_payload_data::{MessageId, MessageReliability, PayloadProtocolIdentifier},
     chunk_reconfig::ChunkReconfig,
     chunk_selective_ack::ChunkSelectiveAck,
     chunk_shutdown::ChunkShutdown,
@@ -34,10 +34,7 @@ use crate::param::{
     param_state_cookie::ParamStateCookie,
     param_supported_extensions::ParamSupportedExtensions,
 };
-use crate::queue::{
-    payload_queue::PayloadQueue,
-    pending_queue::{PendingPosition, PendingQueue},
-};
+use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
@@ -50,7 +47,7 @@ use crate::association::stream::RecvSendState;
 use bytes::{Bytes, BytesMut};
 use log::{debug, error, trace, warn};
 use rand::random;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -123,11 +120,14 @@ pub enum Event {
     DatagramReceived,
 }
 
-/// A message's retained TSNs and the position of its unsent fragment tail.
+/// Selection is stable even after fragments leave either queue.
 #[derive(Debug, Copy, Clone)]
 struct MessageToAbandon {
-    inflight: Option<(u32, u32)>,
-    pending: Option<PendingPosition>,
+    id: MessageId,
+    // TSN of an inflight candidate; None when selected from pending.
+    // This permits a direct lookup for whole messages. Fragmented messages
+    // and pending selections use the index keyed by `id`.
+    sent_tsn: Option<u32>,
 }
 
 ///Association represents an SCTP association
@@ -234,6 +234,7 @@ pub struct Association {
     stored_init: Option<ChunkInit>,
     stored_cookie_echo: Option<ChunkCookieEcho>,
     next_stream_generation: u64,
+    next_message_id: u64,
     /// Per-chunk lookups on the receive path; SIDs are bounded by the
     /// negotiated stream count, so the faster non-SipHash hasher is safe.
     pub(crate) streams: FxHashMap<StreamId, StreamState>,
@@ -328,6 +329,7 @@ impl Default for Association {
             stored_init: None,
             stored_cookie_echo: None,
             next_stream_generation: 0,
+            next_message_id: 0,
             streams: FxHashMap::default(),
 
             events: VecDeque::default(),
@@ -2719,160 +2721,101 @@ impl Association {
         }
     }
 
-    /// Locate only this DATA's retained fragments. Cumulative ACKs may already
-    /// have removed the beginning; a partially sent message can end in pending.
-    fn retransmit_message_to_abandon(&self, tsn: u32) -> Result<MessageToAbandon> {
-        let invalid = || Error::OtherSctpErr("inconsistent retransmission message".into());
-        let candidate = self.inflight_queue.get(tsn).ok_or_else(invalid)?;
-        let same_message = |c: &ChunkPayloadData| {
-            c.stream_identifier == candidate.stream_identifier
-                && c.stream_sequence_number == candidate.stream_sequence_number
-                && c.stream_generation == candidate.stream_generation
-                && c.unordered == candidate.unordered
-        };
-
-        let mut first = tsn;
-        let mut c = candidate;
-        while !c.beginning_fragment && first != self.cumulative_tsn_ack_point.wrapping_add(1) {
-            first = first.wrapping_sub(1);
-            c = self.inflight_queue.get(first).ok_or_else(invalid)?;
-            if c.ending_fragment || !same_message(c) {
-                return Err(invalid());
-            }
-        }
-
-        let mut last = tsn;
-        c = candidate;
-        let mut pending = None;
-        while !c.ending_fragment {
-            let next = last.wrapping_add(1);
-            let Some(next_chunk) = self.inflight_queue.get(next) else {
-                let tail = self.pending_queue.peek().ok_or_else(invalid)?;
-                if tail.beginning_fragment || !same_message(tail) {
-                    return Err(invalid());
-                }
-                pending = self.pending_queue.front_position();
-                break;
-            };
-            if next_chunk.beginning_fragment || !same_message(next_chunk) {
-                return Err(invalid());
-            }
-            last = next;
-            c = next_chunk;
-        }
-        Ok(MessageToAbandon {
-            inflight: Some((first, last)),
-            pending,
-        })
-    }
-
     fn abandon_retransmit_candidate(&mut self, tsn: u32, now: Instant) -> Result<bool> {
-        let Some(c) = self.inflight_queue.get(tsn) else {
-            return Err(Error::OtherSctpErr(
-                "missing retransmission candidate".into(),
-            ));
-        };
+        let c = self
+            .inflight_queue
+            .get(tsn)
+            .ok_or_else(|| Error::OtherSctpErr("missing retransmission candidate".into()))?;
         if !self.retransmission_policy_exhausted(c, now, true) {
             return Ok(false);
         }
-        let message = self.retransmit_message_to_abandon(tsn)?;
+        let message = MessageToAbandon {
+            id: c.message_id.ok_or_else(|| {
+                Error::OtherSctpErr("outbound DATA has no message identity".into())
+            })?,
+            sent_tsn: Some(tsn),
+        };
         if self.abandon_message(message)? {
             self.on_messages_abandoned(now);
         }
         Ok(true)
     }
 
-    /// Select whole messages in TSN order, including Gap-ACKed siblings.
-    /// A retry limit is checked only for candidates in this recovery pass;
-    /// fresh DATA and retries awaiting their ACK must not consume that budget.
-    /// No state changes are made while evaluating the reliability policy.
+    /// Select identities without changing ACK, retry or buffer state. Only a
+    /// fragment selected for recovery can exhaust that message's retry budget.
     fn unretransmittable_messages(
         &self,
         now: Instant,
         is_candidate: impl Fn(&ChunkPayloadData) -> bool,
     ) -> Result<Vec<MessageToAbandon>> {
         let mut messages = vec![];
-        let mut first = None;
-        let mut last = None;
-        let mut exhausted = false;
+        let mut selected = FxHashSet::default();
         for &tsn in &self.inflight_queue.sorted {
             let c = self
                 .inflight_queue
                 .get(tsn)
                 .ok_or_else(|| Error::OtherSctpErr("missing inflight message fragment".into()))?;
-            first.get_or_insert(tsn);
-            last = Some(tsn);
-            exhausted |=
-                c.is_outstanding() && self.retransmission_policy_exhausted(c, now, is_candidate(c));
-            if c.ending_fragment {
-                if exhausted && let Some(first) = first {
-                    messages.push(MessageToAbandon {
-                        inflight: Some((first, tsn)),
-                        pending: None,
-                    });
-                }
-                first = None;
-                last = None;
-                exhausted = false;
+            if c.is_outstanding()
+                && self.retransmission_policy_exhausted(c, now, is_candidate(c))
+                && let Some(id) = c.message_id
+                && selected.insert(id)
+            {
+                messages.push(MessageToAbandon {
+                    id,
+                    sent_tsn: Some(tsn),
+                });
             }
-        }
-        if exhausted && let (Some(first), Some(last)) = (first, last) {
-            messages.push(MessageToAbandon {
-                inflight: Some((first, last)),
-                pending: self.pending_queue.front_position(),
-            });
         }
         Ok(messages)
     }
 
-    /// RFC 3758 A2/A3: abandon a complete message and release each payload once.
-    /// Pending positions keep repeated calls from consuming a following message.
-    /// FORWARD TSN and timers are updated by the association after this operation.
+    /// RFC 3758 A2/A3: abandon all fragments by identity, including Gap-ACKed
+    /// siblings and an unsent tail. Each payload is released at most once.
+    /// FORWARD TSN and timers are updated after the complete operation.
     fn abandon_message(&mut self, message: MessageToAbandon) -> Result<bool> {
-        let mut inflight = message.inflight;
+        let whole_tsn = message.sent_tsn.filter(|&tsn| {
+            self.inflight_queue.get(tsn).is_some_and(|c| {
+                c.message_id == Some(message.id) && c.beginning_fragment && c.ending_fragment
+            })
+        });
+        let mut inflight = whole_tsn.map_or_else(
+            || self.inflight_queue.message_tsns(message.id),
+            |tsn| vec![tsn],
+        );
         let mut released_per_stream = FxHashMap::default();
         let mut changed = false;
-        if let Some(position) = message.pending {
-            let tail = self.pending_queue.drain_message(position)?;
-            let assign_tsns = inflight.is_some()
-                || tail
-                    .first()
-                    .is_some_and(|c| !c.beginning_fragment || !c.unordered);
-            for mut c in tail {
-                if assign_tsns {
-                    c.tsn = self.generate_next_tsn();
-                    inflight = Some((inflight.map_or(c.tsn, |(first, _)| first), c.tsn));
-                    self.inflight_queue.push_no_check(c);
-                } else {
-                    // An entirely unsent unordered message has no TSN or SSN gap.
-                    if self.is_current_stream_data(&c) {
-                        *released_per_stream.entry(c.stream_identifier).or_default() +=
-                            c.user_data.len() as i64;
-                    }
-                    changed = true;
+        let tail = self.pending_queue.drain_message(message.id)?;
+        let assign_tsns = !inflight.is_empty()
+            || tail
+                .first()
+                .is_some_and(|c| !c.beginning_fragment || !c.unordered);
+        for mut c in tail {
+            if assign_tsns {
+                c.tsn = self.generate_next_tsn();
+                inflight.push(c.tsn);
+                self.inflight_queue.push_no_check(c);
+            } else {
+                if self.is_current_stream_data(&c) {
+                    *released_per_stream.entry(c.stream_identifier).or_default() +=
+                        c.user_data.len() as i64;
                 }
+                changed = true;
             }
         }
-        if let Some((mut tsn, last)) = inflight {
-            loop {
-                if let Some(c) = self.inflight_queue.get_mut(tsn) {
-                    changed |= !c.abandoned();
-                    c.mark_abandoned();
-                    let (si, generation) = (c.stream_identifier, c.stream_generation);
-                    let released = self.inflight_queue.release_payload(tsn) as i64;
-                    if released > 0
-                        && self
-                            .streams
-                            .get(&si)
-                            .is_some_and(|s| s.generation == generation)
-                    {
-                        *released_per_stream.entry(si).or_default() += released;
-                    }
+        for tsn in inflight {
+            if let Some(c) = self.inflight_queue.get_mut(tsn) {
+                changed |= !c.abandoned();
+                c.mark_abandoned();
+                let (si, generation) = (c.stream_identifier, c.stream_generation);
+                let released = self.inflight_queue.release_payload(tsn) as i64;
+                if released > 0
+                    && self
+                        .streams
+                        .get(&si)
+                        .is_some_and(|s| s.generation == generation)
+                {
+                    *released_per_stream.entry(si).or_default() += released;
                 }
-                if tsn == last {
-                    break;
-                }
-                tsn = tsn.wrapping_add(1);
             }
         }
         self.release_stream_buffers(&released_per_stream);
@@ -2925,29 +2868,15 @@ impl Association {
     }
 
     fn pending_message_to_abandon(&self) -> Result<MessageToAbandon> {
-        let mut inflight = None;
-        if self
-            .pending_queue
-            .peek()
-            .is_some_and(|c| !c.beginning_fragment)
-        {
-            // A cumulatively ACKed prefix may already have left the queue.
-            for &tsn in self.inflight_queue.sorted.iter().rev() {
-                let c = self.inflight_queue.get(tsn).ok_or_else(|| {
-                    Error::OtherSctpErr("missing inflight message fragment".into())
-                })?;
-                if c.ending_fragment {
-                    break;
-                }
-                inflight = Some((tsn, inflight.map_or(tsn, |(_, last)| last)));
-                if c.beginning_fragment {
-                    break;
-                }
-            }
-        }
         Ok(MessageToAbandon {
-            inflight,
-            pending: self.pending_queue.front_position(),
+            id: self
+                .pending_queue
+                .peek()
+                .and_then(|c| c.message_id)
+                .ok_or_else(|| {
+                    Error::OtherSctpErr("outbound DATA has no message identity".into())
+                })?,
+            sent_tsn: None,
         })
     }
 
@@ -3284,23 +3213,31 @@ impl Association {
         Ok(())
     }
 
-    /// send_payload_data sends the data chunks.
-    ///
-    /// The queueing instant is already recorded on each chunk by `Stream::packetize`, so this
-    /// does not need one of its own.
-    pub(crate) fn send_payload_data(&mut self, chunks: Vec<ChunkPayloadData>) -> Result<()> {
+    /// Allocate an identity before consuming input or changing stream state.
+    pub(crate) fn allocate_message_id(&mut self) -> Result<MessageId> {
         let state = self.state();
         if state != AssociationState::Established {
             return Err(Error::ErrPayloadDataStateNotExist);
         }
 
-        // Push the chunks into the pending queue first.
-        for c in chunks {
+        let id = MessageId::new(self.next_message_id)
+            .ok_or_else(|| Error::OtherSctpErr("message identity exhausted".into()))?;
+        // MessageId::new has already checked that this increment cannot overflow.
+        self.next_message_id += 1;
+        Ok(id)
+    }
+
+    /// send_payload_data sends the data chunks with their allocated identity.
+    ///
+    /// The queueing instant is already recorded on each chunk by `Stream::packetize`, so this
+    /// does not need one of its own.
+    pub(crate) fn send_payload_data(&mut self, id: MessageId, chunks: Vec<ChunkPayloadData>) {
+        for mut c in chunks {
+            c.message_id = Some(id);
             self.pending_queue.push(c);
         }
 
         self.awake_write_loop();
-        Ok(())
     }
 
     /// buffered_amount returns total amount (in bytes) of currently buffered user data.
