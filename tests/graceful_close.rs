@@ -5,6 +5,9 @@
 //! `close_notify` (RFC 5246 §7.2.1), and a peer that receives one closes its DTLS transport,
 //! its SCTP association and every data channel straight away.
 //!
+//! A message sent just before `close()` is still queued in the pipeline when `close()` runs. It
+//! must reach the remote ahead of the `close_notify`, not be dropped or overtaken by it.
+//!
 //! The remote's peer connection state is not changed by this: per the W3C algorithm a closed
 //! DTLS transport alongside a connected ICE transport is still `connected`, until ICE says
 //! otherwise. The application learns of the close from its data channels and the DTLS transport.
@@ -15,6 +18,7 @@ use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::transport::RTCDtlsTransportState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
@@ -123,6 +127,9 @@ async fn pump(a: &mut Peer, b: &mut Peer) -> Result<usize> {
     Ok(a_sent)
 }
 
+/// Sent on the data channel immediately before `close()`.
+const LAST_WORDS: &[u8] = b"sent right before close()";
+
 /// How soon the remote must learn of the close: well below the ~5 s ICE consent timeout that
 /// was the only signal before.
 const CLOSE_NOTICE: Duration = Duration::from_millis(500);
@@ -155,10 +162,10 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
     offer.pc.set_remote_description(Instant::now(), sdp)?;
 
     // The offerer is the DTLS server (see `Peer::new`), the answerer the client.
-    let (closer, remote, remote_dc) = if closer_is_dtls_server {
-        (&mut offer, &mut answer, answer_dc)
+    let (closer, remote, closer_dc, remote_dc) = if closer_is_dtls_server {
+        (&mut offer, &mut answer, offer_dc, answer_dc)
     } else {
-        (&mut answer, &mut offer, offer_dc)
+        (&mut answer, &mut offer, answer_dc, offer_dc)
     };
 
     let mut remote_open = false;
@@ -178,23 +185,40 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
     }
     assert!(remote_open, "the peers never opened the channel");
 
+    // Sent right before close(), with no poll_write in between: still queued in the pipeline
+    // when close() runs.
+    closer
+        .pc
+        .data_channel(closer_dc)
+        .expect("the closer's channel is open")
+        .send(Instant::now(), BytesMut::from(LAST_WORDS))?;
     closer.pc.close()?;
     let closed_at = Instant::now();
 
     let mut sent_after_close = 0;
     let mut remote_channel_closed = false;
+    let mut last_words_received = false;
+    let mut last_words_before_close = false;
     let mut remote_state_changes = vec![];
     while closed_at.elapsed() < CLOSE_NOTICE && !remote_channel_closed {
         sent_after_close += pump(closer, remote).await?;
         while closer.pc.poll_event().is_some() {}
         while closer.pc.poll_read().is_some() {}
-        while remote.pc.poll_read().is_some() {}
+        while let Some(TaggedRTCMessage { message, .. }) = remote.pc.poll_read() {
+            if let RTCMessage::DataChannelMessage(id, msg) = message
+                && id == remote_dc
+                && msg.data.as_ref() == LAST_WORDS
+            {
+                last_words_received = true;
+            }
+        }
         while let Some(event) = remote.pc.poll_event() {
             match event {
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(id))
                     if id == remote_dc =>
                 {
                     remote_channel_closed = true;
+                    last_words_before_close = last_words_received;
                 }
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
                     remote_state_changes.push(state)
@@ -213,6 +237,11 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
         remote_channel_closed,
         "the remote's data channel was not closed within {CLOSE_NOTICE:?} \
          (closer_is_dtls_server={closer_is_dtls_server})"
+    );
+    assert!(
+        last_words_before_close,
+        "the message sent right before close() must reach the remote before its channel closes \
+         (received at all: {last_words_received}, closer_is_dtls_server={closer_is_dtls_server})"
     );
     assert_eq!(
         Some(RTCDtlsTransportState::Closed),

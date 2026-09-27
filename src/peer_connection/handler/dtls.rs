@@ -27,6 +27,10 @@ pub(crate) struct DtlsHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
+
+    /// Set by [`DtlsHandler::request_close`]: queue a `close_notify`, stamped with this instant,
+    /// at the next `poll_write`.
+    pub(crate) close_requested: Option<Instant>,
 }
 
 impl DtlsHandlerContext {
@@ -36,6 +40,7 @@ impl DtlsHandlerContext {
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            close_requested: None,
         }
     }
 }
@@ -47,11 +52,21 @@ pub(crate) struct DtlsHandler<'a> {
 }
 
 impl<'a> DtlsHandler<'a> {
-    /// Queues a `close_notify` alert for the peer (RFC 5246 §7.2.1), so that closing the
-    /// connection tells the peer at once instead of leaving it to notice by timeout (rtc#255).
+    /// Asks for a `close_notify` alert (RFC 5246 §7.2.1) to be sent to the peer, so that closing
+    /// the connection tells the peer at once instead of leaving it to notice by timeout
+    /// (rtc#255).
     ///
-    /// A no-op before DTLS has started or once the transport is closed.
-    pub(crate) fn queue_close_notify(&mut self, now: Instant) -> Result<()> {
+    /// The alert is queued at this handler's next `poll_write`, not here. In a pipeline flush that
+    /// is after this handler has taken the writes still coming down from above, so they are
+    /// encrypted while the connection exists and go out before the alert, and before the ICE
+    /// handler routes them all.
+    pub(crate) fn request_close(&mut self, now: Instant) {
+        self.ctx.close_requested = Some(now);
+    }
+
+    /// Queues the `close_notify` for every connection and closes the endpoint. A no-op before
+    /// DTLS has started or once the transport is closed.
+    fn queue_close_notify(&mut self, now: Instant) -> Result<()> {
         if self.ctx.dtls_transport.state == RTCDtlsTransportState::Closed {
             return Ok(());
         }
@@ -353,6 +368,11 @@ impl<'a>
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        if let Some(now) = self.ctx.close_requested.take()
+            && let Err(err) = self.queue_close_notify(now)
+        {
+            warn!("failed to queue dtls close_notify: {}", err);
+        }
         self.ctx.write_outs.pop_front()
     }
 
