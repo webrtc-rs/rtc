@@ -2,8 +2,8 @@
 mod packetizer_test;
 
 use crate::{
-    extension::abs_capture_time_extension::*, extension::abs_send_time_extension::*, header::*,
-    packet::*, sequence::*,
+    extension::abs_capture_time_extension::*, extension::abs_send_time_extension::*,
+    extension::ntp_64_extension::*, header::*, packet::*, sequence::*,
 };
 use shared::{
     error::Result,
@@ -39,6 +39,8 @@ pub trait Packetizer: Send + Sync + fmt::Debug {
     fn enable_abs_capture_time(&mut self, value: u8);
     /// Attaches the absolute-send-time header extension under id `value`.
     fn enable_abs_send_time(&mut self, value: u8);
+    /// Attaches the full-resolution NTP-64 timestamp header extension under id `value`.
+    fn enable_ntp_64(&mut self, value: u8);
     /// Packetizes one frame, advancing the timestamp by `samples`.
     ///
     /// Assigns sequence numbers, sets the marker bit on the final packet, and applies any
@@ -92,6 +94,7 @@ pub(crate) struct PacketizerImpl {
     pub(crate) clock_rate: u32,
     pub(crate) abs_send_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     pub(crate) abs_capture_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time
+    pub(crate) ntp_64_ext_id: u8,           //urn:ietf:params:rtp-hdrext:ntp-64
     pub(crate) time_baseline: SystemInstant,
 }
 
@@ -105,6 +108,7 @@ impl fmt::Debug for PacketizerImpl {
             .field("clock_rate", &self.clock_rate)
             .field("abs_send_time_ext_id", &self.abs_send_time_ext_id)
             .field("abs_capture_time_ext_id", &self.abs_capture_time_ext_id)
+            .field("ntp_64_ext_id", &self.ntp_64_ext_id)
             .finish()
     }
 }
@@ -132,6 +136,7 @@ pub fn new_packetizer(
         clock_rate,
         abs_send_time_ext_id: 0,
         abs_capture_time_ext_id: 0,
+        ntp_64_ext_id: 0,
         time_baseline: SystemInstant::now(now),
     }
 }
@@ -143,6 +148,10 @@ impl Packetizer for PacketizerImpl {
 
     fn enable_abs_send_time(&mut self, id: u8) {
         self.abs_send_time_ext_id = id
+    }
+
+    fn enable_ntp_64(&mut self, id: u8) {
+        self.ntp_64_ext_id = id
     }
 
     fn packetize(&mut self, now: Instant, payload: &Bytes, samples: u32) -> Result<Vec<Packet>> {
@@ -189,6 +198,18 @@ impl Packetizer for PacketizerImpl {
             packets[payloads_len - 1]
                 .header
                 .set_extension(self.abs_capture_time_ext_id, raw.freeze())?;
+        }
+
+        if payloads_len != 0 && self.ntp_64_ext_id != 0 {
+            let timestamp = todo!("get ntp timestamp");
+            let ntp_time = Ntp64Extension::new(timestamp);
+            //apply urn:ietf:params:rtp-hdrext:ntp-64
+            let mut raw = BytesMut::with_capacity(ntp_time.marshal_size());
+            raw.resize(ntp_time.marshal_size(), 0);
+            let _ = ntp_time.marshal_to(&mut raw)?;
+            packets[payloads_len - 1]
+                .header
+                .set_extension(self.ntp_64_ext_id, raw.freeze())?;
         }
 
         Ok(packets)

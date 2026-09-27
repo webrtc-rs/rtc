@@ -45,6 +45,8 @@ pub const SDES_REPAIR_RTP_STREAM_ID_URI: &str =
 
 /// The audio-level extension URI, carrying per-packet loudness.
 pub const AUDIO_LEVEL_URI: &str = "urn:ietf:params:rtp-hdrext:ssrc-audio-level";
+/// The full-resolution NTP-64 timestamp extension URI.
+pub const NTP_64_URI: &str = "urn:ietf:params:rtp-hdrext:ntp-64";
 /// The video-orientation (CVO) extension URI, carrying rotation flags.
 pub const VIDEO_ORIENTATION_URI: &str = "urn:3gpp:video-orientation";
 

@@ -55,6 +55,7 @@ fn test_packetizer_abs_send_time() -> Result<()> {
         clock_rate: 90000,
         abs_send_time_ext_id: 0,
         abs_capture_time_ext_id: 0,
+        ntp_64_ext_id: 0,
         time_baseline,
     };
     pktizer.enable_abs_send_time(1);
