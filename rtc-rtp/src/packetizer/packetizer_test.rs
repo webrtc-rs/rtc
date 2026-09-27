@@ -142,3 +142,70 @@ fn test_packetizer_abs_send_time_comes_from_the_caller() -> Result<()> {
 
     Ok(())
 }
+
+/// The absolute-capture-time extension is derived from the `capture_time` passed to
+/// `packetize_captured_at`, not from `now` (the send instant) — the two can differ by however
+/// long the frame spent between capture and packetization.
+#[test]
+fn test_packetizer_abs_capture_time_comes_from_capture_time() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let payload = Bytes::from_static(&[0x11, 0x12, 0x13, 0x14]);
+    let mut packetizer = new_packetizer(
+        t(0),
+        100,
+        98,
+        0x1234ABCD,
+        Box::new(g7xx::G722Payloader {}),
+        Box::new(new_fixed_sequencer(1234)),
+        90000,
+    );
+    packetizer.enable_abs_send_time(1);
+    packetizer.enable_abs_capture_time(2);
+
+    let ext = |packets: &[Packet], id: u8| {
+        packets[0]
+            .header
+            .extensions
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap()
+            .payload
+            .clone()
+    };
+
+    // Sent "now" at t(10), but the frame was captured earlier, at t(5).
+    let sent_at_10_captured_at_5 = packetizer.packetize_captured_at(t(10), t(5), &payload, 2000)?;
+    // Same send instant, but captured later, at t(10): abs-send-time must be unchanged, while
+    // abs-capture-time must differ.
+    let sent_at_10_captured_at_10 =
+        packetizer.packetize_captured_at(t(10), t(10), &payload, 2000)?;
+    // Same capture instant as the first packet, t(5), but sent later, at t(20):
+    // abs-capture-time must be unchanged, while abs-send-time must differ.
+    let sent_at_20_captured_at_5 = packetizer.packetize_captured_at(t(20), t(5), &payload, 2000)?;
+
+    assert_eq!(
+        ext(&sent_at_10_captured_at_5, 1),
+        ext(&sent_at_10_captured_at_10, 1),
+        "same now, same abs-send-time, regardless of capture_time"
+    );
+    assert_ne!(
+        ext(&sent_at_10_captured_at_5, 2),
+        ext(&sent_at_10_captured_at_10, 2),
+        "different capture_time must stamp a different abs-capture-time"
+    );
+
+    assert_eq!(
+        ext(&sent_at_10_captured_at_5, 2),
+        ext(&sent_at_20_captured_at_5, 2),
+        "same capture_time, same abs-capture-time, regardless of now"
+    );
+    assert_ne!(
+        ext(&sent_at_10_captured_at_5, 1),
+        ext(&sent_at_20_captured_at_5, 1),
+        "different now must stamp a different abs-send-time"
+    );
+
+    Ok(())
+}

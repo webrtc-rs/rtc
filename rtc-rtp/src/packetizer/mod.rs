@@ -48,10 +48,32 @@ pub trait Packetizer: Send + Sync + fmt::Debug {
     /// the absolute-send-time extension is derived from, so the caller supplies it rather than
     /// the packetizer sampling a clock of its own.
     ///
+    /// Equivalent to [`Packetizer::packetize_captured_at`] with `capture_time` set to `now`, i.e.
+    /// the absolute-capture-time extension (if enabled) is stamped with the send time. Callers
+    /// that know the actual instant the frame was captured (e.g. sampled from a microphone or
+    /// camera) should call `packetize_captured_at` instead, so that extension reflects capture
+    /// time rather than send time.
+    ///
     /// # Errors
     ///
     /// Propagates payloader failures.
-    fn packetize(&mut self, now: Instant, payload: &Bytes, samples: u32) -> Result<Vec<Packet>>;
+    fn packetize(&mut self, now: Instant, payload: &Bytes, samples: u32) -> Result<Vec<Packet>> {
+        self.packetize_captured_at(now, now, payload, samples)
+    }
+    /// Like [`Packetizer::packetize`], but stamps the absolute-capture-time extension (if
+    /// enabled) with `capture_time` — the instant the frame was originally captured — rather
+    /// than with `now`, the instant it is being sent at.
+    ///
+    /// # Errors
+    ///
+    /// Propagates payloader failures.
+    fn packetize_captured_at(
+        &mut self,
+        now: Instant,
+        capture_time: Instant,
+        payload: &Bytes,
+        samples: u32,
+    ) -> Result<Vec<Packet>>;
     /// Advances the timestamp without sending anything, for dropped or silent frames.
     fn skip_samples(&mut self, skipped_samples: u32);
     /// Clones this packetizer behind a trait object.
@@ -154,7 +176,13 @@ impl Packetizer for PacketizerImpl {
         self.ntp_64_ext_id = id
     }
 
-    fn packetize(&mut self, now: Instant, payload: &Bytes, samples: u32) -> Result<Vec<Packet>> {
+    fn packetize_captured_at(
+        &mut self,
+        now: Instant,
+        capture_time: Instant,
+        payload: &Bytes,
+        samples: u32,
+    ) -> Result<Vec<Packet>> {
         let payloads = self.payloader.payload(self.mtu - 12, payload)?;
         let payloads_len = payloads.len();
         let mut packets = Vec::with_capacity(payloads_len);
@@ -189,8 +217,7 @@ impl Packetizer for PacketizerImpl {
         }
 
         if payloads_len != 0 && self.abs_capture_time_ext_id != 0 {
-            let absolute_capture_timestamp = todo!("get capture timestamp");
-            let capture_time = AbsCaptureTimeExtension::new(absolute_capture_timestamp);
+            let capture_time = AbsCaptureTimeExtension::new(self.time_baseline.ntp(capture_time));
             //apply http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time
             let mut raw = BytesMut::with_capacity(capture_time.marshal_size());
             raw.resize(capture_time.marshal_size(), 0);
@@ -201,8 +228,7 @@ impl Packetizer for PacketizerImpl {
         }
 
         if payloads_len != 0 && self.ntp_64_ext_id != 0 {
-            let timestamp = todo!("get ntp timestamp");
-            let ntp_time = Ntp64Extension::new(timestamp);
+            let ntp_time = Ntp64Extension::new(self.time_baseline.ntp(capture_time));
             //apply urn:ietf:params:rtp-hdrext:ntp-64
             let mut raw = BytesMut::with_capacity(ntp_time.marshal_size());
             raw.resize(ntp_time.marshal_size(), 0);
