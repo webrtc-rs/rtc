@@ -64,7 +64,7 @@ fn invalid_pending_data_cannot_be_sent_or_reset_a_stream() {
                 let rwnd = a.rwnd;
                 // Empty DATA is not a reset; a tail without B cannot start a
                 // message, including through the zero-window probe path.
-                a.pending_queue.push(ChunkPayloadData {
+                a.pending_queue.push_message(vec![ChunkPayloadData {
                     message_id: id,
                     stream_identifier: 1,
                     beginning_fragment: empty,
@@ -75,7 +75,7 @@ fn invalid_pending_data_cannot_be_sent_or_reset_a_stream() {
                         Bytes::from_static(b"tail")
                     },
                     ..Default::default()
-                });
+                }]);
                 let (data, resets) = a.pop_pending_data_chunks_to_send(Instant::now());
                 assert!(data.is_empty() && resets.is_empty());
                 assert_eq!(AssociationState::Closed, a.state());
@@ -218,6 +218,99 @@ fn a_stale_whole_message_selection_cannot_abandon_a_reused_tsn() -> Result<()> {
             }
         }
         assert_eq!(released, old.len() + fresh.len());
+    }
+    Ok(())
+}
+
+#[test]
+fn reset_follows_expired_pending_tail_after_partial_ack() -> Result<()> {
+    for unordered in [false, true] {
+        for ack_mode in 0..3 {
+            let mut sender = timed_test_association();
+            let now = Instant::now();
+            let first_tsn = sender.my_next_tsn;
+            let fragment_size = sender.max_payload_size;
+            let bytes = fragment_size as usize * 3 + 1;
+            let ppi = PayloadProtocolIdentifier::Binary;
+            let mut stream = sender.open_stream(1, ppi)?;
+            stream.set_reliability_params(unordered, ReliabilityType::Timed, 100)?;
+            stream.write_sctp(now, &Bytes::from(vec![9; bytes]), ppi)?;
+            stream.close(now)?;
+            sender.cwnd = fragment_size * 2;
+            let initial = sender.gather_outbound(now).0;
+            assert_eq!(2, transmitted_data(&initial).len());
+            assert!(sender.reconfigs.is_empty());
+            assert_eq!(3, sender.pending_queue.len());
+            if ack_mode != 0 {
+                sender.handle_sack(
+                    &ChunkSelectiveAck {
+                        cumulative_tsn_ack: if ack_mode == 1 {
+                            first_tsn.wrapping_add(1)
+                        } else {
+                            first_tsn.wrapping_sub(1)
+                        },
+                        advertised_receiver_window_credit: 65536,
+                        gap_ack_blocks: if ack_mode == 2 {
+                            vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                                start: 2,
+                                end: 2,
+                            }]
+                        } else {
+                            vec![]
+                        },
+                        ..Default::default()
+                    },
+                    now + Duration::from_millis(50),
+                )?;
+            }
+            sender.cwnd = 0;
+            sender.rwnd = 0;
+            let at = now + Duration::from_millis(100);
+            let (packets, keep_open) = sender.gather_outbound(at);
+            assert!(keep_open);
+            assert_eq!(AssociationState::Established, sender.state());
+            assert!(transmitted_data(&packets).is_empty());
+            assert!(sender.pending_queue.is_empty());
+            assert_eq!(0, sender.pending_queue.get_num_bytes());
+            assert_eq!(0, sender.inflight_queue.get_num_bytes());
+            assert_eq!(1, sender.reconfigs.len());
+            assert_eq!(first_tsn.wrapping_add(4), sender.my_next_tsn);
+            let parsed: Vec<Packet> = packets
+                .iter()
+                .map(Packet::unmarshal)
+                .collect::<Result<_>>()?;
+            let resets: Vec<_> = parsed
+                .iter()
+                .flat_map(|p| p.chunks.iter())
+                .filter_map(|c| c.as_any().downcast_ref::<ChunkReconfig>())
+                .filter_map(|c| c.param_a.as_ref())
+                .filter_map(|p| p.as_any().downcast_ref::<ParamOutgoingResetRequest>())
+                .collect();
+            assert_eq!(1, resets.len());
+            assert_eq!(vec![1], resets[0].stream_identifiers);
+            assert_eq!(first_tsn.wrapping_add(3), resets[0].sender_last_tsn);
+            let forwards: Vec<_> = parsed
+                .iter()
+                .flat_map(|p| p.chunks.iter())
+                .filter_map(|c| c.as_any().downcast_ref::<ChunkForwardTsn>())
+                .collect();
+            assert_eq!(1, forwards.len());
+            assert_eq!(resets[0].sender_last_tsn, forwards[0].new_cumulative_tsn);
+            assert_eq!(usize::from(!unordered), forwards[0].streams.len());
+            assert!(sender.gather_outbound(at).0.is_empty());
+            let released: usize = std::iter::from_fn(|| sender.poll())
+                .filter_map(|event| {
+                    if let Event::Stream(StreamEvent::BufferedAmountReleased { n_bytes, .. }) =
+                        event
+                    {
+                        Some(n_bytes)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            assert_eq!(bytes, released);
+        }
     }
     Ok(())
 }

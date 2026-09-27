@@ -318,7 +318,7 @@ fn invalid_pending_message_closes_without_sending_or_rearming_timers() -> Result
         stream.write_sctp(now, &Bytes::from_static(b"invalid"), ppi)?;
         let mut invalid = a.pending_queue.pop(true, true).unwrap();
         invalid.ending_fragment = false;
-        a.pending_queue.push(invalid);
+        a.pending_queue.push_message(vec![invalid]);
         if t3 {
             a.cwnd = 0;
             // Retain a sent first fragment and a malformed pending tail.

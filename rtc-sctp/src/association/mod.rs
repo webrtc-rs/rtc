@@ -3229,11 +3229,11 @@ impl Association {
     ///
     /// The queueing instant is already recorded on each chunk by `Stream::packetize`, so this
     /// does not need one of its own.
-    pub(crate) fn send_payload_data(&mut self, id: MessageId, chunks: Vec<ChunkPayloadData>) {
-        for mut c in chunks {
+    pub(crate) fn send_payload_data(&mut self, id: MessageId, mut chunks: Vec<ChunkPayloadData>) {
+        for c in &mut chunks {
             c.message_id = Some(id);
-            self.pending_queue.push(c);
         }
+        self.pending_queue.push_message(chunks);
 
         self.awake_write_loop();
     }

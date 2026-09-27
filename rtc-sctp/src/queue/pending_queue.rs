@@ -51,8 +51,8 @@ impl MessageSnapshot {
     }
 }
 
-/// One message owns its unsent tail. Whole messages stay inline, without a
-/// fragment allocation. An incomplete owner survives even after its head is sent.
+/// One message owns its unsent tail. Whole messages stay inline; fragmented
+/// messages reuse the packetization buffer.
 #[derive(Debug)]
 enum QueuedMessage {
     Whole(ChunkPayloadData),
@@ -60,24 +60,28 @@ enum QueuedMessage {
         snapshot: MessageSnapshot,
         fragments: PendingBaseQueue,
         next_fragment: usize,
-        complete: bool,
         bytes: usize,
     },
 }
 
 impl QueuedMessage {
-    fn new(c: ChunkPayloadData) -> Self {
-        if c.beginning_fragment && c.ending_fragment {
-            Self::Whole(c)
-        } else {
-            Self::Fragmented {
-                snapshot: MessageSnapshot::from_chunk(&c),
-                complete: c.ending_fragment,
-                bytes: c.user_data.len(),
-                fragments: VecDeque::from([c]),
-                next_fragment: 0,
-            }
+    fn new(mut chunks: Vec<ChunkPayloadData>) -> Option<Self> {
+        let first = chunks.first()?;
+        if chunks.len() == 1 && first.beginning_fragment && first.ending_fragment {
+            return chunks.pop().map(Self::Whole);
         }
+        let snapshot = MessageSnapshot::from_chunk(first);
+        let mut bytes = 0;
+        for c in &mut chunks {
+            snapshot.apply(c);
+            bytes += c.user_data.len();
+        }
+        Some(Self::Fragmented {
+            snapshot,
+            bytes,
+            fragments: VecDeque::from(chunks),
+            next_fragment: 0,
+        })
     }
 
     fn peek(&self) -> Option<&ChunkPayloadData> {
@@ -94,19 +98,32 @@ impl QueuedMessage {
         }
     }
 
+    fn len(&self) -> usize {
+        match self {
+            Self::Whole(_) => 1,
+            Self::Fragmented { fragments, .. } => fragments.len(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Whole(c) => c.user_data.len(),
+            Self::Fragmented { bytes, .. } => *bytes,
+        }
+    }
+
     /// Check the complete remaining tail before changing ownership or counters.
     fn validate_tail(&self) -> Result<(usize, usize)> {
-        let (snapshot, fragments, next_fragment, complete, bytes) = match self {
+        let (snapshot, fragments, next_fragment, bytes) = match self {
             Self::Whole(c) => return Ok((1, c.user_data.len())),
             Self::Fragmented {
                 snapshot,
                 fragments,
                 next_fragment,
-                complete,
                 bytes,
-            } => (snapshot, fragments, next_fragment, complete, bytes),
+            } => (snapshot, fragments, next_fragment, bytes),
         };
-        if !complete || fragments.is_empty() {
+        if !fragments.back().is_some_and(|c| c.ending_fragment) {
             return Err(Error::OtherSctpErr(
                 "pending message has no ending fragment".into(),
             ));
@@ -134,7 +151,7 @@ impl QueuedMessage {
     fn into_fragments(self) -> Vec<ChunkPayloadData> {
         match self {
             Self::Whole(c) => vec![c],
-            Self::Fragmented { fragments, .. } => fragments.into_iter().collect(),
+            Self::Fragmented { fragments, .. } => Vec::from(fragments),
         }
     }
 }
@@ -166,34 +183,20 @@ impl PendingQueue {
         PendingQueue::default()
     }
 
-    pub(crate) fn push(&mut self, mut c: ChunkPayloadData) {
-        self.n_bytes += c.user_data.len();
-        self.queue_len += 1;
-        let queue = if c.unordered {
+    /// Enqueue one complete packetized message. An empty packetization is a
+    /// no-op, matching an empty application write.
+    pub(crate) fn push_message(&mut self, chunks: Vec<ChunkPayloadData>) {
+        let Some(message) = QueuedMessage::new(chunks) else {
+            return;
+        };
+        self.n_bytes += message.bytes();
+        self.queue_len += message.len();
+        let queue = if message.snapshot().unordered {
             &mut self.unordered_queue
         } else {
             &mut self.ordered_queue
         };
-        if !c.beginning_fragment
-            && let Some(PendingEntry::Message(QueuedMessage::Fragmented {
-                snapshot,
-                fragments,
-                complete,
-                bytes,
-                ..
-            })) = queue.back_mut()
-            && !*complete
-            && snapshot.matches(&c)
-        {
-            snapshot.apply(&mut c);
-            *complete = c.ending_fragment;
-            *bytes += c.user_data.len();
-            fragments.push_back(c);
-        } else {
-            // Keep boundaries explicit, including malformed/incomplete tails:
-            // drain_message must reject them without consuming the next owner.
-            queue.push_back(PendingEntry::Message(QueuedMessage::new(c)));
-        }
+        queue.push_back(PendingEntry::Message(message));
     }
 
     pub(crate) fn push_reset(&mut self, reset: ResetMarker) {
@@ -299,12 +302,19 @@ impl PendingQueue {
                 c
             }
             QueuedMessage::Fragmented {
+                snapshot,
                 fragments,
                 next_fragment,
                 bytes,
-                ..
             } => {
-                let remaining_bytes = bytes.checked_sub(fragments.front()?.user_data.len())?;
+                let first = fragments.front()?;
+                if !snapshot.matches(first)
+                    || first.beginning_fragment != (*next_fragment == 0)
+                    || first.ending_fragment != (fragments.len() == 1)
+                {
+                    return None;
+                }
+                let remaining_bytes = bytes.checked_sub(first.user_data.len())?;
                 let next = next_fragment.checked_add(1)?;
                 let c = fragments.pop_front()?;
                 *next_fragment = next;
@@ -357,11 +367,13 @@ mod tests {
         for unordered in [false, true] {
             for next_message in [false, true] {
                 let mut queue = PendingQueue::new();
-                queue.push(fragment(true, false, unordered));
-                queue.push(fragment(false, false, unordered));
+                queue.push_message(vec![
+                    fragment(true, false, unordered),
+                    fragment(false, false, unordered),
+                ]);
                 if next_message {
-                    // Same SID/SSN: only the B bit distinguishes this message.
-                    queue.push(fragment(true, true, unordered));
+                    // Even a malformed tail must not consume the next owner.
+                    queue.push_message(vec![fragment(true, true, unordered)]);
                 }
                 let id = queue.peek().unwrap().message_id.unwrap();
                 let (len, bytes) = (queue.len(), queue.get_num_bytes());
@@ -377,7 +389,7 @@ mod tests {
     #[test]
     fn missing_beginning_is_an_error_without_mutation() {
         let mut queue = PendingQueue::new();
-        queue.push(fragment(false, true, false));
+        queue.push_message(vec![fragment(false, true, false)]);
         let id = queue.peek().unwrap().message_id.unwrap();
         assert!(queue.drain_message(id).is_err());
         assert_eq!(Some(id), queue.peek().unwrap().message_id);
@@ -386,17 +398,53 @@ mod tests {
     }
 
     #[test]
+    fn invalid_batch_pop_preserves_fragments_and_accounting() {
+        for unordered in [false, true] {
+            for early_end in [false, true] {
+                let mut queue = PendingQueue::new();
+                queue.push_message(vec![
+                    fragment(true, early_end, unordered),
+                    fragment(!early_end, true, unordered),
+                ]);
+                let mut later = fragment(true, true, unordered);
+                later.message_id = MessageId::new(1);
+                queue.push_message(vec![later]);
+                if !early_end {
+                    // The first fragment is valid, but the tail repeats B.
+                    assert!(queue.pop(true, unordered).is_some());
+                }
+                let (len, bytes) = (queue.len(), queue.get_num_bytes());
+                let first = queue.peek().unwrap();
+                let id = first.message_id.unwrap();
+                assert!(queue.pop(first.beginning_fragment, unordered).is_none());
+                assert!(queue.drain_message(id).is_err());
+                assert_eq!(Some(id), queue.peek().unwrap().message_id);
+                assert_eq!(len, queue.len());
+                assert_eq!(bytes, queue.get_num_bytes());
+                assert_eq!(!early_end, queue.selected);
+            }
+        }
+    }
+
+    #[test]
     fn draining_selected_tail_preserves_other_queue_and_is_idempotent() -> Result<()> {
         for unordered in [false, true] {
             let mut queue = PendingQueue::new();
-            queue.push(fragment(true, false, unordered));
-            queue.push(fragment(false, true, unordered));
+            let chunks = vec![
+                fragment(true, false, unordered),
+                fragment(false, true, unordered),
+            ];
+            let buffer = chunks.as_ptr();
+            queue.push_message(chunks);
             assert!(queue.pop(true, unordered).is_some());
+            queue.push_message(vec![]);
             let mut other = fragment(true, true, !unordered);
             other.message_id = MessageId::new(1);
-            queue.push(other);
+            queue.push_message(vec![other]);
             let id = queue.peek().unwrap().message_id.unwrap();
-            assert_eq!(1, queue.drain_message(id)?.len());
+            let tail = queue.drain_message(id)?;
+            assert_eq!(1, tail.len());
+            assert_eq!(buffer, tail.as_ptr());
             assert!(queue.drain_message(id)?.is_empty());
             assert!(!queue.selected);
             assert_eq!(1, queue.len());
@@ -407,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn message_snapshot_and_cursor_survive_a_sent_prefix() {
+    fn message_reuses_fragment_buffer_and_keeps_policy_after_a_sent_prefix() {
         let mut queue = PendingQueue::new();
         let created = Instant::now();
         let deadline = created + Duration::from_millis(100);
@@ -416,20 +464,28 @@ mod tests {
         first.created_at = Some(created);
         first.payload_type = PayloadProtocolIdentifier::Binary;
         first.reliability = MessageReliability::Timed { deadline };
-        queue.push(first);
-        queue.pop(true, false).unwrap();
-        // An incomplete owner retains the reservation even with no pending
-        // fragments. A different unordered message cannot interrupt it.
-        let mut other = fragment(true, true, true);
-        other.message_id = MessageId::new(1);
-        queue.push(other);
-        assert!(queue.peek().is_none());
         let mut tail = fragment(false, true, false);
         tail.stream_generation = 7;
         tail.reliability = MessageReliability::Rexmit {
             max_retransmits: 99,
         };
-        queue.push(tail);
+        let chunks = vec![first, tail];
+        let buffer = chunks.as_ptr();
+        let capacity = chunks.capacity();
+        queue.push_message(chunks);
+        let Some(PendingEntry::Message(QueuedMessage::Fragmented { fragments, .. })) =
+            queue.ordered_queue.front()
+        else {
+            panic!("expected a fragmented message");
+        };
+        assert_eq!(buffer, fragments.as_slices().0.as_ptr());
+        assert_eq!(capacity, fragments.capacity());
+        queue.pop(true, false).unwrap();
+        // A different unordered message cannot interrupt the remaining tail.
+        let mut other = fragment(true, true, true);
+        other.message_id = MessageId::new(1);
+        queue.push_message(vec![other]);
+        assert_eq!(MessageId::new(0), queue.peek().unwrap().message_id);
         assert!(matches!(
             queue.ordered_queue.front(),
             Some(PendingEntry::Message(QueuedMessage::Fragmented {
@@ -455,7 +511,7 @@ mod tests {
             let mut data = fragment(true, true, false);
             data.message_id = id;
             data.user_data = Bytes::new();
-            queue.push(data);
+            queue.push_message(vec![data]);
             assert_eq!(1, queue.len());
             assert_eq!(0, queue.get_num_bytes());
             assert!(queue.pop_ready_reset().is_none());
@@ -470,15 +526,17 @@ mod tests {
         for unordered in [false, true] {
             for abandon in [false, true] {
                 let mut queue = PendingQueue::new();
-                queue.push(fragment(true, false, unordered));
-                queue.push(fragment(false, true, unordered));
+                queue.push_message(vec![
+                    fragment(true, false, unordered),
+                    fragment(false, true, unordered),
+                ]);
                 queue.push_reset(ResetMarker {
                     stream_identifier: 0,
                 });
                 let mut later = fragment(true, true, false);
                 later.message_id = MessageId::new(1);
                 later.stream_generation += 1;
-                queue.push(later);
+                queue.push_message(vec![later]);
 
                 let id = queue.pop(true, unordered).unwrap().message_id.unwrap();
                 assert!(queue.pop_ready_reset().is_none());
