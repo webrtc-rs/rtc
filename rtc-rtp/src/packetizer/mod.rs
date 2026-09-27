@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod packetizer_test;
 
-use crate::{extension::abs_send_time_extension::*, header::*, packet::*, sequence::*};
+use crate::{
+    extension::abs_capture_time_extension::*, extension::abs_send_time_extension::*, header::*,
+    packet::*, sequence::*,
+};
 use shared::{
     error::Result,
     marshal::{Marshal, MarshalSize},
@@ -32,6 +35,8 @@ impl Clone for Box<dyn Payloader> {
 
 /// Packetizer packetizes a payload
 pub trait Packetizer: Send + Sync + fmt::Debug {
+    /// Attaches the absolute-capture-time header extension under id `value`.
+    fn enable_abs_capture_time(&mut self, value: u8);
     /// Attaches the absolute-send-time header extension under id `value`.
     fn enable_abs_send_time(&mut self, value: u8);
     /// Packetizes one frame, advancing the timestamp by `samples`.
@@ -86,6 +91,7 @@ pub(crate) struct PacketizerImpl {
     pub(crate) timestamp: u32,
     pub(crate) clock_rate: u32,
     pub(crate) abs_send_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+    pub(crate) abs_capture_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time
     pub(crate) time_baseline: SystemInstant,
 }
 
@@ -98,6 +104,7 @@ impl fmt::Debug for PacketizerImpl {
             .field("timestamp", &self.timestamp)
             .field("clock_rate", &self.clock_rate)
             .field("abs_send_time_ext_id", &self.abs_send_time_ext_id)
+            .field("abs_capture_time_ext_id", &self.abs_capture_time_ext_id)
             .finish()
     }
 }
@@ -124,11 +131,16 @@ pub fn new_packetizer(
         timestamp: rand::random::<u32>(),
         clock_rate,
         abs_send_time_ext_id: 0,
+        abs_capture_time_ext_id: 0,
         time_baseline: SystemInstant::now(now),
     }
 }
 
 impl Packetizer for PacketizerImpl {
+    fn enable_abs_capture_time(&mut self, id: u8) {
+        self.abs_capture_time_ext_id = id
+    }
+
     fn enable_abs_send_time(&mut self, id: u8) {
         self.abs_send_time_ext_id = id
     }
@@ -165,6 +177,18 @@ impl Packetizer for PacketizerImpl {
             packets[payloads_len - 1]
                 .header
                 .set_extension(self.abs_send_time_ext_id, raw.freeze())?;
+        }
+
+        if payloads_len != 0 && self.abs_capture_time_ext_id != 0 {
+            let absolute_capture_timestamp = todo!("get capture timestamp");
+            let capture_time = AbsCaptureTimeExtension::new(absolute_capture_timestamp);
+            //apply http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time
+            let mut raw = BytesMut::with_capacity(capture_time.marshal_size());
+            raw.resize(capture_time.marshal_size(), 0);
+            let _ = capture_time.marshal_to(&mut raw)?;
+            packets[payloads_len - 1]
+                .header
+                .set_extension(self.abs_capture_time_ext_id, raw.freeze())?;
         }
 
         Ok(packets)

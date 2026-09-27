@@ -27,6 +27,9 @@ pub const DEF_EXT_MAP_VALUE_SDES_MID: usize = 3;
 /// The default id assigned to the SDES RTP stream id extension.
 pub const DEF_EXT_MAP_VALUE_SDES_RTP_STREAM_ID: usize = 4;
 
+/// The absolute-capture-time extension URI, relating a packet to its original capture clock.
+pub const ABS_CAPTURE_TIME_URI: &str =
+    "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time";
 /// The absolute-send-time extension URI, used for bandwidth estimation.
 pub const ABS_SEND_TIME_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time";
 /// The transport-wide congestion control extension URI.
