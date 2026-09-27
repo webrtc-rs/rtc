@@ -28,6 +28,10 @@ pub enum EndpointEvent {
     HandshakeComplete,
     /// Decrypted application data arrived.
     ApplicationData(BytesMut),
+    /// The peer closed the connection with a `close_notify` alert (RFC 5246 §7.2.1). The
+    /// matching `close_notify` reply is queued for [`Endpoint::poll_transmit`], and the connection
+    /// has been removed.
+    PeerClosed,
 }
 
 /// The main entry point to the library
@@ -169,6 +173,49 @@ impl Endpoint {
         Ok(())
     }
 
+    /// Feeds one datagram to `conn` and advances its handshake, recording a completed handshake
+    /// in `messages`. Draining application data and transmits is left to the caller, which does it
+    /// whether or not this fails.
+    fn read_into(
+        conn: &mut DTLSConn,
+        now: Instant,
+        data: &[u8],
+        messages: &mut Vec<EndpointEvent>,
+    ) -> Result<()> {
+        let is_handshake_completed_before = conn.is_handshake_completed();
+        conn.read(data)?;
+        if !conn.is_handshake_completed() {
+            conn.handshake(now)?;
+            // Drain any queued future-epoch packets (e.g. Finished that arrived
+            // before ChangeCipherSpec bumped remote_epoch). If draining sets
+            // handshake_rx, run handshake() again so the FSM can advance.
+            let is_handshake = conn.handle_incoming_queued_packets()?;
+            if is_handshake && !conn.is_handshake_completed() {
+                conn.handshake(now)?;
+            }
+        } else if conn.received_handshake_in_last_datagram {
+            // RFC 6347 4.2.4: this datagram carried a handshake record although the association
+            // is already established, so the peer is repeating its own final flight — ours was
+            // lost and has to be sent again. The gate is this datagram's handshake record, not
+            // the sticky `handshake_rx` flag, so ordinary post-handshake application data can
+            // never provoke a spurious flight (certificate included, for a client). The
+            // association is complete, so the FSM above is skipped, and `send()` never arms
+            // `current_retransmit_timer` on the completed path, so `handle_timeout` cannot fire
+            // for it either. `handshake_timeout`'s Finished branch regenerates the flight — with
+            // fresh record sequence numbers, since a verbatim replay would be dropped by the
+            // peer's replay window (4.1.2.6) — under a retransmission budget, so an
+            // unauthenticated repeat cannot amplify without limit. Clear `handshake_rx` first so
+            // that retransmission re-sends the buffered flight instead of re-parsing the whole
+            // transcript in `finish()`.
+            conn.handshake_rx = None;
+            conn.handshake_timeout(now)?;
+        }
+        if !is_handshake_completed_before && conn.is_handshake_completed() {
+            messages.push(EndpointEvent::HandshakeComplete)
+        }
+        Ok(())
+    }
+
     /// Process an incoming UDP datagram
     pub fn read(
         &mut self,
@@ -190,37 +237,10 @@ impl Endpoint {
         // Handle packet on existing association, if any
         let mut messages = vec![];
         if let Some(conn) = self.connections.get_mut(&remote) {
-            let is_handshake_completed_before = conn.is_handshake_completed();
-            conn.read(&data)?;
-            if !conn.is_handshake_completed() {
-                conn.handshake(now)?;
-                // Drain any queued future-epoch packets (e.g. Finished that arrived
-                // before ChangeCipherSpec bumped remote_epoch). If draining sets
-                // handshake_rx, run handshake() again so the FSM can advance.
-                let is_handshake = conn.handle_incoming_queued_packets()?;
-                if is_handshake && !conn.is_handshake_completed() {
-                    conn.handshake(now)?;
-                }
-            } else if conn.received_handshake_in_last_datagram {
-                // RFC 6347 4.2.4: this datagram carried a handshake record although the association
-                // is already established, so the peer is repeating its own final flight — ours was
-                // lost and has to be sent again. The gate is this datagram's handshake record, not
-                // the sticky `handshake_rx` flag, so ordinary post-handshake application data can
-                // never provoke a spurious flight (certificate included, for a client). The
-                // association is complete, so the FSM above is skipped, and `send()` never arms
-                // `current_retransmit_timer` on the completed path, so `handle_timeout` cannot fire
-                // for it either. `handshake_timeout`'s Finished branch regenerates the flight — with
-                // fresh record sequence numbers, since a verbatim replay would be dropped by the
-                // peer's replay window (4.1.2.6) — under a retransmission budget, so an
-                // unauthenticated repeat cannot amplify without limit. Clear `handshake_rx` first so
-                // that retransmission re-sends the buffered flight instead of re-parsing the whole
-                // transcript in `finish()`.
-                conn.handshake_rx = None;
-                conn.handshake_timeout(now)?;
-            }
-            if !is_handshake_completed_before && conn.is_handshake_completed() {
-                messages.push(EndpointEvent::HandshakeComplete)
-            }
+            let result = Self::read_into(conn, now, &data, &mut messages);
+            // Whatever the outcome, deliver the data that arrived and send what the connection
+            // queued: an alert in reply to the peer's (its close_notify, or a fatal alert) has to
+            // go out even though this read is ending in an error.
             while let Some(message) = conn.incoming_application_data() {
                 messages.push(EndpointEvent::ApplicationData(message));
             }
@@ -236,6 +256,14 @@ impl Endpoint {
                     message: payload,
                 });
             }
+            // A peer's close_notify ends the connection gracefully: report it rather than the
+            // error the connection returns for it.
+            if conn.closed_by_peer {
+                self.connections.remove(&remote);
+                messages.push(EndpointEvent::PeerClosed);
+                return Ok(messages);
+            }
+            result?;
         }
 
         Ok(messages)
@@ -875,6 +903,45 @@ mod tests {
             client.poll_transmit().is_none(),
             "application data must not make a completed client emit a handshake flight"
         );
+        Ok(())
+    }
+
+    /// A peer's close_notify (RFC 5246 §7.2.1) ends the connection gracefully: data that arrived
+    /// before it is still delivered, the close is reported as an event rather than an error, the
+    /// matching close_notify reply is sent, and the connection is dropped (rtc#255).
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_peer_close_notify_is_answered_and_reported() -> Result<()> {
+        use crate::content::ContentType;
+
+        let (mut client, mut server) = completed_client_and_server()?;
+
+        client.write(Instant::now(), server_addr(), b"before close")?;
+        client.close(Instant::now())?;
+        let events = transfer(&mut client, &mut server, client_addr())?;
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [EndpointEvent::ApplicationData(data), EndpointEvent::PeerClosed]
+                    if data.as_ref() == b"before close"
+            ),
+            "expected the data, then PeerClosed"
+        );
+        assert!(
+            server.connections.is_empty(),
+            "the closed connection is removed"
+        );
+
+        let reply = server
+            .poll_transmit()
+            .expect("the close_notify reply is sent");
+        assert_eq!(
+            ContentType::Alert as u8,
+            reply.message[0],
+            "the reply is an alert record"
+        );
+        assert!(server.poll_transmit().is_none());
         Ok(())
     }
 }
