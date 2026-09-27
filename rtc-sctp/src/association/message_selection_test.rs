@@ -1,6 +1,93 @@
 use super::*;
 
 #[test]
+fn pending_reset_waits_for_the_fragment_tail() -> Result<()> {
+    for unordered in [false, true] {
+        let mut a = timed_test_association();
+        let now = Instant::now();
+        let ppi = PayloadProtocolIdentifier::Binary;
+        let fragment_size = a.max_payload_size;
+        let mut stream = a.open_stream(1, ppi)?;
+        stream.set_reliability_params(unordered, ReliabilityType::Reliable, 0)?;
+        stream.write_sctp(
+            now,
+            &Bytes::from(vec![7; fragment_size as usize * 2 + 1]),
+            ppi,
+        )?;
+        a.send_reset_request(now, 1)?;
+        a.cwnd = fragment_size;
+        let (head, resets) = a.pop_pending_data_chunks_to_send(now);
+        assert_eq!(1, head.len());
+        assert!(resets.is_empty());
+        assert!(head[0].beginning_fragment && !head[0].ending_fragment);
+        assert_eq!(3, a.pending_queue.len()); // two fragments and the marker
+
+        // Window pressure must leave the reset behind the remaining DATA.
+        let (data, resets) = a.pop_pending_data_chunks_to_send(now);
+        assert!(data.is_empty() && resets.is_empty());
+        a.cwnd = u32::MAX;
+        let (tail, resets) = a.pop_pending_data_chunks_to_send(now);
+        assert_eq!(2, tail.len());
+        assert_eq!(vec![1], resets);
+        assert!(tail[1].ending_fragment);
+        assert_eq!(head[0].tsn.wrapping_add(1), tail[0].tsn);
+        assert_eq!(tail[0].tsn.wrapping_add(1), tail[1].tsn);
+        assert!(a.pending_queue.is_empty());
+        assert_eq!(0, a.pending_queue.get_num_bytes());
+    }
+    // A control-only reset consumes neither a TSN nor a DATA window slot.
+    let mut a = timed_test_association();
+    let now = Instant::now();
+    let next_tsn = a.my_next_tsn;
+    a.cwnd = 0;
+    a.rwnd = 0;
+    a.send_reset_request(now, 2)?;
+    let (data, resets) = a.pop_pending_data_chunks_to_send(now);
+    assert!(data.is_empty());
+    assert_eq!(vec![2], resets);
+    assert_eq!(next_tsn, a.my_next_tsn);
+    assert!(a.pending_queue.is_empty());
+    Ok(())
+}
+
+#[test]
+fn invalid_pending_data_cannot_be_sent_or_reset_a_stream() {
+    for id in [None, MessageId::new(0)] {
+        for empty in [false, true] {
+            for zero_window in [false, true] {
+                let mut a = timed_test_association();
+                let next_tsn = a.my_next_tsn;
+                if zero_window {
+                    a.cwnd = 0;
+                    a.rwnd = 0;
+                }
+                let rwnd = a.rwnd;
+                // Empty DATA is not a reset; a tail without B cannot start a
+                // message, including through the zero-window probe path.
+                a.pending_queue.push(ChunkPayloadData {
+                    message_id: id,
+                    stream_identifier: 1,
+                    beginning_fragment: empty,
+                    ending_fragment: true,
+                    user_data: if empty {
+                        Bytes::new()
+                    } else {
+                        Bytes::from_static(b"tail")
+                    },
+                    ..Default::default()
+                });
+                let (data, resets) = a.pop_pending_data_chunks_to_send(Instant::now());
+                assert!(data.is_empty() && resets.is_empty());
+                assert_eq!(AssociationState::Closed, a.state());
+                assert_eq!(next_tsn, a.my_next_tsn);
+                assert_eq!(rwnd, a.rwnd);
+                assert!(a.poll_timeout().is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn message_id_exhaustion_preserves_write_state_and_input() -> Result<()> {
     let mut a = timed_test_association();
     let now = Instant::now();

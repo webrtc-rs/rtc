@@ -34,7 +34,10 @@ use crate::param::{
     param_state_cookie::ParamStateCookie,
     param_supported_extensions::ParamSupportedExtensions,
 };
-use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
+use crate::queue::{
+    payload_queue::PayloadQueue,
+    pending_queue::{PendingQueue, ResetMarker},
+};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
@@ -2897,24 +2900,22 @@ impl Association {
             //      is 0), the data sender can always have one DATA chunk in flight to
             //      the receiver if allowed by cwnd (see rule B, below).
 
-            while let Some(c) = self.pending_queue.peek() {
-                let (beginning_fragment, unordered, data_len, stream_identifier) = (
-                    c.beginning_fragment,
-                    c.unordered,
-                    c.user_data.len(),
-                    c.stream_identifier,
-                );
+            loop {
+                let Some(c) = self.pending_queue.peek() else {
+                    if let Some(reset) = self.pending_queue.pop_ready_reset() {
+                        sis_to_reset.push(reset.stream_identifier);
+                        continue;
+                    }
+                    break;
+                };
+                let (beginning_fragment, unordered, data_len) =
+                    (c.beginning_fragment, c.unordered, c.user_data.len());
 
                 if data_len == 0 {
-                    sis_to_reset.push(stream_identifier);
-                    if self
-                        .pending_queue
-                        .pop(beginning_fragment, unordered)
-                        .is_none()
-                    {
-                        error!("[{}] failed to pop from pending queue", self.side);
-                    }
-                    continue;
+                    self.fail_message_queue(Error::OtherSctpErr(
+                        "outbound DATA has no user data".into(),
+                    ));
+                    return (vec![], vec![]);
                 }
 
                 // RFC 3758 timed reliability: a message whose lifetime has run
@@ -2945,14 +2946,18 @@ impl Association {
                     break; // no more rwnd
                 }
 
-                self.rwnd -= data_len as u32;
-
                 if let Some(chunk) = self.move_pending_data_chunk_to_inflight_queue(
                     beginning_fragment,
                     unordered,
                     now,
                 ) {
+                    self.rwnd -= data_len as u32;
                     chunks.push(chunk);
+                } else {
+                    self.fail_message_queue(Error::OtherSctpErr(
+                        "failed to pop pending DATA".into(),
+                    ));
+                    return (vec![], vec![]);
                 }
             }
 
@@ -2968,6 +2973,11 @@ impl Association {
                         now,
                     ) {
                         chunks.push(chunk);
+                    } else {
+                        self.fail_message_queue(Error::OtherSctpErr(
+                            "failed to pop pending DATA".into(),
+                        ));
+                        return (vec![], vec![]);
                     }
                 }
             }
@@ -3182,13 +3192,11 @@ impl Association {
         }
     }
 
-    /// Queues the outgoing stream-reset chunk (RFC 6525).
-    ///
-    /// `now` is when the caller asked for the reset; threaded from `Stream::stop` and recorded
-    /// on the EOS chunk so every locally created chunk carries its queueing instant.
+    /// Queues an outgoing stream-reset marker (RFC 6525). Its retransmission
+    /// timer starts when the RE-CONFIG request is emitted, not when queued.
     pub(crate) fn send_reset_request(
         &mut self,
-        now: Instant,
+        _now: Instant,
         stream_identifier: StreamId,
     ) -> Result<()> {
         let state = self.state();
@@ -3196,18 +3204,8 @@ impl Association {
             return Err(Error::ErrResetPacketInStateNotExist);
         }
 
-        // Create DATA chunk which only contains valid stream identifier with
-        // nil userData and use it as a EOS from the stream.
-        let c = ChunkPayloadData {
-            created_at: Some(now),
-            stream_identifier,
-            beginning_fragment: true,
-            ending_fragment: true,
-            user_data: Bytes::new(),
-            ..Default::default()
-        };
-
-        self.pending_queue.push(c);
+        self.pending_queue
+            .push_reset(ResetMarker { stream_identifier });
         self.awake_write_loop();
 
         Ok(())
