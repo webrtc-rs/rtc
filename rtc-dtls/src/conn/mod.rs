@@ -82,6 +82,8 @@ pub struct DTLSConn {
     connection_closed_by_user: bool,
     // closeLock              sync.Mutex
     closed: bool, //  *closer.Closer
+    /// The peer sent close_notify. Its reply has been queued; the connection is finished.
+    pub(crate) closed_by_peer: bool,
     //handshakeLoopsFinished sync.WaitGroup
 
     //readDeadline  :deadline.Deadline,
@@ -161,6 +163,7 @@ impl DTLSConn {
             handshake_completed: false,
             connection_closed_by_user: false,
             closed: false,
+            closed_by_peer: false,
 
             current_handshake_state: initial_fsm_state,
             current_retransmit_timer: None,
@@ -500,6 +503,10 @@ impl DTLSConn {
                     reset_local_sequence_number: false,
                 });
 
+                if alert.alert_description == AlertDescription::CloseNotify {
+                    // A close_notify is only queued here as the reply to the peer's own.
+                    self.closed_by_peer = true;
+                }
                 if alert.alert_level == AlertLevel::Fatal
                     || alert.alert_description == AlertDescription::CloseNotify
                 {
@@ -551,6 +558,10 @@ impl DTLSConn {
                         reset_local_sequence_number: false,
                     });
 
+                    if alert.alert_description == AlertDescription::CloseNotify {
+                        // A close_notify is only queued here as the reply to the peer's own.
+                        self.closed_by_peer = true;
+                    }
                     if alert.alert_level == AlertLevel::Fatal
                         || alert.alert_description == AlertDescription::CloseNotify
                     {

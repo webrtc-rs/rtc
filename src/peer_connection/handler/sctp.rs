@@ -9,8 +9,8 @@ use datachannel::message::Message;
 use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
-    Association, AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent,
-    Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
+    Association, AssociationError, AssociationEvent, AssociationHandle, ClientConfig,
+    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -699,6 +699,19 @@ impl<'a>
                 // deferred flush is now the only transmit path).
                 self.ctx.flush_dirty = true;
             }
+        }
+
+        // The peer closed the DTLS transport the associations run over, so they are over too.
+        // Nothing is sent: there is no transport left to send it on. The data channel handler,
+        // next in line for this event, closes the channels themselves.
+        if matches!(&evt.event, RTCEventInternal::DTLSClosed) {
+            debug!("sctp closing associations: dtls closed by peer");
+            for association in self.ctx.sctp_transport.sctp_associations.values_mut() {
+                if let Err(err) = association.close(AssociationError::ApplicationClosed) {
+                    warn!("failed to close sctp association: {}", err);
+                }
+            }
+            self.ctx.pending_readable.clear();
         }
 
         self.ctx.event_outs.push_back(evt);

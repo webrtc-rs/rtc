@@ -130,6 +130,18 @@ pub(crate) struct PipelineContext {
 
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
+
+    /// The newest instant the pipeline has been given, through a datagram, a write or a timeout.
+    ///
+    /// `close()` takes no time of its own, and this crate reads no clock, so the `close_notify`
+    /// it sends is stamped with this.
+    pub(crate) now: Instant,
+}
+
+impl PipelineContext {
+    fn observe(&mut self, now: Instant) {
+        self.now = self.now.max(now);
+    }
 }
 
 impl RTCPeerConnection {
@@ -241,6 +253,36 @@ impl RTCPeerConnection {
             &mut self.pipeline_context.stats,
         )
     }
+
+    /// Runs every handler's pending writes down the pipeline into `write_outs`, where
+    /// [`poll_write`](sansio::Protocol::poll_write) hands them out.
+    fn flush_writes(&mut self) {
+        use sansio::Protocol;
+
+        let mut intermediate_wouts = VecDeque::new();
+
+        for_each_handler!(reverse: process_handler!(self, handler, {
+            while let Some(msg) = intermediate_wouts.pop_front() {
+                if let Err(err) = handler.handle_write(msg) {
+                    warn!("{}.handle_write got error: {}", handler.name(), err);
+                }
+            }
+            while let Some(msg) = handler.poll_write() {
+                intermediate_wouts.push_back(msg);
+            }
+        }));
+
+        // Final poll write out to pipeline's write out
+        while let Some(msg) = intermediate_wouts.pop_front() {
+            if let RTCMessageInternal::Raw(message) = msg.message {
+                self.pipeline_context.write_outs.push_back(TaggedBytesMut {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message,
+                });
+            }
+        }
+    }
 }
 
 impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
@@ -251,6 +293,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        self.pipeline_context.observe(msg.now);
         let mut intermediate_routs = VecDeque::new();
         intermediate_routs.push_back(TaggedRTCMessageInternal {
             now: msg.now,
@@ -338,6 +381,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
         let now = msg.now;
+        self.pipeline_context.observe(now);
         let rtc_message_internal = match msg.message {
             RTCMessage::DataChannelMessage(data_channel_id, data_channel_message) => {
                 RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
@@ -363,30 +407,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        let mut intermediate_wouts = VecDeque::new();
-
-        for_each_handler!(reverse: process_handler!(self, handler, {
-            while let Some(msg) = intermediate_wouts.pop_front() {
-                if let Err(err) = handler.handle_write(msg) {
-                    warn!("{}.handle_write got error: {}", handler.name(), err);
-                }
-            }
-            while let Some(msg) = handler.poll_write() {
-                intermediate_wouts.push_back(msg);
-            }
-        }));
-
-        // Final poll write out to pipeline's write out
-        while let Some(msg) = intermediate_wouts.pop_front() {
-            if let RTCMessageInternal::Raw(message) = msg.message {
-                self.pipeline_context.write_outs.push_back(TaggedBytesMut {
-                    now: msg.now,
-                    transport: msg.transport,
-                    message,
-                });
-            }
-        }
-
+        self.flush_writes();
         self.pipeline_context.write_outs.pop_front()
     }
 
@@ -419,7 +440,8 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 RTCEventInternal::RTCPeerConnectionEvent(
                     RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
                 )
-                | RTCEventInternal::DTLSHandshakeComplete(_, _) => {
+                | RTCEventInternal::DTLSHandshakeComplete(_, _)
+                | RTCEventInternal::DTLSClosed => {
                     self.update_connection_state(false);
                 }
                 _ => {}
@@ -434,6 +456,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
+        self.pipeline_context.observe(now);
         for_each_handler!(forward: process_handler!(self, handler, {
             handler.handle_timeout(now)?;
         }));
@@ -458,6 +481,18 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
 
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #3)
         self.signaling_state = RTCSignalingState::Closed;
+
+        // Tell the peer before tearing anything down, so it can close at once instead of waiting
+        // for its ICE consent checks to time out (rtc#255). Writes already pending go first, so
+        // they are not cut off by the close_notify. The packets wait in `write_outs` for the
+        // caller's next `poll_write`; they are routed now because closing the ICE handler below
+        // forgets the selected candidate pair every outbound packet is addressed with.
+        self.flush_writes();
+        let now = self.pipeline_context.now;
+        if let Err(err) = self.get_dtls_handler().queue_close_notify(now) {
+            warn!("failed to queue dtls close_notify: {}", err);
+        }
+        self.flush_writes();
 
         // Try closing everything and collect the errors
         // Shutdown strategy:
