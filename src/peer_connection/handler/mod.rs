@@ -483,12 +483,15 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
         self.signaling_state = RTCSignalingState::Closed;
 
         // Tell the peer before tearing anything down, so it can close at once instead of waiting
-        // for its ICE consent checks to time out (rtc#255). The DTLS handler queues the
-        // close_notify during this flush, behind the writes still pending above it, so those go
-        // out first rather than being dropped or sent after it. It is routed now because closing
-        // the ICE handler below forgets the selected candidate pair every outbound packet is
-        // addressed with; the packets wait in `write_outs` for the caller's next `poll_write`.
+        // for its ICE consent checks to time out (rtc#255). During this flush the SCTP handler
+        // sends the data it still holds and then an ABORT for each association (W3C close():
+        // "tear down the underlying SCTP association by sending an SCTP ABORT chunk"), and the
+        // DTLS handler queues a close_notify behind them, so nothing pending is dropped or sent
+        // after it. They are routed now because closing the ICE handler below forgets the
+        // selected candidate pair every outbound packet is addressed with; the packets wait in
+        // `write_outs` for the caller's next `poll_write`.
         let now = self.pipeline_context.now;
+        self.get_sctp_handler().request_abort();
         self.get_dtls_handler().request_close(now);
         self.flush_writes();
 

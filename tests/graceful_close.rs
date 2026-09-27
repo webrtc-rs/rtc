@@ -1,9 +1,10 @@
 //! Closing a peer connection must tell the remote peer at once (rtc#255).
 //!
 //! `close()` used to send nothing: the remote only noticed when its ICE consent checks failed,
-//! about five seconds later, and its data channels never closed. `close()` now sends a DTLS
-//! `close_notify` (RFC 5246 §7.2.1), and a peer that receives one closes its DTLS transport,
-//! its SCTP association and every data channel straight away.
+//! about five seconds later, and its data channels never closed. `close()` now sends an SCTP
+//! ABORT, as W3C `close()` requires, then a DTLS `close_notify` (RFC 5246 §7.2.1). The remote
+//! closes its SCTP transport and every data channel on the ABORT, and its DTLS transport on the
+//! `close_notify`.
 //!
 //! A message sent just before `close()` is still queued in the pipeline when `close()` runs. It
 //! must reach the remote ahead of the `close_notify`, not be dropped or overtaken by it.
@@ -19,10 +20,10 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
-use rtc::peer_connection::transport::RTCDtlsTransportState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
 };
+use rtc::peer_connection::transport::{RTCDtlsTransportState, RTCSctpTransportState};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -196,13 +197,23 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
     let closed_at = Instant::now();
 
     let mut sent_after_close = 0;
+    let mut closer_closes = 0;
     let mut remote_channel_closed = false;
     let mut last_words_received = false;
     let mut last_words_before_close = false;
     let mut remote_state_changes = vec![];
-    while closed_at.elapsed() < CLOSE_NOTICE && !remote_channel_closed {
+    let remote_dtls_closed = |remote: &Peer| {
+        remote.pc.sctp().map(|sctp| sctp.transport().state()) == Some(RTCDtlsTransportState::Closed)
+    };
+    while closed_at.elapsed() < CLOSE_NOTICE
+        && !(remote_channel_closed && remote_dtls_closed(remote))
+    {
         sent_after_close += pump(closer, remote).await?;
-        while closer.pc.poll_event().is_some() {}
+        while let Some(event) = closer.pc.poll_event() {
+            if let RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(_)) = event {
+                closer_closes += 1;
+            }
+        }
         while closer.pc.poll_read().is_some() {}
         while let Some(TaggedRTCMessage { message, .. }) = remote.pc.poll_read() {
             if let RTCMessage::DataChannelMessage(id, msg) = message
@@ -248,6 +259,23 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
         remote.pc.sctp().map(|sctp| sctp.transport().state()),
         "the remote's DTLS transport is closed"
     );
+    assert_eq!(
+        Some(RTCSctpTransportState::Closed),
+        remote.pc.sctp().map(|sctp| sctp.state()),
+        "the remote's SCTP transport is closed"
+    );
+    // W3C close(): "tear down the underlying SCTP association by sending an SCTP ABORT chunk and
+    // set the [[SctpTransportState]] to "closed"", and set the DTLS transport to "closed".
+    assert_eq!(
+        Some(RTCSctpTransportState::Closed),
+        closer.pc.sctp().map(|sctp| sctp.state()),
+        "the closer's SCTP transport is closed"
+    );
+    assert_eq!(
+        Some(RTCDtlsTransportState::Closed),
+        closer.pc.sctp().map(|sctp| sctp.transport().state()),
+        "the closer's DTLS transport is closed"
+    );
     assert!(
         remote_state_changes.is_empty(),
         "per W3C the remote's connection state is not changed by the DTLS close alone, \
@@ -258,9 +286,20 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
     // that must be ignored quietly.
     for _ in 0..20 {
         pump(closer, remote).await?;
-        while closer.pc.poll_event().is_some() {}
+        while let Some(event) = closer.pc.poll_event() {
+            if let RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(_)) = event {
+                closer_closes += 1;
+            }
+        }
         while remote.pc.poll_event().is_some() {}
     }
+
+    // W3C close(): the local channels "will be closed abruptly and the closing procedure will
+    // not be invoked", so aborting the association must not surface as OnClose on the closer.
+    assert_eq!(
+        0, closer_closes,
+        "close() must not fire OnClose for the closer's own channels"
+    );
 
     println!(
         "remote noticed the close after {noticed_after:?} \

@@ -4,7 +4,7 @@ use crate::association::{
 };
 use crate::chunk::chunk_header::CHUNK_HEADER_SIZE;
 use crate::chunk::{
-    Chunk, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
+    Chunk, ErrorCause, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
     chunk_abort::ChunkAbort,
     chunk_cookie_ack::ChunkCookieAck,
     chunk_cookie_echo::ChunkCookieEcho,
@@ -694,6 +694,31 @@ impl Association {
         self.endpoint_events.push_back(EndpointEventInner::Drained);
 
         Ok(())
+    }
+
+    /// Aborts the association (RFC 9260 §9.1): queues an ABORT chunk and closes the association.
+    ///
+    /// Unlike [`shutdown`](Self::shutdown) this needs no round trip, which is what closing a
+    /// WebRTC peer connection calls for: W3C `close()` tears the association down "by sending an
+    /// SCTP ABORT chunk". The ABORT carries a "User-Initiated Abort" error cause (RFC 9260
+    /// §3.3.10.12), which a peer takes as an intentional close rather than an error.
+    ///
+    /// The ABORT is sent by the next [`poll_transmit`](Self::poll_transmit). Anything not handed to
+    /// `poll_transmit` before this call is discarded, so drain it first if it should still go out.
+    /// A no-op on a closed association.
+    pub fn abort(&mut self) -> Result<()> {
+        if self.state() == AssociationState::Closed {
+            return Ok(());
+        }
+        let abort = ChunkAbort {
+            error_causes: vec![ErrorCause {
+                code: USER_INITIATED_ABORT,
+                ..Default::default()
+            }],
+        };
+        let packet = self.create_packet(vec![Box::new(abort)]);
+        self.control_queue.push_back(packet);
+        self.close(AssociationError::LocallyClosed)
     }
 
     /// Close ends the SCTP Association and cleans up any state

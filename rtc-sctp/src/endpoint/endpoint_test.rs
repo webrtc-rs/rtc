@@ -3741,3 +3741,35 @@ fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> 
     );
     Ok(())
 }
+
+/// `abort()` ends the association at once (RFC 9260 §9.1): the local side is closed, and the ABORT
+/// it sends carries a "User-Initiated Abort" cause, so the peer closes its side too instead of
+/// treating the chunk as an error. Each stream reports the loss, which is what closes data
+/// channels above.
+#[test]
+fn test_abort_closes_both_sides() -> Result<()> {
+    let si: u16 = 1;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    while pair.server_conn_mut(server_ch).poll().is_some() {}
+
+    pair.client_conn_mut(client_ch).abort()?;
+    assert!(pair.client_conn_mut(client_ch).is_closed());
+
+    pair.drive_client();
+    pair.drive_server();
+
+    let server = pair.server_conn_mut(server_ch);
+    assert!(server.is_closed(), "the peer closes on the ABORT");
+    let mut lost = vec![];
+    while let Some(event) = server.poll() {
+        if let Event::AssociationLost { reason, id } = event {
+            lost.push((reason, id));
+        }
+    }
+    assert_eq!(vec![(AssociationError::Reset, si)], lost);
+
+    // Idempotent: the association is already closed.
+    pair.client_conn_mut(client_ch).abort()?;
+    Ok(())
+}
