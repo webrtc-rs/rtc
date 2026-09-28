@@ -283,24 +283,15 @@ impl RTCPeerConnection {
             }
         }
     }
-}
 
-impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedBytesMut;
-    type Eout = RTCPeerConnectionEvent;
-    type Error = Error;
-    type Time = Instant;
+    fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
+        let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
 
-    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        self.pipeline_context.observe(msg.now);
-        let mut intermediate_routs = VecDeque::new();
-        intermediate_routs.push_back(TaggedRTCMessageInternal {
-            now: msg.now,
-            transport: msg.transport,
-            message: RTCMessageInternal::Raw(msg.message),
-        });
+        if let Some(msg) = msg {
+            intermediate_routs.push_back(msg);
+        }
 
+        use sansio::Protocol;
         for_each_handler!(forward: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
                 if let Err(err) = handler.handle_read(msg) {
@@ -358,11 +349,30 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 }
             }
         }
+    }
+}
 
+impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedBytesMut;
+    type Eout = RTCPeerConnectionEvent;
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        self.pipeline_context.observe(msg.now);
+        let msg = TaggedRTCMessageInternal {
+            now: msg.now,
+            transport: msg.transport,
+            message: RTCMessageInternal::Raw(msg.message),
+        };
+        self.pump_reads(Some(msg));
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.pump_reads(None);
+
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
             self.pipeline_context.media_read_outs.front(),
@@ -561,8 +571,11 @@ mod handler_test {
     use super::*;
     use crate::data_channel::message::RTCDataChannelMessage;
     use crate::peer_connection::RTCPeerConnectionBuilder;
+    use crate::peer_connection::event::RTCDataChannelEvent;
     use bytes::BytesMut;
     use sansio::Protocol;
+    use shared::{TransportContext, TransportProtocol};
+    use std::net::Ipv4Addr;
     use std::time::Duration;
 
     /// Media must be drainable while data-channel output is held back.
@@ -694,5 +707,48 @@ mod handler_test {
             "the internal message carries the caller's instant, not an ambient reading"
         );
         assert_ne!(queued.now, t(0), "and not the construction instant either");
+    }
+
+    /// Check that messages in the `read_out` queues don't get stuck until the next incoming packet triggers `handle_read`.
+    #[test]
+    fn pump_read_outs() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(t(0))
+            .expect("a default peer connection builds");
+
+        // drop a message into the data channel handler read outs, like DataChannel::emit_data_channel_opened() does
+        pc.pipeline_context
+            .datachannel_handler_context
+            .read_outs
+            .push_back(TaggedRTCMessageInternal {
+                now: t(5),
+                transport: TransportContext {
+                    local_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    peer_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    transport_protocol: TransportProtocol::UDP,
+                    ecn: None,
+                },
+                message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                    data_channel_id: 42,
+                    data_channel_event: DataChannelEvent::Open,
+                })),
+            });
+
+        // call `poll_read` to pump the read outs
+        let msg = pc.poll_read();
+        assert!(
+            msg.is_none(),
+            "The message should be consumed by the enpoint handler"
+        );
+
+        // we should get a channel opened event
+        let event = pc.poll_event().expect("should have an event");
+        assert!(matches!(
+            event,
+            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))
+        ));
     }
 }
