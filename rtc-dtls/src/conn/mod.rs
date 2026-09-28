@@ -82,6 +82,8 @@ pub struct DTLSConn {
     connection_closed_by_user: bool,
     // closeLock              sync.Mutex
     closed: bool, //  *closer.Closer
+    /// The peer sent close_notify. Its reply has been queued; the connection is finished.
+    pub(crate) closed_by_peer: bool,
     //handshakeLoopsFinished sync.WaitGroup
 
     //readDeadline  :deadline.Deadline,
@@ -103,6 +105,10 @@ pub struct DTLSConn {
     pub(crate) handshake_config: Arc<HandshakeConfig>,
     pub(crate) retransmit: bool,
     pub(crate) handshake_rx: Option<()>,
+    /// Whether the datagram most recently passed to [`Self::read`] carried a handshake record.
+    /// Reset on every `read`, unlike the sticky `handshake_rx`, so a completed association can tell
+    /// an RFC 6347 §4.2.4 last-flight repeat from ordinary post-handshake application data.
+    pub(crate) received_handshake_in_last_datagram: bool,
 }
 
 impl DTLSConn {
@@ -157,6 +163,7 @@ impl DTLSConn {
             handshake_completed: false,
             connection_closed_by_user: false,
             closed: false,
+            closed_by_peer: false,
 
             current_handshake_state: initial_fsm_state,
             current_retransmit_timer: None,
@@ -167,6 +174,7 @@ impl DTLSConn {
             handshake_config,
             retransmit: false,
             handshake_rx: None,
+            received_handshake_in_last_datagram: false,
         }
     }
 
@@ -467,6 +475,10 @@ impl DTLSConn {
 
     /// Feeds one received datagram into the connection.
     ///
+    /// Records whether this datagram carried a handshake record in
+    /// `received_handshake_in_last_datagram`, which a completed association uses to tell an
+    /// RFC 6347 §4.2.4 last-flight repeat from ordinary post-handshake application data.
+    ///
     /// # Errors
     ///
     /// Fails if the record is malformed or fails authentication.
@@ -474,6 +486,7 @@ impl DTLSConn {
         // Per RFC 6347: buffer future-epoch packets only until Finished is received
         // (i.e. until handshake completes). After that, discard them.
         let enqueue = !self.is_handshake_completed();
+        self.received_handshake_in_last_datagram = false;
         for pkt in unpack_datagram(buf)? {
             let (hs, alert, err) = self.handle_incoming_packet(pkt, enqueue);
             if let Some(alert) = alert {
@@ -490,6 +503,10 @@ impl DTLSConn {
                     reset_local_sequence_number: false,
                 });
 
+                if alert.alert_description == AlertDescription::CloseNotify {
+                    // A close_notify is only queued here as the reply to the peer's own.
+                    self.closed_by_peer = true;
+                }
                 if alert.alert_level == AlertLevel::Fatal
                     || alert.alert_description == AlertDescription::CloseNotify
                 {
@@ -502,6 +519,7 @@ impl DTLSConn {
             }
 
             if hs {
+                self.received_handshake_in_last_datagram = true;
                 self.handshake_rx = Some(());
             }
         }
@@ -540,6 +558,10 @@ impl DTLSConn {
                         reset_local_sequence_number: false,
                     });
 
+                    if alert.alert_description == AlertDescription::CloseNotify {
+                        // A close_notify is only queued here as the reply to the peer's own.
+                        self.closed_by_peer = true;
+                    }
                     if alert.alert_level == AlertLevel::Fatal
                         || alert.alert_description == AlertDescription::CloseNotify
                     {

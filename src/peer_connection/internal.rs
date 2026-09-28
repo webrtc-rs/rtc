@@ -168,6 +168,7 @@ impl RTCPeerConnection {
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
+            now,
         };
 
         Ok(Self {
@@ -277,7 +278,7 @@ impl RTCPeerConnection {
 
         let mut media_sections = vec![];
         let mut already_have_application_media_section = false;
-        let is_extmap_allow_mixed = is_ext_map_allow_mixed_set(self.remote_description.as_ref());
+        let is_extmap_allow_mixed = is_ext_map_allow_mixed_set(self.remote_description());
 
         // Extract media descriptions to avoid borrowing conflicts
         let media_descriptions = self

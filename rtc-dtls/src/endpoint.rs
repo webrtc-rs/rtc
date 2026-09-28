@@ -28,6 +28,10 @@ pub enum EndpointEvent {
     HandshakeComplete,
     /// Decrypted application data arrived.
     ApplicationData(BytesMut),
+    /// The peer closed the connection with a `close_notify` alert (RFC 5246 §7.2.1). The
+    /// matching `close_notify` reply is queued for [`Endpoint::poll_transmit`], and the connection
+    /// has been removed.
+    PeerClosed,
 }
 
 /// The main entry point to the library
@@ -169,6 +173,49 @@ impl Endpoint {
         Ok(())
     }
 
+    /// Feeds one datagram to `conn` and advances its handshake, recording a completed handshake
+    /// in `messages`. Draining application data and transmits is left to the caller, which does it
+    /// whether or not this fails.
+    fn read_into(
+        conn: &mut DTLSConn,
+        now: Instant,
+        data: &[u8],
+        messages: &mut Vec<EndpointEvent>,
+    ) -> Result<()> {
+        let is_handshake_completed_before = conn.is_handshake_completed();
+        conn.read(data)?;
+        if !conn.is_handshake_completed() {
+            conn.handshake(now)?;
+            // Drain any queued future-epoch packets (e.g. Finished that arrived
+            // before ChangeCipherSpec bumped remote_epoch). If draining sets
+            // handshake_rx, run handshake() again so the FSM can advance.
+            let is_handshake = conn.handle_incoming_queued_packets()?;
+            if is_handshake && !conn.is_handshake_completed() {
+                conn.handshake(now)?;
+            }
+        } else if conn.received_handshake_in_last_datagram {
+            // RFC 6347 4.2.4: this datagram carried a handshake record although the association
+            // is already established, so the peer is repeating its own final flight — ours was
+            // lost and has to be sent again. The gate is this datagram's handshake record, not
+            // the sticky `handshake_rx` flag, so ordinary post-handshake application data can
+            // never provoke a spurious flight (certificate included, for a client). The
+            // association is complete, so the FSM above is skipped, and `send()` never arms
+            // `current_retransmit_timer` on the completed path, so `handle_timeout` cannot fire
+            // for it either. `handshake_timeout`'s Finished branch regenerates the flight — with
+            // fresh record sequence numbers, since a verbatim replay would be dropped by the
+            // peer's replay window (4.1.2.6) — under a retransmission budget, so an
+            // unauthenticated repeat cannot amplify without limit. Clear `handshake_rx` first so
+            // that retransmission re-sends the buffered flight instead of re-parsing the whole
+            // transcript in `finish()`.
+            conn.handshake_rx = None;
+            conn.handshake_timeout(now)?;
+        }
+        if !is_handshake_completed_before && conn.is_handshake_completed() {
+            messages.push(EndpointEvent::HandshakeComplete)
+        }
+        Ok(())
+    }
+
     /// Process an incoming UDP datagram
     pub fn read(
         &mut self,
@@ -190,21 +237,10 @@ impl Endpoint {
         // Handle packet on existing association, if any
         let mut messages = vec![];
         if let Some(conn) = self.connections.get_mut(&remote) {
-            let is_handshake_completed_before = conn.is_handshake_completed();
-            conn.read(&data)?;
-            if !conn.is_handshake_completed() {
-                conn.handshake(now)?;
-                // Drain any queued future-epoch packets (e.g. Finished that arrived
-                // before ChangeCipherSpec bumped remote_epoch). If draining sets
-                // handshake_rx, run handshake() again so the FSM can advance.
-                let is_handshake = conn.handle_incoming_queued_packets()?;
-                if is_handshake && !conn.is_handshake_completed() {
-                    conn.handshake(now)?;
-                }
-            }
-            if !is_handshake_completed_before && conn.is_handshake_completed() {
-                messages.push(EndpointEvent::HandshakeComplete)
-            }
+            let result = Self::read_into(conn, now, &data, &mut messages);
+            // Whatever the outcome, deliver the data that arrived and send what the connection
+            // queued: an alert in reply to the peer's (its close_notify, or a fatal alert) has to
+            // go out even though this read is ending in an error.
             while let Some(message) = conn.incoming_application_data() {
                 messages.push(EndpointEvent::ApplicationData(message));
             }
@@ -220,6 +256,14 @@ impl Endpoint {
                     message: payload,
                 });
             }
+            // A peer's close_notify ends the connection gracefully: report it rather than the
+            // error the connection returns for it.
+            if conn.closed_by_peer {
+                self.connections.remove(&remote);
+                messages.push(EndpointEvent::PeerClosed);
+                return Ok(messages);
+            }
+            result?;
         }
 
         Ok(messages)
@@ -299,6 +343,7 @@ mod tests {
     use super::*;
     use crate::cipher_suite::CipherSuiteId;
     use crate::config::ConfigBuilder;
+    use crate::conn::DEFAULT_MAXIMUM_RETRANSMIT_NUMBER;
     use crate::crypto::Certificate;
     use crypto::{CryptoError, RTCCrypto, RTCCryptoProvider, RTCRandom};
 
@@ -531,6 +576,372 @@ mod tests {
             exchange_with_server(&mut server, provider.clone(), client_addr, client_suite)?;
         }
 
+        Ok(())
+    }
+
+    /// Runs a full handshake to completion and returns both endpoints, drained of any pending
+    /// transmit so a later assertion sees only newly generated output.
+    #[cfg(feature = "crypto-ring")]
+    fn completed_client_and_server() -> Result<(Endpoint, Endpoint)> {
+        let provider: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
+        let suites = [CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256];
+        let client_config = config(provider.clone(), true, &suites)?;
+        let server_config = config(provider, false, &suites)?;
+        let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
+        let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
+        client.connect(Instant::now(), server_addr(), client_config, None)?;
+
+        let mut client_complete = false;
+        let mut server_complete = false;
+        for _ in 0..32 {
+            for event in transfer(&mut client, &mut server, client_addr())? {
+                server_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+            for event in transfer(&mut server, &mut client, server_addr())? {
+                client_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+            if client_complete && server_complete {
+                break;
+            }
+        }
+        assert!(
+            client_complete && server_complete,
+            "the handshake completed for both sides"
+        );
+        while client.poll_transmit().is_some() {}
+        while server.poll_transmit().is_some() {}
+        Ok((client, server))
+    }
+
+    /// A 29-byte epoch-0 record whose content type marks it a handshake and whose body is a
+    /// well-formed fragment header over a junk payload: [`crate::fragment_buffer::FragmentBuffer`]
+    /// classifies the datagram as a handshake record — arming the RFC 6347 4.2.4 retransmission
+    /// trigger — although nothing in it is authenticated (epoch 0 carries no MAC).
+    fn junk_epoch_zero_handshake_datagram(sequence_number: u64) -> BytesMut {
+        use crate::content::ContentType;
+        use crate::record_layer::record_layer_header::{PROTOCOL_VERSION1_2, RecordLayerHeader};
+
+        let header = RecordLayerHeader {
+            content_type: ContentType::Handshake,
+            protocol_version: PROTOCOL_VERSION1_2,
+            epoch: 0,
+            sequence_number,
+            content_len: 16,
+        };
+        let mut raw = vec![];
+        header.marshal(&mut raw).expect("a record header marshals");
+        raw.extend_from_slice(&[
+            0xff, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        BytesMut::from(&raw[..])
+    }
+
+    /// The `(epoch, record sequence number)` of every record in `datagram`, read from the plaintext
+    /// record headers (the epoch-1 Finished body is encrypted, but its header is not).
+    fn record_sequence_numbers(datagram: &[u8]) -> Vec<(u16, u64)> {
+        use crate::record_layer::record_layer_header::RecordLayerHeader;
+        use crate::record_layer::unpack_datagram;
+
+        unpack_datagram(datagram)
+            .expect("a datagram splits into records")
+            .into_iter()
+            .map(|record| {
+                let mut reader = record.as_slice();
+                let header =
+                    RecordLayerHeader::unmarshal(&mut reader).expect("each record has a header");
+                (header.epoch, header.sequence_number)
+            })
+            .collect()
+    }
+
+    /// Asserts every record in `retransmit` carries a sequence number strictly greater than any
+    /// record of the same epoch in `original` — i.e. the flight was regenerated, not replayed
+    /// verbatim (a replay would be dropped by the peer's replay window, RFC 6347 4.1.2.6).
+    fn assert_fresh_sequence_numbers(original: &[BytesMut], retransmit: &[BytesMut]) {
+        use std::collections::HashMap;
+
+        let by_epoch = |flight: &[BytesMut]| {
+            let mut per_epoch: HashMap<u16, Vec<u64>> = HashMap::new();
+            for datagram in flight {
+                for (epoch, sequence_number) in record_sequence_numbers(datagram) {
+                    per_epoch.entry(epoch).or_default().push(sequence_number);
+                }
+            }
+            per_epoch
+        };
+
+        let original = by_epoch(original);
+        let retransmit = by_epoch(retransmit);
+        assert!(
+            retransmit.contains_key(&1),
+            "the retransmitted flight carries the encrypted Finished (epoch 1)"
+        );
+        for (epoch, retransmit_seqs) in &retransmit {
+            if let Some(original_seqs) = original.get(epoch) {
+                let max_original = original_seqs.iter().copied().max().unwrap_or(0);
+                let min_retransmit = retransmit_seqs.iter().copied().min().unwrap_or(0);
+                assert!(
+                    min_retransmit > max_original,
+                    "epoch {epoch}: retransmitted record seq {min_retransmit} must be fresh, not a replay of {max_original}"
+                );
+            }
+        }
+    }
+
+    /// RFC 6347 4.2.4: the sender of the last flight has to retransmit it when the peer repeats its
+    /// own final flight, because it cannot know its flight arrived. Here the server's last flight
+    /// (ChangeCipherSpec + Finished) is lost in transit, the client retransmits Flight 5 on its own
+    /// timer, and the server answers with a fresh flight (fresh record sequence numbers, not a
+    /// replay) so the client completes.
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_completed_server_retransmits_a_fresh_last_flight_so_the_client_completes() -> Result<()> {
+        let provider: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
+        let suites = [CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256];
+        let client_config = config(provider.clone(), true, &suites)?;
+        let server_config = config(provider, false, &suites)?;
+        let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
+        let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
+        client.connect(Instant::now(), server_addr(), client_config, None)?;
+
+        // Drive until the server completes. Its last flight is queued at that point, not yet taken.
+        let mut server_complete = false;
+        for _ in 0..32 {
+            for event in transfer(&mut client, &mut server, client_addr())? {
+                server_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+            if server_complete {
+                break;
+            }
+            transfer(&mut server, &mut client, server_addr())?;
+        }
+        assert!(server_complete, "the server side never completed");
+
+        // Lose it: capture the server's queued last flight (to compare sequence numbers) but
+        // deliver none of it.
+        let mut original_last_flight = vec![];
+        while let Some(transmit) = server.poll_transmit() {
+            original_last_flight.push(transmit.message);
+        }
+        assert!(
+            !original_last_flight.is_empty(),
+            "the server had a last flight to lose"
+        );
+
+        // The client is still waiting for that flight; its retransmit timer fires and it repeats
+        // Flight 5.
+        let deadline = client
+            .poll_timeout(&server_addr())
+            .expect("a client waiting for the last flight arms a retransmit timer");
+        client.handle_timeout(server_addr(), deadline)?;
+        let mut client_repeat = vec![];
+        while let Some(transmit) = client.poll_transmit() {
+            client_repeat.push(transmit);
+        }
+        assert!(
+            !client_repeat.is_empty(),
+            "the client retransmitted its own flight"
+        );
+
+        // RFC 6347 4.2.4 requires the completed server to answer with its last flight again.
+        for transmit in client_repeat {
+            server.read(
+                deadline,
+                client_addr(),
+                transmit.transport.ecn,
+                transmit.message,
+            )?;
+        }
+        let mut retransmit = vec![];
+        while let Some(transmit) = server.poll_transmit() {
+            retransmit.push(transmit.message);
+        }
+        assert!(
+            !retransmit.is_empty(),
+            "a completed server has to retransmit its last flight when the peer repeats its own"
+        );
+        assert_fresh_sequence_numbers(&original_last_flight, &retransmit);
+
+        // Feed the fresh flight back; the client must now actually complete.
+        let mut client_complete = false;
+        for datagram in retransmit {
+            for event in client.read(deadline, server_addr(), None, datagram)? {
+                client_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+        }
+        assert!(
+            client_complete,
+            "the client completes once the retransmitted last flight arrives"
+        );
+        Ok(())
+    }
+
+    /// RFC 6347 4.2.4 for the client role: a completed client repeats its own last flight (Flight 5)
+    /// when the peer repeats its final flight. Flight 5 carries the client certificate, so it spans
+    /// epoch-0 records (certificate/key-exchange/verify/ChangeCipherSpec) plus the epoch-1 Finished,
+    /// and each repeat carries fresh record sequence numbers.
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_completed_client_retransmits_its_full_last_flight_with_fresh_record_sequence_numbers()
+    -> Result<()> {
+        let (mut client, _server) = completed_client_and_server()?;
+
+        client.read(
+            Instant::now(),
+            server_addr(),
+            None,
+            junk_epoch_zero_handshake_datagram(20_000),
+        )?;
+        let mut first = vec![];
+        while let Some(transmit) = client.poll_transmit() {
+            first.push(transmit.message);
+        }
+        assert!(!first.is_empty(), "the client retransmits its last flight");
+        let epochs: std::collections::HashSet<u16> = first
+            .iter()
+            .flat_map(|datagram| record_sequence_numbers(datagram))
+            .map(|(epoch, _)| epoch)
+            .collect();
+        assert!(
+            epochs.contains(&0) && epochs.contains(&1),
+            "the retransmit is the full Flight 5 (epoch-0 records plus the epoch-1 Finished), not a bare answer"
+        );
+
+        client.read(
+            Instant::now(),
+            server_addr(),
+            None,
+            junk_epoch_zero_handshake_datagram(20_001),
+        )?;
+        let mut second = vec![];
+        while let Some(transmit) = client.poll_transmit() {
+            second.push(transmit.message);
+        }
+        assert!(
+            !second.is_empty(),
+            "the client retransmits again on the next repeat"
+        );
+        assert_fresh_sequence_numbers(&first, &second);
+        Ok(())
+    }
+
+    /// A completed client fed a stream of unauthenticated epoch-0 handshake records must answer at
+    /// most `maximum_retransmit_number` times and then fall silent (closing the RFC 6347 4.2.4
+    /// retransmission amplification), and must never error out of `read` — an `ErrInvalidFsmTransition`
+    /// escaping here would tear down the established association.
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_completed_client_neither_amplifies_nor_tears_down_when_flooded_with_handshake_records()
+    -> Result<()> {
+        let (mut client, _server) = completed_client_and_server()?;
+
+        let floods = DEFAULT_MAXIMUM_RETRANSMIT_NUMBER + 5;
+        let mut answered = 0usize;
+        let mut silent_after_budget = true;
+        for index in 0..floods {
+            let datagram = junk_epoch_zero_handshake_datagram(10_000 + index as u64);
+            let result = client.read(Instant::now(), server_addr(), None, datagram);
+            assert!(
+                result.is_ok(),
+                "read {index} of a junk handshake record must not tear down an established association"
+            );
+            let mut produced = false;
+            while client.poll_transmit().is_some() {
+                produced = true;
+            }
+            if produced {
+                answered += 1;
+            }
+            if index >= DEFAULT_MAXIMUM_RETRANSMIT_NUMBER {
+                silent_after_budget &= !produced;
+            }
+        }
+        assert!(answered > 0, "the retransmission path is reachable at all");
+        assert!(
+            answered <= DEFAULT_MAXIMUM_RETRANSMIT_NUMBER,
+            "a completed client answered {answered} floods but the budget is {DEFAULT_MAXIMUM_RETRANSMIT_NUMBER}"
+        );
+        assert!(
+            silent_after_budget,
+            "the retransmit budget must silence the flood once it is spent"
+        );
+        Ok(())
+    }
+
+    /// The last-flight retransmission must be gated on this datagram carrying a handshake record,
+    /// not on the persisted `handshake_rx` flag. Application data arriving after the handshake —
+    /// even with `handshake_rx` left set — must be decrypted and answered with nothing, never with a
+    /// spurious flight.
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn application_data_does_not_retrigger_a_completed_client_even_with_a_stale_handshake_flag()
+    -> Result<()> {
+        let (mut client, mut server) = completed_client_and_server()?;
+
+        // Simulate the leak finding 3 describes: a `handshake_rx` left set from an earlier datagram.
+        client
+            .connections
+            .get_mut(&server_addr())
+            .expect("the client holds the association")
+            .handshake_rx = Some(());
+
+        server.write(
+            Instant::now(),
+            client_addr(),
+            b"post-handshake application data",
+        )?;
+        let events = transfer(&mut server, &mut client, server_addr())?;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EndpointEvent::ApplicationData(data) if data.as_ref() == b"post-handshake application data"
+            )),
+            "the completed client still decrypts application data"
+        );
+        assert!(
+            client.poll_transmit().is_none(),
+            "application data must not make a completed client emit a handshake flight"
+        );
+        Ok(())
+    }
+
+    /// A peer's close_notify (RFC 5246 §7.2.1) ends the connection gracefully: data that arrived
+    /// before it is still delivered, the close is reported as an event rather than an error, the
+    /// matching close_notify reply is sent, and the connection is dropped (rtc#255).
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_peer_close_notify_is_answered_and_reported() -> Result<()> {
+        use crate::content::ContentType;
+
+        let (mut client, mut server) = completed_client_and_server()?;
+
+        client.write(Instant::now(), server_addr(), b"before close")?;
+        client.close(Instant::now())?;
+        let events = transfer(&mut client, &mut server, client_addr())?;
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [EndpointEvent::ApplicationData(data), EndpointEvent::PeerClosed]
+                    if data.as_ref() == b"before close"
+            ),
+            "expected the data, then PeerClosed"
+        );
+        assert!(
+            server.connections.is_empty(),
+            "the closed connection is removed"
+        );
+
+        let reply = server
+            .poll_transmit()
+            .expect("the close_notify reply is sent");
+        assert_eq!(
+            ContentType::Alert as u8,
+            reply.message[0],
+            "the reply is an alert record"
+        );
+        assert!(server.poll_transmit().is_none());
         Ok(())
     }
 }

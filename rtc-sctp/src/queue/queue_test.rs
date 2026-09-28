@@ -1138,3 +1138,31 @@ fn test_reassembly_queue_ssn_overflow_in_forward_tsn_for_ordered() -> Result<()>
 
     Ok(())
 }
+
+#[test]
+fn test_message_index_survives_cumulative_prefix_and_tsn_wrap() {
+    use crate::chunk::chunk_payload_data::{MessageId, MessageReliability};
+    let mut queue = PayloadQueue::new();
+    for (tsn, id, beginning, ending) in [
+        (0, 11, false, true),
+        (u32::MAX, 11, true, false),
+        // A lone remaining tail still belongs to a fragmented message.
+        (1, 12, false, true),
+    ] {
+        let mut chunk = make_payload(tsn, 10);
+        chunk.message_id = MessageId::new(id);
+        chunk.reliability = MessageReliability::Rexmit { max_retransmits: 1 };
+        chunk.beginning_fragment = beginning;
+        chunk.ending_fragment = ending;
+        queue.push_no_check(chunk);
+    }
+    assert_eq!(
+        vec![u32::MAX, 0],
+        queue.message_tsns(MessageId::new(11).unwrap())
+    );
+    queue.pop(u32::MAX).unwrap();
+    assert_eq!(vec![0], queue.message_tsns(MessageId::new(11).unwrap()));
+    queue.pop(0).unwrap();
+    assert!(queue.message_tsns(MessageId::new(11).unwrap()).is_empty());
+    assert_eq!(vec![1], queue.message_tsns(MessageId::new(12).unwrap()));
+}

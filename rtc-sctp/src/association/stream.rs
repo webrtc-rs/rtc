@@ -239,6 +239,7 @@ impl Stream<'_> {
             _ => {}
         };
 
+        let id = self.association.allocate_message_id()?;
         let (p, _) = source.pop_chunk(self.association.max_message_size() as usize);
 
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
@@ -253,7 +254,7 @@ impl Stream<'_> {
                     }))
             }
 
-            self.association.send_payload_data(chunks)?;
+            self.association.send_payload_data(id, chunks);
 
             Ok(p.len())
         } else {
