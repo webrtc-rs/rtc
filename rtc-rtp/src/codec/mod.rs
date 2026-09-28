@@ -6,6 +6,8 @@ pub mod g7xx;
 pub mod h264;
 /// H.265/HEVC payload format ([RFC 7798]).
 pub mod h265;
+/// MPEG4-GENERIC (AAC-hbr) payload format ([RFC 3640]).
+pub mod mpeg4_generic;
 /// Opus payload format ([RFC 7587]), one packet per frame.
 pub mod opus;
 /// SMPTE ST 336 (KLV) payload ([RFC 6597]).
