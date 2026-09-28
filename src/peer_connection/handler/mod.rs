@@ -285,7 +285,6 @@ impl RTCPeerConnection {
     }
 
     fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
-
         let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
 
         if let Some(msg) = msg {
@@ -361,7 +360,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-    	self.pipeline_context.observe(msg.now);
+        self.pipeline_context.observe(msg.now);
         let msg = TaggedRTCMessageInternal {
             now: msg.now,
             transport: msg.transport,
@@ -573,11 +572,11 @@ mod handler_test {
     use crate::data_channel::message::RTCDataChannelMessage;
     use crate::peer_connection::RTCPeerConnectionBuilder;
     use crate::peer_connection::event::RTCDataChannelEvent;
-    use shared::{TransportContext, TransportProtocol};
     use bytes::BytesMut;
     use sansio::Protocol;
-    use std::time::Duration;
+    use shared::{TransportContext, TransportProtocol};
     use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     /// Media must be drainable while data-channel output is held back.
     ///
@@ -721,27 +720,36 @@ mod handler_test {
             .expect("a default peer connection builds");
 
         // drop a message into the data channel handler read outs, like DataChannel::emit_data_channel_opened() does
-        pc.pipeline_context.datachannel_handler_context.read_outs.push_back(TaggedRTCMessageInternal {
-            now: t(5),
-            transport: TransportContext {
-                local_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                peer_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                transport_protocol: TransportProtocol::UDP,
-                ecn: None,
-            },
-            message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
-                data_channel_id: 42,
-                data_channel_event: DataChannelEvent::Open,
-            })),
-        });
+        pc.pipeline_context
+            .datachannel_handler_context
+            .read_outs
+            .push_back(TaggedRTCMessageInternal {
+                now: t(5),
+                transport: TransportContext {
+                    local_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    peer_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    transport_protocol: TransportProtocol::UDP,
+                    ecn: None,
+                },
+                message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                    data_channel_id: 42,
+                    data_channel_event: DataChannelEvent::Open,
+                })),
+            });
 
         // call `poll_read` to pump the read outs
         let msg = pc.poll_read();
-        assert!(msg.is_none(), "The message should be consumed by the enpoint handler");
+        assert!(
+            msg.is_none(),
+            "The message should be consumed by the enpoint handler"
+        );
 
         // we should get a channel opened event
         let event = pc.poll_event()
             .expect("should have an event");
-        assert!(matches!(event, RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))));
+        assert!(matches!(
+            event,
+            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))
+        ));
     }
 }
