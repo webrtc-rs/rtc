@@ -536,9 +536,12 @@ mod handler_test {
     use super::*;
     use crate::data_channel::message::RTCDataChannelMessage;
     use crate::peer_connection::RTCPeerConnectionBuilder;
+    use crate::peer_connection::event::RTCDataChannelEvent;
+    use shared::{TransportContext, TransportProtocol};
     use bytes::BytesMut;
     use sansio::Protocol;
     use std::time::Duration;
+    use std::net::Ipv4Addr;
 
     /// Media must be drainable while data-channel output is held back.
     ///
@@ -669,5 +672,40 @@ mod handler_test {
             "the internal message carries the caller's instant, not an ambient reading"
         );
         assert_ne!(queued.now, t(0), "and not the construction instant either");
+    }
+
+    /// Check that messages in the `read_out` queues don't get stuck until the next incoming packet triggers `handle_read`.
+    #[test]
+    fn pump_read_outs() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(t(0))
+            .expect("a default peer connection builds");
+
+        // drop a message into the data channel handler read outs, like DataChannel::emit_data_channel_opened() does
+        pc.pipeline_context.datachannel_handler_context.read_outs.push_back(TaggedRTCMessageInternal {
+            now: t(5),
+            transport: TransportContext {
+                local_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                peer_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                transport_protocol: TransportProtocol::UDP,
+                ecn: None,
+            },
+            message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                data_channel_id: 42,
+                data_channel_event: DataChannelEvent::Open,
+            })),
+        });
+
+        // call `poll_read` to pump the read outs
+        let msg = pc.poll_read();
+        assert!(msg.is_none(), "The message should be consumed by the enpoint handler");
+
+        // we should get a channel opened event
+        let event = pc.poll_event()
+            .expect("should have an event");
+        assert!(matches!(event, RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))));
     }
 }
