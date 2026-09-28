@@ -6,12 +6,16 @@ use shared::{
     marshal::{Marshal, MarshalSize},
 };
 
+/// Absolute capture time, for relating a packet back to its original capture clock.
+pub mod abs_capture_time_extension;
 /// Absolute send time, for one-way-delay based bandwidth estimation.
 pub mod abs_send_time_extension;
 /// Per-packet audio loudness and voice activity ([RFC 6464]).
 pub mod audio_level_extension;
 /// A requested playout-delay range, for latency/smoothness trade-offs.
 pub mod playout_delay_extension;
+/// A full-resolution 64-bit NTP timestamp ([RFC 6051]).
+pub mod ntp_64_extension;
 /// The transport-wide sequence number that TWCC feedback refers to.
 pub mod transport_cc_extension;
 /// Camera direction and rotation (CVO), so a receiver can display video upright.
@@ -20,10 +24,14 @@ pub mod video_orientation_extension;
 /// A generic RTP header extension.
 #[non_exhaustive]
 pub enum HeaderExtension {
+    /// The absolute-capture-time extension.
+    AbsCaptureTime(abs_capture_time_extension::AbsCaptureTimeExtension),
     /// The absolute-send-time extension.
     AbsSendTime(abs_send_time_extension::AbsSendTimeExtension),
     /// The audio-level extension.
     AudioLevel(audio_level_extension::AudioLevelExtension),
+    /// The full-resolution NTP-64 timestamp extension.
+    Ntp64(ntp_64_extension::Ntp64Extension),
     /// The playout-delay extension.
     PlayoutDelay(playout_delay_extension::PlayoutDelayExtension),
     /// The transport-wide CC extension.
@@ -46,8 +54,12 @@ impl HeaderExtension {
         use HeaderExtension::*;
 
         match self {
+            AbsCaptureTime(_) => {
+                "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time".into()
+            }
             AbsSendTime(_) => "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time".into(),
             AudioLevel(_) => "urn:ietf:params:rtp-hdrext:ssrc-audio-level".into(),
+            Ntp64(_) => "urn:ietf:params:rtp-hdrext:ntp-64".into(),
             PlayoutDelay(_) => "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay".into(),
             TransportCc(_) => {
                 "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01".into()
@@ -61,8 +73,10 @@ impl HeaderExtension {
     pub fn is_same(&self, other: &Self) -> bool {
         use HeaderExtension::*;
         match (self, other) {
+            (AbsCaptureTime(_), AbsCaptureTime(_)) => true,
             (AbsSendTime(_), AbsSendTime(_)) => true,
             (AudioLevel(_), AudioLevel(_)) => true,
+            (Ntp64(_), Ntp64(_)) => true,
             (TransportCc(_), TransportCc(_)) => true,
             (VideoOrientation(_), VideoOrientation(_)) => true,
             (Custom { uri, .. }, Custom { uri: other_uri, .. }) => uri == other_uri,
@@ -75,8 +89,10 @@ impl MarshalSize for HeaderExtension {
     fn marshal_size(&self) -> usize {
         use HeaderExtension::*;
         match self {
+            AbsCaptureTime(ext) => ext.marshal_size(),
             AbsSendTime(ext) => ext.marshal_size(),
             AudioLevel(ext) => ext.marshal_size(),
+            Ntp64(ext) => ext.marshal_size(),
             PlayoutDelay(ext) => ext.marshal_size(),
             TransportCc(ext) => ext.marshal_size(),
             VideoOrientation(ext) => ext.marshal_size(),
@@ -89,8 +105,10 @@ impl Marshal for HeaderExtension {
     fn marshal_to(&self, buf: &mut [u8]) -> Result<usize> {
         use HeaderExtension::*;
         match self {
+            AbsCaptureTime(ext) => ext.marshal_to(buf),
             AbsSendTime(ext) => ext.marshal_to(buf),
             AudioLevel(ext) => ext.marshal_to(buf),
+            Ntp64(ext) => ext.marshal_to(buf),
             PlayoutDelay(ext) => ext.marshal_to(buf),
             TransportCc(ext) => ext.marshal_to(buf),
             VideoOrientation(ext) => ext.marshal_to(buf),
@@ -104,8 +122,10 @@ impl fmt::Debug for HeaderExtension {
         use HeaderExtension::*;
 
         match self {
+            AbsCaptureTime(ext) => f.debug_tuple("AbsCaptureTime").field(ext).finish(),
             AbsSendTime(ext) => f.debug_tuple("AbsSendTime").field(ext).finish(),
             AudioLevel(ext) => f.debug_tuple("AudioLevel").field(ext).finish(),
+            Ntp64(ext) => f.debug_tuple("Ntp64").field(ext).finish(),
             PlayoutDelay(ext) => f.debug_tuple("PlayoutDelay").field(ext).finish(),
             TransportCc(ext) => f.debug_tuple("TransportCc").field(ext).finish(),
             VideoOrientation(ext) => f.debug_tuple("VideoOrientation").field(ext).finish(),
