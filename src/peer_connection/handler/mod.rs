@@ -745,8 +745,7 @@ mod handler_test {
         );
 
         // we should get a channel opened event
-        let event = pc.poll_event()
-            .expect("should have an event");
+        let event = pc.poll_event().expect("should have an event");
         assert!(matches!(
             event,
             RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))
