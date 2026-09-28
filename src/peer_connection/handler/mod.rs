@@ -242,8 +242,13 @@ impl RTCPeerConnection {
         )
     }
 
-    fn pump_reads(&mut self) {
+    fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
+
         let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
+
+        if let Some(msg) = msg {
+            intermediate_routs.push_back(msg);
+        }
 
         use sansio::Protocol;
         for_each_handler!(forward: process_handler!(self, handler, {
@@ -319,13 +324,12 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             transport: msg.transport,
             message: RTCMessageInternal::Raw(msg.message),
         };
-        self.get_demuxer_handler().handle_read(msg)?;
-        self.pump_reads();
+        self.pump_reads(Some(msg));
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.pump_reads();
+        self.pump_reads(None);
 
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
