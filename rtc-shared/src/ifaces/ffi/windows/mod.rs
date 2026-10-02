@@ -273,7 +273,7 @@ unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> Sock
         let sock_addr6: *const SOCKADDR_IN6 = socket_addr.lpSockaddr as *const SOCKADDR_IN6;
         let in6_addr: SOCKADDR_IN6 = *sock_addr6;
 
-        let v6_addr = (*in6_addr.sin6_addr.u.Word()).into();
+        let v6_addr = (*in6_addr.sin6_addr.u.Byte()).into();
 
         SocketAddrV6::new(
             v6_addr,
@@ -403,5 +403,57 @@ unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    fn convert_ipv6_address(ip: Ipv6Addr, scope_id: u32, flowinfo: u32) -> SocketAddrV6 {
+        // The Windows structure stores IPv6 addresses as network-order bytes.
+        let mut socket: SOCKADDR_IN6 = unsafe { mem::zeroed() };
+        socket.sin6_family = AF_INET6 as u16;
+        socket.sin6_flowinfo = flowinfo;
+        unsafe {
+            *socket.sin6_addr.u.Byte_mut() = ip.octets();
+            *socket.u.sin6_scope_id_mut() = scope_id;
+        }
+
+        let adapter = IpAdapterUnicastAddress {
+            address: SOCKET_ADDRESS {
+                lpSockaddr: (&mut socket as *mut SOCKADDR_IN6).cast(),
+                iSockaddrLength: mem::size_of::<SOCKADDR_IN6>() as i32,
+            },
+            // All enum fields have a valid zero discriminant; unused pointers
+            // remain null. The conversion only reads the address field.
+            ..unsafe { mem::zeroed() }
+        };
+
+        // The backing socket stays alive throughout the actual conversion.
+        unsafe { v6_socket_from_adapter(&adapter) }
+    }
+
+    #[test]
+    fn ipv6_loopback_preserves_network_byte_order() {
+        let result = convert_ipv6_address(Ipv6Addr::LOCALHOST, 0, 0);
+
+        assert_eq!(*result.ip(), Ipv6Addr::LOCALHOST);
+        assert!(result.ip().is_loopback());
+        assert_eq!(result.port(), 0);
+    }
+
+    #[test]
+    fn ipv6_documentation_address_preserves_bytes_scope_and_flowinfo() {
+        let ip = Ipv6Addr::new(
+            0x2001, 0x0db8, 0x0102, 0x0304, 0x0506, 0x0708, 0x090a, 0x0b0c,
+        );
+        let result = convert_ipv6_address(ip, 42, 0x1234);
+
+        assert_eq!(*result.ip(), ip);
+        assert_eq!(result.port(), 0);
+        assert_eq!(result.scope_id(), 42);
+        assert_eq!(result.flowinfo(), 0x1234);
     }
 }
