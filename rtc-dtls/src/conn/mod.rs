@@ -622,6 +622,28 @@ impl DTLSConn {
             return (false, None, None);
         }
 
+        // Once the handshake has completed, a genuine peer only sends old-epoch handshake
+        // records, to repeat its final flight (RFC 6347 4.2.4 retransmission relies on them).
+        // Any other old-epoch record is plaintext that can only be forged or stale: acting on it
+        // (an alert, or our fatal alert answering bad ApplicationData, ChangeCipherSpec or an
+        // undecodable record) would let anyone spoofing the peer's address tear down the
+        // association without keys. So it is silently discarded [RFC6347 Section-4.1.2.7].
+        // Before the handshake completes, old epochs must be accepted [RFC6347 Section-4.1].
+        if h.epoch < epoch
+            && self.is_handshake_completed()
+            && h.content_type != ContentType::Handshake
+        {
+            debug!(
+                "{}: discarded {:?} record from old epoch {} (current: {}, seq: {})",
+                srv_cli_str(self.is_client),
+                h.content_type,
+                h.epoch,
+                epoch,
+                h.sequence_number,
+            );
+            return (false, None, None);
+        }
+
         // Anti-replay protection
         while self.replay_detector.len() <= h.epoch as usize {
             self.replay_detector

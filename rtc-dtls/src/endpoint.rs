@@ -496,6 +496,27 @@ mod tests {
         Ok(())
     }
 
+    /// A plaintext (epoch 0) record, as anyone who can spoof the peer's address can send: it
+    /// needs no keys.
+    fn plaintext_record_datagram(content_type: u8, body: &[u8], sequence_number: u64) -> BytesMut {
+        use crate::content::ContentType;
+        use crate::record_layer::record_layer_header::{PROTOCOL_VERSION1_2, RecordLayerHeader};
+
+        let header = RecordLayerHeader {
+            content_type: ContentType::Alert,
+            protocol_version: PROTOCOL_VERSION1_2,
+            epoch: 0,
+            sequence_number,
+            content_len: body.len() as u16,
+        };
+        let mut raw = vec![];
+        header.marshal(&mut raw).expect("a record header marshals");
+        // `ContentType` folds unknown values into `Invalid`, so the type byte is written raw.
+        raw[0] = content_type;
+        raw.extend_from_slice(body);
+        BytesMut::from(&raw[..])
+    }
+
     #[cfg(feature = "crypto-ring")]
     #[test]
     fn ring_provider_completes_handshake_and_record_exchange() -> Result<()> {
@@ -942,6 +963,76 @@ mod tests {
             "the reply is an alert record"
         );
         assert!(server.poll_transmit().is_none());
+        Ok(())
+    }
+
+    /// Once the handshake has completed, a genuine peer sends nothing but handshake records
+    /// (repeating its final flight) in epoch 0, so any other plaintext record can only be forged
+    /// or stale. None of them may close the connection, fail the read or provoke an alert:
+    /// otherwise anyone able to spoof the peer's address could tear down an authenticated
+    /// association with one unauthenticated datagram (RFC 6347 §4.1.2.7: invalid records are
+    /// silently discarded).
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_plaintext_record_cannot_close_an_established_connection() -> Result<()> {
+        use crate::alert::{AlertDescription, AlertLevel};
+
+        let (mut client, mut server) = completed_client_and_server()?;
+
+        let close_notify = [
+            AlertLevel::Warning as u8,
+            AlertDescription::CloseNotify as u8,
+        ];
+        let fatal = [
+            AlertLevel::Fatal as u8,
+            AlertDescription::HandshakeFailure as u8,
+        ];
+        let forgeries: [(&str, u8, &[u8]); 7] = [
+            ("close_notify alert", 21, &close_notify),
+            ("fatal alert", 21, &fatal),
+            ("truncated alert", 21, &[AlertLevel::Fatal as u8]),
+            ("application data", 23, b"forged"),
+            ("change_cipher_spec", 20, &[0x01]),
+            ("malformed change_cipher_spec", 20, &[0x02]),
+            ("unknown content type", 99, b"forged"),
+        ];
+        for (sequence_number, (name, content_type, body)) in (1_000_000..).zip(forgeries) {
+            let forged = plaintext_record_datagram(content_type, body, sequence_number);
+            let events = server.read(Instant::now(), client_addr(), None, forged)?;
+            assert!(
+                events.is_empty(),
+                "a forged {name} was reported as {} event(s)",
+                events.len()
+            );
+            assert!(
+                server.connections.contains_key(&client_addr()),
+                "a forged {name} removed the connection"
+            );
+            assert!(
+                server.poll_transmit().is_none(),
+                "a forged {name} was answered"
+            );
+        }
+
+        // and the connection still carries data both ways
+        client.write(Instant::now(), server_addr(), b"still here")?;
+        let events = transfer(&mut client, &mut server, client_addr())?;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EndpointEvent::ApplicationData(data) if data.as_ref() == b"still here"
+            )),
+            "the connection stopped carrying data after a forged record"
+        );
+        server.write(Instant::now(), client_addr(), b"and back")?;
+        let events = transfer(&mut server, &mut client, server_addr())?;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EndpointEvent::ApplicationData(data) if data.as_ref() == b"and back"
+            )),
+            "the connection stopped carrying data back after a forged record"
+        );
         Ok(())
     }
 }
