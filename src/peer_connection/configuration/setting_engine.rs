@@ -265,31 +265,21 @@ pub struct ReplayProtection {
 /// Maximum message size for SCTP data channels.
 ///
 /// Controls the maximum size of messages that can be sent through data channels.
-/// Per [RFC 8841](https://datatracker.ietf.org/doc/html/rfc8841), the default is 64KB.
+/// Per [RFC 8841](https://datatracker.ietf.org/doc/html/rfc8841), the default is 64KB. Capped at
+/// the SCTP receive buffer size (see [`SettingEngineBuilder::with_sctp_max_receive_buffer_size`]).
 #[derive(Copy, Clone)]
 #[non_exhaustive]
 pub enum SctpMaxMessageSize {
     /// Fixed maximum message size in bytes.
     Bounded(u32),
 
-    /// No practical limit (uses MAX_MESSAGE_SIZE internally).
+    /// As large as the SCTP receive buffer allows.
     Unbounded,
 }
 
 impl SctpMaxMessageSize {
     /// Default message size per RFC 8841 (64KB).
     pub const DEFAULT_MESSAGE_SIZE: u32 = 65536;
-
-    /// Maximum message size (256KB).
-    pub const MAX_MESSAGE_SIZE: u32 = 262144;
-
-    /// Returns the message size as `usize`.
-    pub fn as_usize(&self) -> usize {
-        match self {
-            Self::Bounded(result) => (*result).min(Self::MAX_MESSAGE_SIZE) as usize,
-            Self::Unbounded => Self::MAX_MESSAGE_SIZE as usize,
-        }
-    }
 }
 
 impl Default for SctpMaxMessageSize {
@@ -1303,6 +1293,9 @@ impl SettingEngineBuilder {
     /// This controls the largest message that can be sent through a data channel.
     /// Larger messages will be fragmented or rejected depending on the configuration.
     ///
+    /// Capped at the SCTP receive buffer size ([`Self::with_sctp_max_receive_buffer_size`]),
+    /// since a message must fit in it to be reassembled.
+    ///
     /// # Parameters
     ///
     /// * `max_message_size` - Maximum size (Bounded or Unbounded)
@@ -1327,7 +1320,7 @@ impl SettingEngineBuilder {
     ///     .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(256 * 1024)) // 256KB
     ///     .build();
     ///
-    /// // Or unbounded (uses MAX_MESSAGE_SIZE internally)
+    /// // Or as large as the SCTP receive buffer (1MB by default)
     /// let setting_engine = SettingEngineBuilder::new()
     ///     .with_sctp_max_message_size(SctpMaxMessageSize::Unbounded)
     ///     .build();
@@ -1354,10 +1347,9 @@ impl SettingEngineBuilder {
     /// **Bounds.** RFC 9260 §3.3.2 requires an advertised initial a_rwnd of at least **1500
     /// bytes**; smaller values (including `0`) are raised to that floor here, because a
     /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
-    /// association never establishes. The window should also be **≥ the largest SCTP
-    /// message this endpoint will receive** ([`SettingEngineBuilder::with_sctp_max_message_size`], default
-    /// 64 KiB): a buffer smaller than one message cannot hold it for reassembly, so a
-    /// full-size inbound message would stall that receive direction. `0` here is *not*
+    /// association never establishes. It also **caps the largest SCTP message this endpoint
+    /// will receive** ([`SettingEngineBuilder::with_sctp_max_message_size`], default 64 KiB):
+    /// a buffer smaller than one message cannot hold it for reassembly. `0` here is *not*
     /// "unbounded" (unlike some other knobs) — to keep the default window, leave this
     /// unset (the default is `INITIAL_RECV_BUF_SIZE`, 1 MiB).
     pub fn with_sctp_max_receive_buffer_size(mut self, size: u32) -> Self {
