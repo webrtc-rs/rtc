@@ -87,6 +87,7 @@ impl RTCCrypto for AwsLcRsCrypto {
                 | CryptoAlgorithm::Signature(
                     SignatureScheme::Ed25519
                         | SignatureScheme::EcdsaP256Sha256
+                        | SignatureScheme::EcdsaP384Sha256
                         | SignatureScheme::EcdsaP384Sha384
                         | SignatureScheme::RsaPkcs1Sha1
                         | SignatureScheme::RsaPkcs1Sha256
@@ -492,6 +493,7 @@ fn verification_algorithm(
     match scheme {
         SignatureScheme::Ed25519 => &signature::ED25519,
         SignatureScheme::EcdsaP256Sha256 => &signature::ECDSA_P256_SHA256_ASN1,
+        SignatureScheme::EcdsaP384Sha256 => &signature::ECDSA_P384_SHA256_ASN1,
         SignatureScheme::EcdsaP384Sha384 => &signature::ECDSA_P384_SHA384_ASN1,
         SignatureScheme::RsaPkcs1Sha1 => &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY,
         SignatureScheme::RsaPkcs1Sha256 => {
@@ -512,7 +514,9 @@ fn verify_public_key_encoding(
         (scheme, encoding),
         (SignatureScheme::Ed25519, PublicKeyEncoding::Ed25519Raw)
             | (
-                SignatureScheme::EcdsaP256Sha256 | SignatureScheme::EcdsaP384Sha384,
+                SignatureScheme::EcdsaP256Sha256
+                    | SignatureScheme::EcdsaP384Sha256
+                    | SignatureScheme::EcdsaP384Sha384,
                 PublicKeyEncoding::EcUncompressedPoint
             )
             | (

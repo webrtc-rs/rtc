@@ -302,9 +302,20 @@ fn verify_signature(
     {
         return Err(Error::ErrKeySignatureMismatch);
     }
+    let scheme = match (hash_algorithm.signature, hash_algorithm.hash) {
+        (SignatureAlgorithm::Ecdsa, crate::signature_hash_algorithm::HashAlgorithm::Sha256) => {
+            if certificate.tbs_certificate.subject_pki.subject_public_key.data.len() == 97 {
+                crypto::SignatureScheme::EcdsaP384Sha256
+            } else {
+                crypto::SignatureScheme::EcdsaP256Sha256
+            }
+        }
+        _ => hash_algorithm.crypto_scheme()?,
+    };
+
     crypto
         .verify_signature(
-            hash_algorithm.crypto_scheme()?,
+            scheme,
             PublicKey {
                 encoding,
                 bytes: &certificate
