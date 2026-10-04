@@ -38,6 +38,7 @@ use binding::*;
 use transaction::*;
 
 use crate::client::relay::{Relay, RelayState};
+use crate::proto::PROTO_UDP;
 use crate::proto::chandata::*;
 use crate::proto::channum::ChannelNumber;
 use crate::proto::data::*;
@@ -45,7 +46,6 @@ use crate::proto::lifetime::Lifetime;
 use crate::proto::peeraddr::*;
 use crate::proto::relayaddr::RelayedAddress;
 use crate::proto::reqtrans::RequestedTransport;
-use crate::proto::{PROTO_TCP, PROTO_UDP, Protocol};
 use shared::error::{Error, Result};
 use shared::util::lookup_host;
 use shared::{TransportContext, TransportMessage, TransportProtocol};
@@ -122,12 +122,6 @@ pub struct ClientConfig {
     pub local_addr: SocketAddr,
     /// Whether to reach the server over UDP or TCP.
     pub transport_protocol: TransportProtocol,
-    /// The transport the allocation relays, sent as `REQUESTED-TRANSPORT`.
-    ///
-    /// Independent of `transport_protocol`: a client that reaches the server over TCP still
-    /// wants a UDP relay (RFC 8656 §7.1). Asking for TCP here requests an RFC 6062 TCP
-    /// allocation instead, which this client does not implement.
-    pub requested_transport: TransportProtocol,
     /// The long-term credential username for the TURN server.
     pub username: String,
     /// The long-term credential password.
@@ -153,7 +147,6 @@ impl Default for ClientConfig {
             turn_serv_addr: "".to_string(),
             local_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             transport_protocol: Default::default(),
-            requested_transport: Default::default(),
             username: "".to_string(),
             password: "".to_string(),
             realm: "".to_string(),
@@ -171,7 +164,6 @@ pub struct Client {
     turn_serv_addr: Option<SocketAddr>,
     local_addr: SocketAddr,
     transport_protocol: TransportProtocol,
-    requested_transport: TransportProtocol,
     username: Username,
     password: String,
     realm: Realm,
@@ -215,7 +207,6 @@ impl Client {
             turn_serv_addr,
             local_addr: config.local_addr,
             transport_protocol: config.transport_protocol,
-            requested_transport: config.requested_transport,
             username: Username::new(ATTR_USERNAME, config.username),
             password: config.password,
             realm: Realm::new(ATTR_REALM, config.realm),
@@ -598,17 +589,6 @@ impl Client {
         Ok(())
     }
 
-    /// The `REQUESTED-TRANSPORT` value: what the allocation relays, which is not necessarily
-    /// how this client reaches the server.
-    fn requested_protocol(&self) -> Protocol {
-        match self.requested_transport {
-            TransportProtocol::TCP => PROTO_TCP,
-            // UDP, and anything a later transport adds: a UDP relay is what TURN allocates
-            // unless a TCP one is asked for by name.
-            _ => PROTO_UDP,
-        }
-    }
-
     /// Allocate sends a TURN allocation request to the given transport address
     pub fn allocate(&mut self, now: Instant) -> Result<TransactionId> {
         let mut msg = Message::new();
@@ -616,7 +596,10 @@ impl Client {
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
             Box::new(RequestedTransport {
-                protocol: self.requested_protocol(),
+                // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
+                // names what the allocation relays, not the client-to-server transport
+                // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
+                protocol: PROTO_UDP,
             }),
             Box::new(FINGERPRINT),
         ])?;
@@ -677,7 +660,10 @@ impl Client {
                     Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
-                        protocol: self.requested_protocol(),
+                        // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
+                        // names what the allocation relays, not the client-to-server transport
+                        // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
+                        protocol: PROTO_UDP,
                     }),
                     Box::new(self.username.clone()),
                     Box::new(self.realm.clone()),

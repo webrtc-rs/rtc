@@ -183,7 +183,6 @@ async fn run_main_loop(
         turn_serv_addr: turn_server_addr,
         local_addr,
         transport_protocol: TransportProtocol::UDP,
-        requested_transport: TransportProtocol::UDP,
         username: cred[0].to_string(),
         password: cred[1].to_string(),
         realm: turn_realm.to_string(),
