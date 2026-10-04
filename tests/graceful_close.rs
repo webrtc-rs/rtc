@@ -169,11 +169,17 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
         (&mut answer, &mut offer, answer_dc, offer_dc)
     };
 
-    let mut remote_open = false;
+    let (mut closer_open, mut remote_open) = (false, false);
     let start = Instant::now();
-    while start.elapsed() < TEST_TIMEOUT && !remote_open {
+    while start.elapsed() < TEST_TIMEOUT && !(closer_open && remote_open) {
         pump(closer, remote).await?;
-        while closer.pc.poll_event().is_some() {}
+        while let Some(event) = closer.pc.poll_event() {
+            if let RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) = event
+                && id == closer_dc
+            {
+                closer_open = true;
+            }
+        }
         while closer.pc.poll_read().is_some() {}
         while remote.pc.poll_read().is_some() {}
         while let Some(event) = remote.pc.poll_event() {
@@ -184,7 +190,10 @@ async fn close_is_noticed_by_the_remote(closer_is_dtls_server: bool) -> Result<(
             }
         }
     }
-    assert!(remote_open, "the peers never opened the channel");
+    assert!(
+        closer_open && remote_open,
+        "the peers never opened the channel"
+    );
 
     // Sent right before close(), with no poll_write in between: still queued in the pipeline
     // when close() runs.
