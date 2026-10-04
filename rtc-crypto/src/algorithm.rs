@@ -93,8 +93,6 @@ pub enum SignatureScheme {
     Ed25519,
     /// ECDSA P-256 with SHA-256 and ASN.1 DER signatures.
     EcdsaP256Sha256,
-    /// ECDSA P-384 with SHA-256 and ASN.1 DER signatures.
-    EcdsaP384Sha256,
     /// ECDSA P-384 with SHA-384 and ASN.1 DER signatures.
     EcdsaP384Sha384,
     /// RSA PKCS#1 v1.5 with SHA-1, for legacy verification only.
@@ -105,6 +103,8 @@ pub enum SignatureScheme {
     RsaPkcs1Sha384,
     /// RSA PKCS#1 v1.5 with SHA-512.
     RsaPkcs1Sha512,
+    /// ECDSA P-384 with SHA-256 and ASN.1 DER signatures.
+    EcdsaP384Sha256,
 }
 
 /// The encoding of public-key bytes.

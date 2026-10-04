@@ -304,7 +304,14 @@ fn verify_signature(
     }
     let scheme = match (hash_algorithm.signature, hash_algorithm.hash) {
         (SignatureAlgorithm::Ecdsa, crate::signature_hash_algorithm::HashAlgorithm::Sha256) => {
-            if certificate.tbs_certificate.subject_pki.subject_public_key.data.len() == 97 {
+            if certificate
+                .tbs_certificate
+                .subject_pki
+                .subject_public_key
+                .data
+                .len()
+                == 97
+            {
                 crypto::SignatureScheme::EcdsaP384Sha256
             } else {
                 crypto::SignatureScheme::EcdsaP256Sha256
