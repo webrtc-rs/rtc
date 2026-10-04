@@ -376,6 +376,22 @@ pub enum Error {
     #[error("nalu type {0} is currently not handled")]
     NaluTypeIsNotHandled(u8),
 
+    /// MPEG4-GENERIC (RFC 3640) `sizeLength`/`indexLength` fmtp parameters this implementation
+    /// cannot represent: `sizeLength` must be at least 1, and `sizeLength + indexLength` must
+    /// fit in a 4-byte AU-header (at most 32 bits).
+    #[error(
+        "mpeg4-generic sizeLength({0})/indexLength({1}) unsupported: sizeLength must be >= 1 and their sum <= 32"
+    )]
+    Mpeg4GenericInvalidAuHeaderLengths(u8, u8),
+    /// MPEG4-GENERIC (RFC 3640) Access Unit exceeds the configured AU-size field's range.
+    #[error("mpeg4-generic access unit size({0}) exceeds the AU-size field's range({1})")]
+    Mpeg4GenericAuTooLarge(usize, usize),
+    /// MPEG4-GENERIC (RFC 3640) AU Header Section declares a length this depacketizer does not
+    /// support: every packet must carry exactly one AU-header matching the configured
+    /// `sizeLength`/`indexLength` (one Access Unit, or one fragment of one, per RTP packet).
+    #[error("mpeg4-generic AU-headers-length({0} bits) is not supported: expected {1}")]
+    Mpeg4GenericUnsupportedAuHeadersLength(u16, u8),
+
     //SRTP
     /// Duplicated packet.
     #[error("duplicated packet")]
