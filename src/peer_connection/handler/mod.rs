@@ -350,6 +350,46 @@ impl RTCPeerConnection {
             }
         }
     }
+
+    /// Returns whether any handler raised an event during the sweep.
+    fn pump_events(&mut self) -> bool {
+        let mut intermediate_eouts = VecDeque::new();
+        let mut raised = false;
+
+        use sansio::Protocol;
+
+        for_each_handler!(forward: process_handler!(self, handler, {
+            while let Some(evt) = intermediate_eouts.pop_front() {
+                if let Err(err) = handler.handle_event(evt) {
+                    warn!("{}.handle_event got error: {}", handler.name(), err);
+                }
+            }
+            while let Some(msg) = handler.poll_event() {
+                raised = true;
+                intermediate_eouts.push_back(msg);
+            }
+        }));
+
+        // Finally, put intermediate_eouts into RTCPeerConnection's eouts
+        while let Some(evt_internal) = intermediate_eouts.pop_front() {
+            match &evt_internal.event {
+                RTCEventInternal::RTCPeerConnectionEvent(
+                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
+                )
+                | RTCEventInternal::DTLSHandshakeComplete(_, _)
+                | RTCEventInternal::DTLSClosed => {
+                    self.update_connection_state(false);
+                }
+                _ => {}
+            };
+
+            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal.event {
+                self.pipeline_context.event_outs.push_back(evt);
+            }
+        }
+
+        raised
+    }
 }
 
 impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
@@ -431,35 +471,18 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        let mut intermediate_eouts = VecDeque::new();
+        // Drain the backlog before sweeping the pipeline again: anything a sweep adds lands
+        // behind it anyway, and the sweep runs once the backlog is empty.
+        if let Some(evt) = self.pipeline_context.event_outs.pop_front() {
+            return Some(evt);
+        }
 
-        for_each_handler!(forward: process_handler!(self, handler, {
-            while let Some(evt) = intermediate_eouts.pop_front() {
-                if let Err(err) = handler.handle_event(evt) {
-                    warn!("{}.handle_event got error: {}", handler.name(), err);
-                }
-            }
-            while let Some(msg) = handler.poll_event() {
-                intermediate_eouts.push_back(msg);
-            }
-        }));
-
-        // Finally, put intermediate_eouts into RTCPeerConnection's eouts
-        while let Some(evt_internal) = intermediate_eouts.pop_front() {
-            match &evt_internal.event {
-                RTCEventInternal::RTCPeerConnectionEvent(
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
-                )
-                | RTCEventInternal::DTLSHandshakeComplete(_, _)
-                | RTCEventInternal::DTLSClosed => {
-                    self.update_connection_state(false);
-                }
-                _ => {}
-            };
-
-            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal.event {
-                self.pipeline_context.event_outs.push_back(evt);
-            }
+        // Handling an event can queue read messages, like the open of a negotiated data channel
+        // on `SCTPHandshakeComplete`. Deliver them, and the events they raise, now rather than
+        // on the next incoming packet.
+        if self.pump_events() {
+            self.pump_reads(None);
+            self.pump_events();
         }
 
         self.pipeline_context.event_outs.pop_front()
@@ -707,6 +730,62 @@ mod handler_test {
             "the internal message carries the caller's instant, not an ambient reading"
         );
         assert_ne!(queued.now, t(0), "and not the construction instant either");
+    }
+
+    /// The open of a negotiated data channel is queued as a read message while
+    /// `SCTPHandshakeComplete` is being handled, i.e. inside `poll_event`. That same `poll_event`
+    /// call must return the `OnOpen`: the async `webrtc` driver drains events until `poll_event`
+    /// returns `None` and then waits for the next packet or timer.
+    #[test]
+    fn negotiated_channel_opens_within_the_same_poll_event() {
+        use crate::data_channel::RTCDataChannelInit;
+        use crate::peer_connection::event::TaggedRTCEventInternal;
+        use crate::peer_connection::transport::RTCDtlsRole;
+
+        let base = Instant::now();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(base)
+            .expect("a default peer connection builds");
+        let id = pc
+            .create_data_channel(
+                "negotiated",
+                Some(RTCDataChannelInit {
+                    negotiated: Some(1),
+                    ..Default::default()
+                }),
+            )
+            .expect("a negotiated data channel is created")
+            .id();
+
+        // Drain what creating the channel raised (`OnNegotiationNeeded`): an unrelated event
+        // returned alongside would keep the loop below polling and hide a stuck open.
+        while pc.poll_event().is_some() {}
+
+        // Resolved by the DTLS handshake, which precedes the association.
+        pc.dtls_transport_mut().dtls_role = RTCDtlsRole::Client;
+
+        // What the SCTP handler emits once the association is up.
+        pc.pipeline_context
+            .sctp_handler_context
+            .event_outs
+            .push_back(TaggedRTCEventInternal {
+                now: base,
+                event: RTCEventInternal::SCTPHandshakeComplete(0),
+            });
+
+        let mut opened = false;
+        while let Some(event) = pc.poll_event() {
+            if matches!(
+                event,
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(opened_id)) if opened_id == id
+            ) {
+                opened = true;
+            }
+        }
+        assert!(
+            opened,
+            "the open must not wait for the next incoming packet"
+        );
     }
 
     /// Check that messages in the `read_out` queues don't get stuck until the next incoming packet triggers `handle_read`.
