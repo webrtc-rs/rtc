@@ -42,6 +42,7 @@ fn assert_basic_capabilities(crypto: &dyn RTCCrypto) {
         CryptoAlgorithm::KeyExchange(KeyExchangeAlgorithm::X25519),
         CryptoAlgorithm::Signature(SignatureScheme::Ed25519),
         CryptoAlgorithm::Signature(SignatureScheme::EcdsaP256Sha256),
+        CryptoAlgorithm::Signature(SignatureScheme::EcdsaP384Sha256),
         CryptoAlgorithm::Signature(SignatureScheme::EcdsaP384Sha384),
         CryptoAlgorithm::Signature(SignatureScheme::RsaPkcs1Sha1),
         CryptoAlgorithm::Signature(SignatureScheme::RsaPkcs1Sha256),
@@ -461,6 +462,24 @@ fn assert_verification_only_schemes(crypto: &dyn RTCCrypto) {
             },
             message,
             &p384_signature,
+        )
+        .unwrap();
+
+    let p384_sha256_public_key = bytes(
+        "041e88f40d0a7fc21dc01d89951ea8598ce35f9f37bc163f102a633079ceeaa99a9298aad6e5c46100f37e915132e5df9f9cedf3e140f789934113e0f8b280e4bd0904b6f1ec10479f759b5d5f01ae1e4058ece51a073fe089680b9eee7e4d1f9e",
+    );
+    let p384_sha256_signature = bytes(
+        "3065023100b3ede985a4270f3fe8a0177040f17b417c12d132f2f27dc3290ba14a9fcbe08b82189d4c2f82dc5f649f1d49bcbc726002306825847e994ecd3f2924e7468e285af7647825692a83fd995c749e536eff946451b3e253d706a9b848d7170761d06323",
+    );
+    crypto
+        .verify_signature(
+            SignatureScheme::EcdsaP384Sha256,
+            PublicKey {
+                encoding: PublicKeyEncoding::EcUncompressedPoint,
+                bytes: &p384_sha256_public_key,
+            },
+            message,
+            &p384_sha256_signature,
         )
         .unwrap();
 
