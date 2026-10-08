@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SettingEngine::ice_credentials` reads the configured ICE ufrag/password pair, and
+  `SettingEngine::set_ice_credentials` sets it on an already-assembled engine — the setter
+  twin of `SettingEngineBuilder::with_ice_credentials`. An async wrapper that pins a
+  connection's credentials (to demultiplex inbound STUN by the local ufrag on a shared UDP
+  socket, for instance) can now inject the pair after the engine is built and read it back.
 - `RTCCrypto::new_hmac` returns a keyed `Mac` whose key schedule is derived once, mirroring the
   existing keyed cipher factories. It replaces the removed one-shot `hmac`/`verify_hmac`.
 - **New `rtc-crypto` crate: a provider-neutral cryptographic API**
