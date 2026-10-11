@@ -1,6 +1,8 @@
 use crate::association::Association;
 use crate::association::state::AssociationState;
-use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
+use crate::chunk::chunk_payload_data::{
+    ChunkPayloadData, MessageReliability, PayloadProtocolIdentifier,
+};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
 use crate::{ErrorCauseCode, Event, Side};
 use shared::error::{Error, Result};
@@ -9,7 +11,7 @@ use crate::util::{ByteSlice, BytesArray, BytesChunk, BytesSource};
 use bytes::Bytes;
 use log::{debug, error, trace};
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Identifier for a stream within a particular association
 pub type StreamId = u16;
@@ -237,6 +239,7 @@ impl Stream<'_> {
             _ => {}
         };
 
+        let id = self.association.allocate_message_id()?;
         let (p, _) = source.pop_chunk(self.association.max_message_size() as usize);
 
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
@@ -251,7 +254,7 @@ impl Stream<'_> {
                     }))
             }
 
-            self.association.send_payload_data(chunks)?;
+            self.association.send_payload_data(id, chunks);
 
             Ok(p.len())
         } else {
@@ -448,6 +451,7 @@ pub struct StreamState {
     pub(crate) side: Side,
     pub(crate) max_payload_size: u32,
     pub(crate) stream_identifier: StreamId,
+    pub(crate) generation: u64,
     pub(crate) default_payload_type: PayloadProtocolIdentifier,
     pub(crate) reassembly_queue: ReassemblyQueue,
     pub(crate) sequence_number: u16,
@@ -469,6 +473,7 @@ impl StreamState {
         StreamState {
             side,
             stream_identifier,
+            generation: 0,
             max_payload_size,
             default_payload_type,
             reassembly_queue: ReassemblyQueue::new(stream_identifier),
@@ -521,11 +526,22 @@ impl StreamState {
         //   All Data Channel Establishment Protocol messages MUST be sent using
         //   ordered delivery and reliable transmission.
         let unordered = ppi != PayloadProtocolIdentifier::Dcep && self.unordered;
+        let reliability = if ppi == PayloadProtocolIdentifier::Dcep {
+            MessageReliability::Reliable
+        } else {
+            match self.reliability_type {
+                ReliabilityType::Reliable => MessageReliability::Reliable,
+                ReliabilityType::Rexmit => MessageReliability::Rexmit {
+                    max_retransmits: self.reliability_value,
+                },
+                ReliabilityType::Timed => MessageReliability::Timed {
+                    deadline: now + Duration::from_millis(self.reliability_value as u64),
+                },
+            }
+        };
 
         let mut chunks = vec![];
 
-        let head_abandoned = false;
-        let head_all_inflight = false;
         while remaining != 0 {
             let fragment_size = std::cmp::min(self.max_payload_size as usize, remaining); //self.association.max_payload_size
 
@@ -537,6 +553,8 @@ impl StreamState {
                 // Timed reliability measures a message's age from here, so that
                 // a long wait for cwnd or rwnd counts against maxPacketLifeTime.
                 created_at: Some(now),
+                reliability,
+                stream_generation: self.generation,
                 stream_identifier: self.stream_identifier,
                 user_data,
                 unordered,
@@ -545,8 +563,6 @@ impl StreamState {
                 immediate_sack: false,
                 payload_type: ppi,
                 stream_sequence_number: self.sequence_number,
-                abandoned: head_abandoned, // all fragmented chunks use the same abandoned
-                all_inflight: head_all_inflight, // all fragmented chunks use the same all_inflight
                 ..Default::default()
             };
 

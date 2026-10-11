@@ -89,6 +89,28 @@ impl<'a> DataChannelHandler<'a> {
         "DataChannelHandler"
     }
 
+    /// Fires `OnClose` for a channel that has been removed, and counts it as closed.
+    ///
+    /// The event names the channel by handle, as every application-facing event does; the
+    /// stream id was only how SCTP referred to it. A channel already closed by handshake timeout
+    /// has already fired `OnClose` and been counted, so it is not announced twice.
+    fn announce_closed(&mut self, now: Instant, dc: RTCDataChannelInternal) {
+        if dc.close_emitted {
+            return;
+        }
+        let channel_id = dc.id;
+        self.stats.peer_connection.on_data_channel_closed();
+        if let Some(dc_stats) = self.stats.data_channels.get_mut(&channel_id) {
+            dc_stats.on_state_changed(RTCDataChannelState::Closed);
+        }
+        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+            now,
+            event: RTCEventInternal::RTCPeerConnectionEvent(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnClose(channel_id),
+            )),
+        });
+    }
+
     /// Emit the `DataChannelEvent::Open` application message and record the
     /// corresponding peer-connection and per-channel statistics.
     ///
@@ -432,28 +454,20 @@ impl<'a>
 
             RTCEventInternal::SCTPStreamClosed(_association_handle, stream_id) => {
                 if let Some(dc) = self.data_channels.remove_by_stream(&stream_id) {
-                    // The event names the channel by handle, as every application-facing
-                    // event does; the stream id was only how SCTP referred to it.
-                    let channel_id = dc.id;
-                    // A channel already closed by handshake timeout has already fired OnClose
-                    // and been counted; do not emit or count it twice.
-                    if !dc.close_emitted {
-                        // Track data channel closed
-                        self.stats.peer_connection.on_data_channel_closed();
-                        if let Some(dc_stats) = self.stats.data_channels.get_mut(&channel_id) {
-                            dc_stats.on_state_changed(RTCDataChannelState::Closed);
-                        }
-
-                        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                            now,
-                            event: RTCEventInternal::RTCPeerConnectionEvent(
-                                RTCPeerConnectionEvent::OnDataChannel(
-                                    RTCDataChannelEvent::OnClose(channel_id),
-                                ),
-                            ),
-                        });
-                    }
+                    self.announce_closed(now, dc);
                 }
+            }
+
+            // The peer closed the DTLS transport, and with it the SCTP transport every channel
+            // runs over: every channel is closed now (rtc#255).
+            RTCEventInternal::DTLSClosed => {
+                for dc in self.data_channels.drain() {
+                    self.announce_closed(now, dc);
+                }
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::DTLSClosed,
+                });
             }
 
             RTCEventInternal::SCTPBufferReleased(_association_handle, stream_id, n_bytes) => {

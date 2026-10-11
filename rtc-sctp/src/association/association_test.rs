@@ -1,3 +1,4 @@
+use super::stream::ReliabilityType;
 use super::*;
 
 const ACCEPT_CH_SIZE: usize = 16;
@@ -707,3 +708,928 @@ fn many_small_chunks_bundle_within_mtu() {
         + raw_packets.len() * COMMON_HEADER_SIZE as usize;
     assert!(total >= min_expected);
 }
+
+fn timed_test_association() -> Association {
+    let mut a = create_association(TransportConfig::default());
+    a.control_queue.clear();
+    a.timers.stop(Timer::T1Init);
+    a.set_state(AssociationState::Established);
+    a.use_forward_tsn = true;
+    a.rwnd = 65536;
+    a.rto_mgr.set_rto(1000, true);
+    a
+}
+
+fn data_chunks(packets: &[Bytes]) -> usize {
+    packets
+        .iter()
+        .map(|raw| {
+            Packet::unmarshal(raw)
+                .unwrap()
+                .chunks
+                .iter()
+                .filter(|c| c.as_any().is::<ChunkPayloadData>())
+                .count()
+        })
+        .sum()
+}
+
+fn transmitted_data(packets: &[Bytes]) -> Vec<ChunkPayloadData> {
+    packets
+        .iter()
+        .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+        .filter_map(|c| c.as_any().downcast_ref::<ChunkPayloadData>().cloned())
+        .collect()
+}
+
+#[test]
+fn test_queued_message_keeps_its_original_reliability_policy() -> Result<()> {
+    use ReliabilityType::{Reliable, Rexmit, Timed};
+    for (original, value, replacement, ppi, forward_tsn, retransmit) in [
+        (
+            Reliable,
+            0,
+            Rexmit,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            true,
+        ),
+        (
+            Rexmit,
+            0,
+            Reliable,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            false,
+        ),
+        (
+            Rexmit,
+            2,
+            Rexmit,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            true,
+        ),
+        (
+            Timed,
+            100,
+            Reliable,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            false,
+        ),
+        (
+            Rexmit,
+            0,
+            Reliable,
+            PayloadProtocolIdentifier::Dcep,
+            true,
+            true,
+        ),
+        (
+            Rexmit,
+            0,
+            Reliable,
+            PayloadProtocolIdentifier::Binary,
+            false,
+            true,
+        ),
+    ] {
+        let mut a = timed_test_association();
+        a.use_forward_tsn = forward_tsn;
+        let now = Instant::now();
+        let mut stream = a.open_stream(1, ppi)?;
+        stream.set_reliability_params(false, original, value)?;
+        stream.write_sctp(now, &Bytes::from_static(b"queued"), ppi)?;
+        // Policy is captured at enqueue, before even the first transmission.
+        stream.set_reliability_params(false, replacement, 0)?;
+        assert_eq!(1, data_chunks(&a.gather_outbound(now).0));
+        let at = a.timers.get(Timer::T3RTX).unwrap();
+        a.handle_timeout(at);
+        assert_eq!(
+            usize::from(retransmit),
+            data_chunks(&a.gather_outbound(at).0),
+            "original={original:?} value={value} replacement={replacement:?} ppi={ppi:?} forward_tsn={forward_tsn}"
+        );
+        assert_eq!(
+            if retransmit { 6 } else { 0 },
+            a.stream(1)?.buffered_amount()?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_rexmit_one_waits_for_ack_of_first_retry() -> Result<()> {
+    let mut a = timed_test_association();
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    let mut s = a.open_stream(1, ppi)?;
+    s.set_reliability_params(false, ReliabilityType::Rexmit, 1)?;
+    s.write_sctp(now, &Bytes::from(vec![0x55; 2000]), ppi)?;
+    let initial = transmitted_data(&a.gather_outbound(now).0);
+    assert_eq!(2, initial.len());
+    let at = a.poll_timeout().unwrap();
+    a.handle_timeout(at);
+    let first_retry = transmitted_data(&a.gather_outbound(at).0);
+    assert_eq!(1, first_retry.len());
+    assert_eq!(initial[0].tsn, first_retry[0].tsn);
+    // The normal driver drains poll_transmit until None at the same instant.
+    let more = a.gather_outbound(at).0;
+    assert!(
+        a.inflight_queue
+            .get(initial[0].tsn)
+            .unwrap()
+            .is_outstanding(),
+        "a just-retried fragment must wait for ACK or a new loss indication; second drain emitted {more:?}"
+    );
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: initial[0].tsn,
+            advertised_receiver_window_credit: 65536,
+            ..Default::default()
+        },
+        at + Duration::from_millis(10),
+    )?;
+    // The tail may be emitted by either drain. In both cases each fragment
+    // gets its permitted retry and remains outstanding until the peer ACKs it.
+    let mut tail_retry = transmitted_data(&more);
+    tail_retry.extend(transmitted_data(
+        &a.gather_outbound(at + Duration::from_millis(10)).0,
+    ));
+    assert_eq!(1, tail_retry.len());
+    assert_eq!(initial[1].tsn, tail_retry[0].tsn);
+    assert!(
+        a.inflight_queue
+            .get(initial[1].tsn)
+            .unwrap()
+            .is_outstanding()
+    );
+    let mut receiver = timed_test_association();
+    receiver.peer_last_tsn = initial[0].tsn - 1;
+    for chunk in first_retry.iter().chain(tail_retry.iter()) {
+        receiver.handle_data(chunk)?;
+    }
+    assert_eq!(2000, receiver.stream(1)?.read_sctp()?.unwrap().len());
+    a.handle_sack(
+        &receiver.create_selective_ack_chunk(),
+        at + Duration::from_millis(20),
+    )?;
+    assert!(a.inflight_queue.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_fast_retry_does_not_abandon_unsent_fragment_tail_of_new_rexmit_zero() -> Result<()> {
+    for policy in [ReliabilityType::Rexmit, ReliabilityType::Timed] {
+        let mut a = timed_test_association();
+        let now = Instant::now();
+        let ppi = PayloadProtocolIdentifier::Binary;
+        a.open_stream(1, ppi)?
+            .write_sctp(now, &Bytes::from_static(b"lost reliable"), ppi)?;
+        let old = transmitted_data(&a.gather_outbound(now).0).remove(0);
+        // Three real gap ACK reports request a fast retransmission for stream 1.
+        for _ in 0..3 {
+            a.stream(1)?
+                .write_sctp(now, &Bytes::from_static(b"received"), ppi)?;
+        }
+        a.gather_outbound(now);
+        for end in 2..=4 {
+            a.handle_sack(
+                &ChunkSelectiveAck {
+                    cumulative_tsn_ack: old.tsn - 1,
+                    advertised_receiver_window_credit: 65536,
+                    gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                        start: 2,
+                        end,
+                    }],
+                    ..Default::default()
+                },
+                now,
+            )?;
+        }
+        assert!(a.will_retransmit_fast);
+        let mut fresh = a.open_stream(2, ppi)?;
+        fresh.set_reliability_params(false, policy, 0)?;
+        fresh.write_sctp(now, &Bytes::from(vec![0x33; 16000]), ppi)?;
+        let sent = a.gather_outbound(now).0;
+        assert!(
+            transmitted_data(&sent)
+                .iter()
+                .any(|c| c.stream_identifier == 1)
+        );
+        assert!(
+            transmitted_data(&sent)
+                .iter()
+                .any(|c| c.stream_identifier == 2)
+        );
+        assert!(
+            !a.pending_queue.is_empty(),
+            "an unrelated fast retry discarded never-sent fragments of fresh DATA"
+        );
+        assert_eq!(16000, a.stream(2)?.buffered_amount()?);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_timed_abandonment_preserves_t3_restart_for_outstanding_data() -> Result<()> {
+    for gap_ack in [false, true] {
+        let mut a = timed_test_association();
+        a.rto_mgr.set_rto(1000, false);
+        let now = Instant::now();
+        let first_tsn = a.my_next_tsn;
+        let ppi = PayloadProtocolIdentifier::Binary;
+        let mut stream = a.open_stream(1, ppi)?;
+        stream.set_reliability_params(false, ReliabilityType::Timed, 100)?;
+        stream.write_sctp(now, &Bytes::from_static(b"lost"), ppi)?;
+        let mut stream = a.open_stream(2, ppi)?;
+        for _ in 0..2 {
+            stream.write_sctp(now, &Bytes::from(vec![0; 1000]), ppi)?;
+        }
+        a.gather_outbound(now);
+        let timeout = a.poll_timeout().unwrap();
+        a.handle_timeout(timeout);
+        assert_eq!(1, data_chunks(&a.gather_outbound(timeout).0));
+        let at = timeout + Duration::from_millis(100);
+        let sack = ChunkSelectiveAck {
+            cumulative_tsn_ack: if gap_ack {
+                first_tsn - 1
+            } else {
+                first_tsn + 1
+            },
+            advertised_receiver_window_credit: 65536,
+            gap_ack_blocks: if gap_ack {
+                vec![crate::chunk::chunk_selective_ack::GapAckBlock { start: 2, end: 2 }]
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        };
+        a.handle_sack(&sack, at)?;
+        assert_eq!(Some(at + Duration::from_secs(2)), a.poll_timeout());
+        a.handle_sack(&sack, at + Duration::from_millis(100))?;
+        assert_eq!(
+            Some(at + Duration::from_secs(2)),
+            a.poll_timeout(),
+            "duplicate SACK must not restart T3"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_timed_retransmit_deadline_and_reliable_exemptions() -> Result<()> {
+    let lifetime = Duration::from_millis(100);
+    for (policy, ppi, forward_tsn, elapsed, retransmit) in [
+        (
+            ReliabilityType::Timed,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            lifetime - Duration::from_nanos(1),
+            true,
+        ),
+        (
+            ReliabilityType::Timed,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            lifetime,
+            false,
+        ),
+        (
+            ReliabilityType::Timed,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            Duration::from_millis(u32::MAX as u64 + 1),
+            false,
+        ),
+        (
+            ReliabilityType::Timed,
+            PayloadProtocolIdentifier::Dcep,
+            true,
+            lifetime,
+            true,
+        ),
+        (
+            ReliabilityType::Timed,
+            PayloadProtocolIdentifier::Binary,
+            false,
+            lifetime,
+            true,
+        ),
+        (
+            ReliabilityType::Reliable,
+            PayloadProtocolIdentifier::Binary,
+            true,
+            lifetime,
+            true,
+        ),
+    ] {
+        let mut a = timed_test_association();
+        a.use_forward_tsn = forward_tsn;
+        let now = Instant::now();
+        let mut stream = a.open_stream(1, ppi)?;
+        stream.set_reliability_params(true, policy, 100)?;
+        stream.write_sctp(now, &Bytes::from_static(b"test"), ppi)?;
+        assert_eq!(1, data_chunks(&a.gather_outbound(now).0));
+        a.inflight_queue.mark_all_to_retrasmit();
+        a.t3_retransmit_pending = true;
+        assert_eq!(
+            usize::from(retransmit),
+            data_chunks(&a.gather_outbound(now + elapsed).0)
+        );
+        assert_eq!(if retransmit { 4 } else { 0 }, a.buffered_amount());
+    }
+    Ok(())
+}
+
+#[test]
+fn test_timed_abandonment_covers_pending_tail_and_retries_forward_tsn() -> Result<()> {
+    for unordered in [false, true] {
+        for ack_prefix in [false, true] {
+            let mut a = timed_test_association();
+            a.cwnd = a.max_payload_size;
+            let now = Instant::now();
+            let first_tsn = a.my_next_tsn;
+            let ppi = PayloadProtocolIdentifier::Binary;
+            let mut stream = a.open_stream(1, ppi)?;
+            stream.set_reliability_params(unordered, ReliabilityType::Timed, 100)?;
+            stream.write_sctp(now, &Bytes::from(vec![0; 4000]), ppi)?;
+            assert_eq!(1, data_chunks(&a.gather_outbound(now).0));
+            assert!(!a.pending_queue.is_empty());
+            if ack_prefix {
+                a.handle_sack(
+                    &ChunkSelectiveAck {
+                        cumulative_tsn_ack: first_tsn,
+                        advertised_receiver_window_credit: 65536,
+                        ..Default::default()
+                    },
+                    now + Duration::from_millis(50),
+                )?;
+            }
+            let packets = a.gather_outbound(now + Duration::from_millis(100)).0;
+            assert_eq!(0, data_chunks(&packets));
+            assert!(!packets.is_empty());
+            assert!(a.pending_queue.is_empty());
+            assert_eq!(0, a.stream(1)?.buffered_amount()?);
+            assert_eq!(a.my_next_tsn - 1, a.advanced_peer_tsn_ack_point);
+            let fwd = a.create_forward_tsn();
+            assert_eq!(usize::from(!unordered), fwd.streams.len());
+            let released: usize = std::iter::from_fn(|| a.poll())
+                .filter_map(|event| {
+                    if let Event::Stream(StreamEvent::BufferedAmountReleased { n_bytes, .. }) =
+                        event
+                    {
+                        Some(n_bytes)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            assert_eq!(4000, released);
+
+            // Lose FORWARD TSN, including while waiting to shut down.
+            a.set_state(AssociationState::ShutdownPending);
+            let retry = a.poll_timeout().unwrap();
+            a.handle_timeout(retry);
+            assert_eq!(packets, a.gather_outbound(retry).0);
+            assert!(
+                a.poll().is_none(),
+                "abandoned bytes must not be released twice"
+            );
+            let cwnd = a.cwnd;
+            a.handle_sack(
+                &ChunkSelectiveAck {
+                    cumulative_tsn_ack: a.advanced_peer_tsn_ack_point,
+                    advertised_receiver_window_credit: 65536,
+                    ..Default::default()
+                },
+                retry,
+            )?;
+            assert!(a.inflight_queue.is_empty());
+            assert_eq!(cwnd, a.cwnd, "abandoned bytes must not grow cwnd");
+            assert!(a.poll().is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_timed_expiry_does_not_abandon_gap_acked_messages() -> Result<()> {
+    let mut a = timed_test_association();
+    let now = Instant::now();
+    let first_tsn = a.my_next_tsn;
+    let ppi = PayloadProtocolIdentifier::Binary;
+    let mut stream = a.open_stream(1, ppi)?;
+    stream.set_reliability_params(false, ReliabilityType::Timed, 100)?;
+    for _ in 0..2 {
+        stream.write_sctp(now, &Bytes::from_static(b"test"), ppi)?;
+    }
+    a.gather_outbound(now);
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: first_tsn - 1,
+            advertised_receiver_window_credit: 65536,
+            gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                start: 2,
+                end: 2,
+            }],
+            ..Default::default()
+        },
+        now + Duration::from_millis(50),
+    )?;
+    let timeout = a.poll_timeout().unwrap();
+    a.handle_timeout(timeout);
+    a.gather_outbound(timeout);
+    assert!(!a.inflight_queue.get(first_tsn + 1).unwrap().abandoned());
+    assert!(sna32lt(a.advanced_peer_tsn_ack_point, first_tsn + 1));
+    let streams = a.create_forward_tsn().streams;
+    assert!(streams.iter().all(|s| s.sequence != 1));
+    Ok(())
+}
+
+#[test]
+fn test_timed_abandonment_discards_gap_acked_fragments() -> Result<()> {
+    for unordered in [false, true] {
+        for (size, lost_fragment) in [(2000, 0), (2000, 1), (4000, 0), (4000, 1), (4000, 2)] {
+            let mut sender = timed_test_association();
+            let mut receiver = timed_test_association();
+            sender.cwnd = 65536;
+            receiver.ack_mode = AckMode::NoDelay;
+            receiver.peer_last_tsn = sender.my_next_tsn.wrapping_sub(1);
+            let receive_window = receiver.get_my_receiver_window_credit();
+            let now = Instant::now();
+            let ppi = PayloadProtocolIdentifier::Binary;
+            let mut stream = sender.open_stream(1, ppi)?;
+            stream.set_reliability_params(unordered, ReliabilityType::Timed, 100)?;
+            stream.write_sctp(now, &Bytes::from(vec![0x55; size]), ppi)?;
+            // A fully received message must survive even with the same SID,
+            // deadline and (for unordered DATA) SSN as the abandoned message.
+            let delivered = Bytes::from(vec![0x66; size]);
+            stream.write_sctp(now, &delivered, ppi)?;
+            receiver.open_stream(1, ppi)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            let data: Vec<ChunkPayloadData> = sender
+                .gather_outbound(now)
+                .0
+                .iter()
+                .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+                .filter_map(|c| c.as_any().downcast_ref::<ChunkPayloadData>().cloned())
+                .collect();
+            let fragments = size.div_ceil(sender.max_payload_size as usize);
+            assert_eq!(2 * fragments, data.len());
+            for (index, chunk) in data.iter().enumerate() {
+                if index != lost_fragment {
+                    receiver.handle_data(chunk)?;
+                }
+            }
+            sender.handle_sack(
+                &receiver.create_selective_ack_chunk(),
+                now + Duration::from_millis(10),
+            )?;
+            let at = sender.poll_timeout().unwrap();
+            sender.handle_timeout(at);
+            let packets = sender.gather_outbound(at).0;
+            assert_eq!(
+                0,
+                data_chunks(&packets),
+                "expired DATA must not be retransmitted"
+            );
+            for chunk in &data[fragments..] {
+                assert!(
+                    !sender.inflight_queue.get(chunk.tsn).unwrap().abandoned(),
+                    "a fully Gap-ACKed message must not be abandoned"
+                );
+            }
+            let forwards: Vec<ChunkForwardTsn> = packets
+                .iter()
+                .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+                .filter_map(|c| c.as_any().downcast_ref::<ChunkForwardTsn>().cloned())
+                .collect();
+            assert_eq!(1, forwards.len());
+            assert_eq!(data[fragments - 1].tsn, forwards[0].new_cumulative_tsn);
+            receiver.handle_forward_tsn(&forwards[0])?;
+            sender.handle_sack(&receiver.create_selective_ack_chunk(), at)?;
+            assert!(sender.inflight_queue.is_empty());
+            assert_eq!(0, sender.stream(1)?.buffered_amount()?);
+            let released: usize = std::iter::from_fn(|| sender.poll())
+                .filter_map(|event| {
+                    if let Event::Stream(StreamEvent::BufferedAmountReleased { n_bytes, .. }) =
+                        event
+                    {
+                        Some(n_bytes)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            assert_eq!(
+                2 * size,
+                released,
+                "Gap-ACKed bytes must not be released twice"
+            );
+            let queue = &receiver.streams.get(&1).unwrap().reassembly_queue;
+            assert_eq!(
+                size,
+                queue.get_num_bytes(),
+                "abandoned fragments still occupy rwnd: unordered={unordered}, size={size}, lost_fragment={lost_fragment}"
+            );
+            let chunks = receiver
+                .stream(1)?
+                .read_sctp()?
+                .expect("the complete message must remain readable");
+            let mut received = vec![0; size];
+            assert_eq!(size, chunks.read(&mut received)?);
+            assert_eq!(delivered.as_ref(), received.as_slice());
+            assert!(receiver.stream(1)?.read_sctp()?.is_none());
+            assert_eq!(receive_window, receiver.get_my_receiver_window_credit());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_late_real_data_acks_keep_t3_alive() -> Result<()> {
+    let mut sender = timed_test_association();
+    let mut receiver = timed_test_association();
+    sender.rto_mgr.set_rto(1000, false);
+    receiver.peer_last_tsn = sender.my_next_tsn - 1;
+    let ppi = PayloadProtocolIdentifier::Binary;
+    sender
+        .open_stream(1, ppi)?
+        .set_reliability_params(true, ReliabilityType::Timed, 100)?;
+    receiver.open_stream(1, ppi)?;
+    let deliver_new_data =
+        |sender: &mut Association, receiver: &mut Association, at: Instant| -> Result<()> {
+            sender
+                .stream(1)?
+                .write_sctp(at, &Bytes::from_static(b"actually received"), ppi)?;
+            let mut delivered = 0;
+            for raw in sender.gather_outbound(at).0 {
+                for c in Packet::unmarshal(&raw)?.chunks {
+                    if let Some(c) = c.as_any().downcast_ref::<ChunkPayloadData>() {
+                        receiver.handle_data(c)?;
+                        delivered += 1;
+                    }
+                }
+            }
+            assert_eq!(1, delivered);
+            assert!(receiver.stream(1)?.read_sctp()?.is_some());
+            Ok(())
+        };
+    deliver_new_data(&mut sender, &mut receiver, Instant::now())?;
+    for round in 1..=5 {
+        let at = sender.poll_timeout().unwrap();
+        let previous_ack = receiver.create_selective_ack_chunk();
+        sender.handle_timeout(at);
+        // Ignore the retransmission/FORWARD TSN: the peer already received this DATA.
+        sender.gather_outbound(at);
+        // A busy sender has the next message in flight when the old SACK arrives.
+        if round < 5 {
+            deliver_new_data(&mut sender, &mut receiver, at)?;
+        } else {
+            sender.open_stream(2, ppi)?.write_sctp(
+                at,
+                &Bytes::from_static(b"reliable, first send lost"),
+                ppi,
+            )?;
+            assert!(!sender.gather_outbound(at).0.is_empty());
+        }
+        sender.handle_sack(&previous_ack, at + Duration::from_millis(10))?;
+    }
+    let at = sender.poll_timeout().unwrap();
+    sender.handle_timeout(at);
+    let retried_reliable = sender
+        .gather_outbound(at)
+        .0
+        .iter()
+        .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+        .filter(|c| {
+            c.as_any()
+                .downcast_ref::<ChunkPayloadData>()
+                .is_some_and(|c| c.stream_identifier == 2)
+        })
+        .count();
+    assert_eq!(
+        1,
+        retried_reliable,
+        "T3 must retry the lost reliable DATA after five successful but late timed DATA ACKs; timer={:?}",
+        sender.poll_timeout()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_message_abandonment_is_idempotent_after_partial_and_late_acks() -> Result<()> {
+    for unordered in [false, true] {
+        let mut a = timed_test_association();
+        let now = Instant::now();
+        let ppi = PayloadProtocolIdentifier::Binary;
+        a.cwnd = 2 * a.max_payload_size + 1;
+        let cumulative_ack = a.my_next_tsn.wrapping_sub(1);
+        a.open_stream(2, ppi)?
+            .write_sctp(now, &Bytes::from_static(b"x"), ppi)?;
+        a.gather_outbound(now); // Leave a gap before the fragmented message.
+        let first = a.my_next_tsn;
+        let mut stream = a.open_stream(1, ppi)?;
+        stream.set_reliability_params(unordered, ReliabilityType::Timed, 100)?;
+        stream.write_sctp(now, &Bytes::from(vec![0; 4000]), ppi)?;
+        stream.write_sctp(now, &Bytes::from_static(b"next"), ppi)?;
+        assert_eq!(2, data_chunks(&a.gather_outbound(now).0));
+        let mut sack = ChunkSelectiveAck {
+            cumulative_tsn_ack: cumulative_ack,
+            advertised_receiver_window_credit: 65536,
+            gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                start: 2,
+                end: 2,
+            }],
+            ..Default::default()
+        };
+        a.handle_sack(&sack, now + Duration::from_millis(50))?;
+        while a.poll().is_some() {}
+        let at = now + Duration::from_millis(100);
+        let messages = a.unretransmittable_messages(at, ChunkPayloadData::is_outstanding)?;
+        assert_eq!(1, messages.len());
+        let message = messages[0];
+        assert!(a.abandon_message(message)?);
+        let released: usize = std::iter::from_fn(|| a.poll())
+            .filter_map(|event| {
+                if let Event::Stream(StreamEvent::BufferedAmountReleased { n_bytes, .. }) = event {
+                    Some(n_bytes)
+                } else {
+                    None
+                }
+            })
+            .sum();
+        assert_eq!(4000 - a.max_payload_size as usize, released);
+        assert!(!a.abandon_message(message)?);
+        assert!(
+            a.poll().is_none(),
+            "repeated abandonment must not release bytes twice"
+        );
+        assert_eq!(4, a.pending_queue.get_num_bytes());
+        assert_eq!(4, a.stream(1)?.buffered_amount()?);
+        assert_eq!(
+            Bytes::from_static(b"next"),
+            a.pending_queue.peek().unwrap().user_data
+        );
+        for offset in 0..3 {
+            let c = a.inflight_queue.get(first.wrapping_add(offset)).unwrap();
+            assert!(c.abandoned());
+            assert!(!c.is_outstanding());
+            assert!(c.user_data.is_empty());
+        }
+        assert!(!a.inflight_queue.get(first + 1).unwrap().acknowledged);
+        // A late real ACK changes receipt state, without reclaiming payload again.
+        sack.gap_ack_blocks[0].end = 3;
+        a.handle_sack(&sack, at)?;
+        a.handle_sack(&sack, at + Duration::from_millis(1))?;
+        assert!(a.inflight_queue.get(first + 1).unwrap().acknowledged);
+        assert!(!a.inflight_queue.get(first + 2).unwrap().acknowledged);
+        assert!(a.poll().is_none());
+        assert!(!a.abandon_message(message)?);
+        assert_eq!(4, a.stream(1)?.buffered_amount()?);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_repeated_pending_abandonment_preserves_the_next_message() -> Result<()> {
+    let mut a = timed_test_association();
+    let now = Instant::now();
+    let first_tsn = a.my_next_tsn;
+    let ppi = PayloadProtocolIdentifier::Binary;
+    let mut stream = a.open_stream(1, ppi)?;
+    stream.set_reliability_params(true, ReliabilityType::Timed, 100)?;
+    stream.write_sctp(now, &Bytes::from(vec![0; 4000]), ppi)?;
+    stream.write_sctp(now, &Bytes::from_static(b"next"), ppi)?;
+    let message = a.pending_message_to_abandon()?;
+    assert!(a.abandon_message(message)?);
+    assert!(!a.abandon_message(message)?);
+    a.on_messages_abandoned(now + Duration::from_millis(100));
+    assert_eq!(first_tsn, a.my_next_tsn);
+    assert!(a.inflight_queue.is_empty());
+    assert!(a.poll_timeout().is_none());
+    assert_eq!(4, a.stream(1)?.buffered_amount()?);
+    assert_eq!(
+        Bytes::from_static(b"next"),
+        a.pending_queue.peek().unwrap().user_data
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rexmit_budget_counts_fast_and_timer_retransmissions() -> Result<()> {
+    for max_retransmits in [0, 1, 2] {
+        for fast_first in [false, true] {
+            let mut a = timed_test_association();
+            let now = Instant::now();
+            let ppi = PayloadProtocolIdentifier::Binary;
+            let first_tsn = a.my_next_tsn;
+            let mut stream = a.open_stream(1, ppi)?;
+            stream.set_reliability_params(true, ReliabilityType::Rexmit, max_retransmits)?;
+            stream.write_sctp(now, &Bytes::from_static(b"lost"), ppi)?;
+            assert_eq!(1, data_chunks(&a.gather_outbound(now).0));
+            for attempt in 0..=max_retransmits {
+                let at = if fast_first && attempt == 0 {
+                    a.inflight_queue.get_mut(first_tsn).unwrap().miss_indicator = 3;
+                    a.will_retransmit_fast = true;
+                    now + Duration::from_millis(1)
+                } else {
+                    let at = a.timers.get(Timer::T3RTX).unwrap();
+                    a.handle_timeout(at);
+                    at
+                };
+                let packets = a.gather_outbound(at).0;
+                let retransmit = attempt < max_retransmits;
+                assert_eq!(
+                    usize::from(retransmit),
+                    data_chunks(&packets),
+                    "max_retransmits={max_retransmits} attempt={attempt} fast_first={fast_first}"
+                );
+                let chunk = a.inflight_queue.get(first_tsn).unwrap();
+                assert_eq!(!retransmit, chunk.abandoned());
+                assert_eq!(
+                    if retransmit { 4 } else { 0 },
+                    a.inflight_queue.get_num_bytes()
+                );
+                if !retransmit {
+                    assert!(packets.iter().any(|raw| {
+                        Packet::unmarshal(raw)
+                            .unwrap()
+                            .chunks
+                            .iter()
+                            .any(|c| c.as_any().is::<ChunkForwardTsn>())
+                    }));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_t3_recovers_with_acked_timed_zero_data() -> Result<()> {
+    for gap_ack in [false, true] {
+        let mut a = timed_test_association();
+        let mut receiver = timed_test_association();
+        receiver.peer_last_tsn = a.my_next_tsn.wrapping_sub(1);
+        receiver.ack_mode = AckMode::NoDelay;
+        a.rto_mgr.set_rto(1000, false);
+        let ppi = PayloadProtocolIdentifier::Binary;
+        a.open_stream(1, ppi)?
+            .set_reliability_params(true, ReliabilityType::Timed, 100)?;
+        a.open_stream(2, ppi)?
+            .set_reliability_params(true, ReliabilityType::Timed, 0)?;
+        receiver
+            .open_stream(2, ppi)?
+            .set_reliability_params(true, ReliabilityType::Timed, 0)?;
+        let mut now = Instant::now();
+        a.stream(1)?
+            .write_sctp(now, &Bytes::from_static(b"lost timed message"), ppi)?;
+        a.gather_outbound(now);
+        for round in 1..=8 {
+            now = a
+                .poll_timeout()
+                .expect("unacknowledged DATA needs a T3 timer");
+            a.handle_timeout(now);
+            let packets = a.gather_outbound(now).0;
+            assert_eq!(
+                0,
+                data_chunks(&packets),
+                "expired DATA must not be retransmitted"
+            );
+            let forwards: Vec<ChunkForwardTsn> = packets
+                .iter()
+                .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+                .filter_map(|c| c.as_any().downcast_ref::<ChunkForwardTsn>().cloned())
+                .collect();
+            assert!(
+                !forwards.is_empty(),
+                "round {round}, gap_ack={gap_ack}: T3 stopped producing FORWARD TSN despite peer progress"
+            );
+            if !gap_ack {
+                for forward in &forwards {
+                    receiver.handle_forward_tsn(forward)?;
+                }
+            }
+            // Deliver fresh Timed(0) DATA. Drop FORWARD TSN in the gap-ACK case
+            // so the actual DATA receipt must clear T3's error counter there too.
+            a.stream(2)?.write_sctp(
+                now,
+                &Bytes::from_static(b"delivered timed zero message"),
+                ppi,
+            )?;
+            for raw in a.gather_outbound(now).0 {
+                for c in Packet::unmarshal(&raw)?.chunks {
+                    if let Some(data) = c.as_any().downcast_ref::<ChunkPayloadData>() {
+                        receiver.handle_data(data)?;
+                    }
+                }
+            }
+            assert!(
+                receiver.stream(2)?.read_sctp()?.is_some(),
+                "fresh Timed(0) DATA reached the peer"
+            );
+            let sack = receiver.create_selective_ack_chunk();
+            if gap_ack {
+                assert!(!sack.gap_ack_blocks.is_empty());
+            } else {
+                assert_eq!(a.my_next_tsn.wrapping_sub(1), sack.cumulative_tsn_ack);
+            }
+            // Keep new traffic in flight when the preceding DATA is ACKed.
+            a.stream(1)?
+                .write_sctp(now, &Bytes::from_static(b"lost timed message"), ppi)?;
+            a.gather_outbound(now);
+            a.handle_sack(&sack, now + Duration::from_millis(10))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_timed_zero_fragment_loss_restores_receive_window() -> Result<()> {
+    let mut sender = timed_test_association();
+    let mut receiver = timed_test_association();
+    sender.cwnd = 1400;
+    receiver.peer_last_tsn = sender.my_next_tsn - 1;
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    sender
+        .open_stream(1, ppi)?
+        .set_reliability_params(true, ReliabilityType::Timed, 0)?;
+    receiver.open_stream(1, ppi)?;
+    sender
+        .stream(1)?
+        .write_sctp(now, &Bytes::from(vec![0x55; 4000]), ppi)?;
+    let lost = sender.gather_outbound(now).0;
+    assert_eq!(1, lost.len());
+    assert!(!sender.pending_queue.is_empty());
+    let at = sender.poll_timeout().unwrap();
+    sender.handle_timeout(at);
+    for _ in 0..10 {
+        let packets = sender.gather_outbound(at).0;
+        for raw in packets {
+            for c in Packet::unmarshal(&raw)?.chunks {
+                if let Some(c) = c.as_any().downcast_ref::<ChunkPayloadData>() {
+                    receiver.handle_data(c)?;
+                } else if let Some(c) = c.as_any().downcast_ref::<ChunkForwardTsn>() {
+                    receiver.handle_forward_tsn(c)?;
+                }
+            }
+        }
+        sender.handle_sack(&receiver.create_selective_ack_chunk(), at)?;
+        while receiver.stream(1)?.read_sctp()?.is_some() {}
+        if sender.pending_queue.is_empty() && sender.inflight_queue.is_empty() {
+            break;
+        }
+    }
+    assert!(sender.pending_queue.is_empty());
+    assert!(sender.inflight_queue.is_empty());
+    assert!(sender.poll_timeout().is_none());
+    assert_eq!(
+        0,
+        receiver
+            .streams
+            .get(&1)
+            .unwrap()
+            .reassembly_queue
+            .get_num_bytes(),
+        "abandoned Timed(0) message must not strand ACKed tail fragments in rwnd"
+    );
+    Ok(())
+}
+
+#[path = "timer_deadline_test.rs"]
+mod timer_deadline_test;
+
+#[path = "retransmission_review_test.rs"]
+mod retransmission_review_test;
+
+#[test]
+fn test_reconfig_backoff_must_double_once() -> Result<()> {
+    let mut a = timed_test_association();
+    a.rto_mgr.set_rto(1000, false);
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    let mut stream = a.open_stream(1, ppi)?;
+    stream.write_sctp(now, &Bytes::from_static(b"reliable data"), ppi)?;
+    stream.close(now)?;
+    a.gather_outbound(now);
+    let timeout = a.timers.get(Timer::Reconfig).unwrap();
+    assert_eq!(Some(timeout), a.timers.get(Timer::T3RTX));
+    a.handle_timeout(timeout);
+    a.gather_outbound(timeout);
+    assert_eq!(
+        Some(timeout + Duration::from_secs(2)),
+        a.timers.get(Timer::Reconfig),
+        "Reconfiguration timer must double its previous 1s interval, not back off twice"
+    );
+    Ok(())
+}
+
+#[path = "message_selection_test.rs"]
+mod message_selection_test;

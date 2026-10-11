@@ -214,4 +214,12 @@ impl DataChannelRegistry {
     pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut RTCDataChannelInternal> {
         self.channels.values_mut()
     }
+
+    /// Removes every channel, in handle order, freeing all stream ids.
+    pub(crate) fn drain(&mut self) -> Vec<RTCDataChannelInternal> {
+        self.by_stream.clear();
+        let mut channels: Vec<_> = self.channels.drain().map(|(_, channel)| channel).collect();
+        channels.sort_by_key(|channel| channel.id);
+        channels
+    }
 }

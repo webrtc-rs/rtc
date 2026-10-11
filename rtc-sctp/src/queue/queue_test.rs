@@ -144,7 +144,7 @@ fn test_payload_queue_mark_all_to_retrasmit() -> Result<()> {
     for i in 0..3 {
         pq.push(make_payload(i + 1, 10), 0);
     }
-    pq.mark_as_acked(2);
+    pq.acknowledge(2);
     pq.mark_all_to_retrasmit();
 
     let c = pq.get(1);
@@ -169,8 +169,8 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
     }
 
     pq.mark_all_to_retrasmit();
-    pq.mark_as_acked(2); // should cancel retransmission for TSN 2
-    pq.mark_as_acked(4); // should cancel retransmission for TSN 4
+    pq.acknowledge(2); // should cancel retransmission for TSN 2
+    pq.acknowledge(4); // should cancel retransmission for TSN 4
 
     let c = pq.get(1);
     assert!(c.is_some(), "should be true");
@@ -275,11 +275,11 @@ fn test_pending_base_queue_out_of_bounce() -> Result<()> {
 #[test]
 fn test_pending_queue_push_and_pop() -> Result<()> {
     let mut pq = PendingQueue::new();
-    pq.push(make_data_chunk(0, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(0, false, NO_FRAGMENT)]);
     assert_eq!(10, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(1, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(1, false, NO_FRAGMENT)]);
     assert_eq!(20, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(2, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(2, false, NO_FRAGMENT)]);
     assert_eq!(30, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 0..3 {
@@ -295,9 +295,9 @@ fn test_pending_queue_push_and_pop() -> Result<()> {
 
     assert_eq!(0, pq.get_num_bytes(), "total bytes mismatch");
 
-    pq.push(make_data_chunk(3, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(3, false, NO_FRAGMENT)]);
     assert_eq!(10, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(4, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(4, false, NO_FRAGMENT)]);
     assert_eq!(20, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 3..5 {
@@ -320,13 +320,13 @@ fn test_pending_queue_push_and_pop() -> Result<()> {
 fn test_pending_queue_unordered_wins() -> Result<()> {
     let mut pq = PendingQueue::new();
 
-    pq.push(make_data_chunk(0, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(0, false, NO_FRAGMENT)]);
     assert_eq!(10, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(1, true, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(1, true, NO_FRAGMENT)]);
     assert_eq!(20, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(2, false, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(2, false, NO_FRAGMENT)]);
     assert_eq!(30, pq.get_num_bytes(), "total bytes mismatch");
-    pq.push(make_data_chunk(3, true, NO_FRAGMENT));
+    pq.push_message(vec![make_data_chunk(3, true, NO_FRAGMENT)]);
     assert_eq!(40, pq.get_num_bytes(), "total bytes mismatch");
 
     let c = pq.peek();
@@ -369,12 +369,16 @@ fn test_pending_queue_unordered_wins() -> Result<()> {
 #[test]
 fn test_pending_queue_fragments() -> Result<()> {
     let mut pq = PendingQueue::new();
-    pq.push(make_data_chunk(0, false, FRAG_BEGIN));
-    pq.push(make_data_chunk(1, false, FRAG_MIDDLE));
-    pq.push(make_data_chunk(2, false, FRAG_END));
-    pq.push(make_data_chunk(3, true, FRAG_BEGIN));
-    pq.push(make_data_chunk(4, true, FRAG_MIDDLE));
-    pq.push(make_data_chunk(5, true, FRAG_END));
+    pq.push_message(vec![
+        make_data_chunk(0, false, FRAG_BEGIN),
+        make_data_chunk(1, false, FRAG_MIDDLE),
+        make_data_chunk(2, false, FRAG_END),
+    ]);
+    pq.push_message(vec![
+        make_data_chunk(3, true, FRAG_BEGIN),
+        make_data_chunk(4, true, FRAG_MIDDLE),
+        make_data_chunk(5, true, FRAG_END),
+    ]);
 
     let expects = vec![3, 4, 5, 0, 1, 2];
 
@@ -396,7 +400,11 @@ fn test_pending_queue_fragments() -> Result<()> {
 #[test]
 fn test_pending_queue_selection_persistence() -> Result<()> {
     let mut pq = PendingQueue::new();
-    pq.push(make_data_chunk(0, false, FRAG_BEGIN));
+    pq.push_message(vec![
+        make_data_chunk(0, false, FRAG_BEGIN),
+        make_data_chunk(2, false, FRAG_MIDDLE),
+        make_data_chunk(3, false, FRAG_END),
+    ]);
 
     let c = pq.peek();
     assert!(c.is_some(), "peek error");
@@ -406,9 +414,7 @@ fn test_pending_queue_selection_persistence() -> Result<()> {
     let result = pq.pop(beginning_fragment, unordered);
     assert!(result.is_some(), "should not error: {}", 0);
 
-    pq.push(make_data_chunk(1, true, NO_FRAGMENT));
-    pq.push(make_data_chunk(2, false, FRAG_MIDDLE));
-    pq.push(make_data_chunk(3, false, FRAG_END));
+    pq.push_message(vec![make_data_chunk(1, true, NO_FRAGMENT)]);
 
     let expects = vec![2, 3, 1];
 
@@ -1137,4 +1143,32 @@ fn test_reassembly_queue_ssn_overflow_in_forward_tsn_for_ordered() -> Result<()>
     rq.forward_tsn_for_ordered(u16::MAX);
 
     Ok(())
+}
+
+#[test]
+fn test_message_index_survives_cumulative_prefix_and_tsn_wrap() {
+    use crate::chunk::chunk_payload_data::{MessageId, MessageReliability};
+    let mut queue = PayloadQueue::new();
+    for (tsn, id, beginning, ending) in [
+        (0, 11, false, true),
+        (u32::MAX, 11, true, false),
+        // A lone remaining tail still belongs to a fragmented message.
+        (1, 12, false, true),
+    ] {
+        let mut chunk = make_payload(tsn, 10);
+        chunk.message_id = MessageId::new(id);
+        chunk.reliability = MessageReliability::Rexmit { max_retransmits: 1 };
+        chunk.beginning_fragment = beginning;
+        chunk.ending_fragment = ending;
+        queue.push_no_check(chunk);
+    }
+    assert_eq!(
+        vec![u32::MAX, 0],
+        queue.message_tsns(MessageId::new(11).unwrap())
+    );
+    queue.pop(u32::MAX).unwrap();
+    assert_eq!(vec![0], queue.message_tsns(MessageId::new(11).unwrap()));
+    queue.pop(0).unwrap();
+    assert!(queue.message_tsns(MessageId::new(11).unwrap()).is_empty());
+    assert_eq!(vec![1], queue.message_tsns(MessageId::new(12).unwrap()));
 }
