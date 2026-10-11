@@ -429,13 +429,7 @@ impl SettingEngine {
     /// The ICE credentials configured on this engine.
     ///
     /// Both empty (the default) means every peer connection generates fresh random
-    /// credentials when its ICE agent is created; anything else is used verbatim —
-    /// initially and again on every ICE restart, which passes these back to
-    /// [`Agent::generate_restart_credentials`](crate::ice::agent::Agent::generate_restart_credentials).
-    ///
-    /// A layer that pins a connection's credentials — an async wrapper routing inbound
-    /// packets to connections by the local ufrag before SDP has been exchanged, the way a
-    /// UDP multiplexer's reader does — reads the pinned pair back from here.
+    /// credentials when its ICE agent is created.
     pub fn ice_credentials(&self) -> (&str, &str) {
         (
             self.candidates.username_fragment.as_str(),
@@ -443,19 +437,8 @@ impl SettingEngine {
         )
     }
 
-    /// Sets static ICE credentials on an already-assembled engine — the setter twin of
-    /// [`SettingEngineBuilder::with_ice_credentials`], for callers that only learn the
-    /// credentials after the engine is built.
-    ///
-    /// The pair is validated when the ICE agent is created
-    /// ([`Agent::generate_restart_credentials`](crate::ice::agent::Agent::generate_restart_credentials)
-    /// requires at least 24 bits of ufrag and 128 bits of password entropy); an
-    /// undersized pair fails peer-connection construction, not this setter.
-    ///
-    /// # Security Note
-    ///
-    /// Only use static credentials in controlled environments. Random credentials
-    /// provide better security for production deployments.
+    /// Set ICE credentials on this engine.
+    #[doc(hidden)]
     pub fn set_ice_credentials(&mut self, username_fragment: String, password: String) {
         self.candidates.username_fragment = username_fragment;
         self.candidates.password = password;
