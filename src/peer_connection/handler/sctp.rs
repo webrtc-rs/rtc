@@ -9,8 +9,8 @@ use datachannel::message::Message;
 use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
-    Association, AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent,
-    Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
+    Association, AssociationError, AssociationEvent, AssociationHandle, ClientConfig,
+    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -33,6 +33,9 @@ pub(crate) struct SctpHandlerContext {
     // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
     // cost. `now` carries the newest timestamp seen into that flush.
     flush_dirty: bool,
+
+    /// Set by [`SctpHandler::request_abort`]: abort every association at the next `poll_write`.
+    abort_requested: bool,
 
     /// Streams left with unread data because the pipeline backlog was over its bound.
     ///
@@ -77,6 +80,7 @@ impl SctpHandlerContext {
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             flush_dirty: false,
+            abort_requested: false,
             pending_readable: HashSet::new(),
             association_transport: HashMap::new(),
             now,
@@ -258,6 +262,29 @@ impl<'a> SctpHandler<'a> {
 
     pub(crate) fn name(&self) -> &'static str {
         "SctpHandler"
+    }
+
+    /// Asks for every association to be aborted (W3C `close()`: "tear down the underlying SCTP
+    /// association by sending an SCTP ABORT chunk").
+    ///
+    /// Done at this handler's next `poll_write`, not here, so the data still pending in the
+    /// associations goes out first: [`Association::abort`] would discard it.
+    pub(crate) fn request_abort(&mut self) {
+        self.ctx.abort_requested = true;
+    }
+
+    /// Aborts every association and queues the ABORTs. The local data channels are closed
+    /// abruptly, without their closing procedure (W3C `close()`), so the stream losses the aborts
+    /// report are dropped rather than surfaced as `OnClose`.
+    fn abort_associations(&mut self) {
+        for association in self.ctx.sctp_transport.sctp_associations.values_mut() {
+            if let Err(err) = association.abort() {
+                warn!("failed to abort sctp association: {}", err);
+            }
+            while association.poll().is_some() {}
+        }
+        self.ctx.pending_readable.clear();
+        self.flush_transmits(self.ctx.now);
     }
 
     /// Batch-drain flush: gather every association's pending outbound in one pass
@@ -653,9 +680,13 @@ impl<'a>
     fn poll_write(&mut self) -> Option<Self::Wout> {
         // Batch-drain: run the single deferred transmit flush for this event-loop
         // iteration before serving queued outbound.
-        if self.ctx.flush_dirty {
+        if self.ctx.flush_dirty || self.ctx.abort_requested {
             self.ctx.flush_dirty = false;
             self.flush_transmits(self.ctx.now);
+        }
+        // After the flush above, so data the associations still held is sent before the ABORT.
+        if std::mem::take(&mut self.ctx.abort_requested) {
+            self.abort_associations();
         }
         self.ctx.write_outs.pop_front()
     }
@@ -699,6 +730,19 @@ impl<'a>
                 // deferred flush is now the only transmit path).
                 self.ctx.flush_dirty = true;
             }
+        }
+
+        // The peer closed the DTLS transport the associations run over, so they are over too.
+        // Nothing is sent: there is no transport left to send it on. The data channel handler,
+        // next in line for this event, closes the channels themselves.
+        if matches!(&evt.event, RTCEventInternal::DTLSClosed) {
+            debug!("sctp closing associations: dtls closed by peer");
+            for association in self.ctx.sctp_transport.sctp_associations.values_mut() {
+                if let Err(err) = association.close(AssociationError::ApplicationClosed) {
+                    warn!("failed to close sctp association: {}", err);
+                }
+            }
+            self.ctx.pending_readable.clear();
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -1632,6 +1676,61 @@ mod tests {
             "the final SHUTDOWN must be flushed before removal, not dropped \
              (flushed chunk types: {flushed:?})"
         );
+    }
+
+    const CT_ABORT: u8 = 6;
+
+    // `close()` asks for an abort (W3C close(): "tear down the underlying SCTP association by
+    // sending an SCTP ABORT chunk"). The data still queued must go out before the ABORT, which
+    // would otherwise discard it, and the stream losses the abort reports must not stay queued
+    // for a later read to surface as OnClose: the local channels close without their closing
+    // procedure.
+    #[test]
+    fn abort_sends_pending_data_then_abort_and_drops_local_events() {
+        let now = Instant::now();
+        let e = establish();
+        let mut client_conn = e.client_conn;
+        client_conn
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .and_then(|mut s| {
+                s.write_chunk_with_ppi(
+                    now,
+                    &Bytes::from_static(b"last words"),
+                    PayloadProtocolIdentifier::Binary,
+                )
+            })
+            .expect("queue DATA");
+
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
+        let mut sent = vec![];
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            handler.request_abort();
+            while let Some(msg) = handler.poll_write() {
+                sent.push(msg);
+            }
+        }
+        let types: Vec<u8> = sent
+            .iter()
+            .filter_map(|m| match &m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::Raw(raw)) if raw.len() > 12 => Some(raw[12]),
+                _ => None,
+            })
+            .collect();
+        let data = types.iter().position(|t| *t == CT_PAYLOAD_DATA);
+        let abort = types.iter().position(|t| *t == CT_ABORT);
+        assert!(
+            matches!((data, abort), (Some(d), Some(a)) if d < a),
+            "the pending DATA must be sent, then the ABORT (chunk types: {types:?})"
+        );
+
+        for association in ctx.sctp_transport.sctp_associations.values_mut() {
+            assert!(association.is_closed(), "the association is closed");
+            assert!(
+                association.poll().is_none(),
+                "the abort's stream losses must not stay queued"
+            );
+        }
     }
 
     // handle_read teardown-safety block (+ the SctpMessage::Outbound arm): when the

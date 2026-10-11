@@ -27,6 +27,10 @@ pub(crate) struct DtlsHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
+
+    /// Set by [`DtlsHandler::request_close`]: queue a `close_notify`, stamped with this instant,
+    /// at the next `poll_write`.
+    pub(crate) close_requested: Option<Instant>,
 }
 
 impl DtlsHandlerContext {
@@ -36,6 +40,7 @@ impl DtlsHandlerContext {
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            close_requested: None,
         }
     }
 }
@@ -47,6 +52,38 @@ pub(crate) struct DtlsHandler<'a> {
 }
 
 impl<'a> DtlsHandler<'a> {
+    /// Asks for a `close_notify` alert (RFC 5246 §7.2.1) to be sent to the peer, so that closing
+    /// the connection tells the peer at once instead of leaving it to notice by timeout
+    /// (rtc#255).
+    ///
+    /// The alert is queued at this handler's next `poll_write`, not here. In a pipeline flush that
+    /// is after this handler has taken the writes still coming down from above, so they are
+    /// encrypted while the connection exists and go out before the alert, and before the ICE
+    /// handler routes them all.
+    pub(crate) fn request_close(&mut self, now: Instant) {
+        self.ctx.close_requested = Some(now);
+    }
+
+    /// Queues the `close_notify` for every connection and closes the endpoint. A no-op before
+    /// DTLS has started or once the transport is closed.
+    fn queue_close_notify(&mut self, now: Instant) -> Result<()> {
+        if self.ctx.dtls_transport.state == RTCDtlsTransportState::Closed {
+            return Ok(());
+        }
+        let Some(dtls_endpoint) = self.ctx.dtls_transport.dtls_endpoint.as_mut() else {
+            return Ok(());
+        };
+        dtls_endpoint.close(now)?;
+        while let Some(transmit) = dtls_endpoint.poll_transmit() {
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                now: transmit.now,
+                transport: transmit.transport,
+                message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn new(ctx: &'a mut DtlsHandlerContext, stats: &'a mut RTCStatsAccumulator) -> Self {
         DtlsHandler { ctx, stats }
     }
@@ -166,7 +203,19 @@ impl<'a>
         if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
+            // Once the transport is closed, by either side, nothing more is exchanged on it. A
+            // late datagram (the peer's close_notify reply, say) must not reach an endpoint whose
+            // connection is gone, where a server would take it for a new handshake.
+            if self.ctx.dtls_transport.state == RTCDtlsTransportState::Closed {
+                debug!(
+                    "drop dtls datagram from {:?} on a closed transport",
+                    msg.transport.peer_addr
+                );
+                return Ok(());
+            }
+
             let mut messages = vec![];
+            let mut peer_closed = false;
             let mut srtp_contexts = None;
             let mut srtp_profile_for_stats: Option<SrtpProtectionProfile> = None;
             let mut peer_certificates_for_stats: Vec<Vec<u8>> = vec![];
@@ -219,6 +268,10 @@ impl<'a>
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
                         messages.push(message);
                     }
+                    EndpointEvent::PeerClosed => {
+                        debug!("dtls closed by peer {:?}", msg.transport.peer_addr);
+                        peer_closed = true;
+                    }
                     _ => {}
                 }
             }
@@ -262,6 +315,19 @@ impl<'a>
                     message: RTCMessageInternal::Dtls(DTLSMessage::Raw(message)),
                 });
             }
+
+            // The peer closed the transport (close_notify). Its reply is already queued above.
+            // The SCTP association and every data channel run over this transport, so they end
+            // with it (rtc#255).
+            if peer_closed {
+                self.ctx
+                    .dtls_transport
+                    .state_change(RTCDtlsTransportState::Closed);
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now: msg.now,
+                    event: RTCEventInternal::DTLSClosed,
+                });
+            }
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);
@@ -302,6 +368,11 @@ impl<'a>
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        if let Some(now) = self.ctx.close_requested.take()
+            && let Err(err) = self.queue_close_notify(now)
+        {
+            warn!("failed to queue dtls close_notify: {}", err);
+        }
         self.ctx.write_outs.pop_front()
     }
 

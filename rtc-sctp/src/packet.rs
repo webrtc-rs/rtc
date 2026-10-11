@@ -97,6 +97,9 @@ impl PartialDecode {
         let mut cookie = None;
         match header.typ {
             CT_INIT | CT_INIT_ACK => {
+                if header.value_length() < 4 {
+                    return Err(Error::ErrChunkValueNotLongEnough);
+                }
                 initiate_tag = Some(reader.get_u32());
             }
             CT_COOKIE_ECHO => {
@@ -582,6 +585,17 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_partial_decode_truncated_init() {
+        // INIT chunk header with length 4: no room for the initiate tag.
+        let mut raw = vec![
+            0x13, 0x88, 0x13, 0x88, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0, 0, 4,
+        ];
+        let checksum = generate_packet_checksum(&Bytes::from(raw.clone()));
+        raw[8..12].copy_from_slice(&checksum.to_le_bytes());
+        assert!(PartialDecode::unmarshal(&Bytes::from(raw)).is_err());
     }
 
     #[test]

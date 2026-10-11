@@ -566,6 +566,12 @@ pub(crate) enum RTCEventInternal {
         Option<Context>, /*remote_srtp_context*/
     ),
 
+    /// The peer closed the DTLS transport with a `close_notify` alert.
+    ///
+    /// Everything that runs over it ends with it: the SCTP handler closes its associations and
+    /// the data channel handler closes every data channel.
+    DTLSClosed,
+
     /// SCTP handshake completed successfully
     ///
     /// Parameter: Association handle

@@ -1808,61 +1808,72 @@ fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() ->
     Ok(())
 }
 
-/// Documents a limitation rather than a fix. `all_inflight`, and therefore
-/// `abandoned`, is set on the ending fragment alone, so a fragmented message cannot be
-/// abandoned as a unit the way RFC 3758 Sec 3.5 A3 requires. Acting on the ending
-/// fragment by itself would be worse than doing nothing: `mark_all_to_retrasmit` would
-/// drop that one fragment, the earlier ones would still be sent, and the peer could
-/// never reassemble -- the same bytes on the wire and nothing delivered.
-///
-/// So a fragmented message keeps the behaviour it had before this change: retransmitted
-/// after its lifetime and delivered late. This test pins that, so the hole stays visible
-/// and cannot quietly turn into orphaned fragments.
 #[test]
-fn test_assoc_timed_reliability_leaves_fragmented_messages_alone() -> Result<()> {
-    let si: u16 = 20;
-    let lifetime_ms: u32 = 100;
-    // Comfortably over max_payload_size_for_mtu(INITIAL_MTU), so this fragments.
-    let big = Bytes::from(vec![0x5Au8; 3000]);
+fn test_assoc_timed_reliability_stops_retransmission() -> Result<()> {
+    for unordered in [false, true] {
+        for size in [32, 2000, 12000] {
+            let si = 9;
+            let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+            establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+            pair.client_stream(client_ch, si)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            pair.server_stream(server_ch, si)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            let now = pair.time;
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &Bytes::from(vec![0x55; size]),
+                PayloadProtocolIdentifier::Binary,
+            )?;
+            pair.drive_client();
+            assert!(!pair.server.inbound.is_empty());
+            pair.server.inbound.clear(); // Lose the first transmission.
+            pair.server_conn_mut(server_ch).stats.reset();
 
-    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
-    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
-    pair.client_stream(client_ch, si)?.set_reliability_params(
-        false,
-        ReliabilityType::Timed,
-        lifetime_ms,
-    )?;
-    pair.server_stream(server_ch, si)?.set_reliability_params(
-        false,
-        ReliabilityType::Timed,
-        lifetime_ms,
-    )?;
+            pair.time += Duration::from_millis(500);
+            pair.drive_client();
+            pair.time += Duration::from_millis(1500);
+            pair.drive_client();
+            let mut forwards = 0;
+            for (_, _, raw) in &pair.server.inbound {
+                for c in Packet::unmarshal(raw)?.chunks {
+                    assert!(
+                        !c.as_any().is::<ChunkPayloadData>(),
+                        "expired DATA was retransmitted: unordered={unordered}, size={size}"
+                    );
+                    forwards += usize::from(c.as_any().is::<ChunkForwardTsn>());
+                }
+            }
+            assert!(
+                forwards > 0,
+                "the receiver must be able to skip the message"
+            );
+            pair.drive_server();
+            pair.drive_client();
+            assert_eq!(0, pair.server_conn_mut(server_ch).stats.get_num_datas());
+            assert_eq!(0, pair.client_stream(client_ch, si)?.buffered_amount()?);
+            assert!(pair.client_conn_mut(client_ch).is_idle());
 
-    let now = pair.time;
-    pair.client_stream(client_ch, si)?
-        .write_sctp(now, &big, PayloadProtocolIdentifier::Binary)?;
-    pair.drive_client();
-    pair.server.inbound.clear(); // every fragment is lost
-
-    // Well past the lifetime, and past T3.
-    pair.time += Duration::from_millis(1500);
-    pair.drive_client();
-    pair.drive_server();
-
-    let mut buf = vec![0u8; 8000];
-    let mut delivered = 0usize;
-    while let Some(chunks) = pair.server_stream(server_ch, si)?.read_sctp()? {
-        delivered += chunks.len();
-        chunks.read(&mut buf)?;
+            let now = pair.time;
+            let next = Bytes::from_static(b"still useful");
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &next,
+                PayloadProtocolIdentifier::Binary,
+            )?;
+            pair.drive();
+            let received = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+            let mut buf = vec![0; received.len()];
+            received.read(&mut buf)?;
+            assert_eq!(next.as_ref(), buf);
+        }
     }
-
-    assert_eq!(
-        big.len(),
-        delivered,
-        "a fragmented message must still arrive whole; abandoning only its ending \
-         fragment would put the other fragments on the wire and deliver nothing"
-    );
-
     Ok(())
 }
 
@@ -3728,5 +3739,37 @@ fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> 
         pair.server_conn_mut(server_ch).stream(si).is_err(),
         "once drained, the deferred reset must be performed"
     );
+    Ok(())
+}
+
+/// `abort()` ends the association at once (RFC 9260 §9.1): the local side is closed, and the ABORT
+/// it sends carries a "User-Initiated Abort" cause, so the peer closes its side too instead of
+/// treating the chunk as an error. Each stream reports the loss, which is what closes data
+/// channels above.
+#[test]
+fn test_abort_closes_both_sides() -> Result<()> {
+    let si: u16 = 1;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    while pair.server_conn_mut(server_ch).poll().is_some() {}
+
+    pair.client_conn_mut(client_ch).abort()?;
+    assert!(pair.client_conn_mut(client_ch).is_closed());
+
+    pair.drive_client();
+    pair.drive_server();
+
+    let server = pair.server_conn_mut(server_ch);
+    assert!(server.is_closed(), "the peer closes on the ABORT");
+    let mut lost = vec![];
+    while let Some(event) = server.poll() {
+        if let Event::AssociationLost { reason, id } = event {
+            lost.push((reason, id));
+        }
+    }
+    assert_eq!(vec![(AssociationError::Reset, si)], lost);
+
+    // Idempotent: the association is already closed.
+    pair.client_conn_mut(client_ch).abort()?;
     Ok(())
 }

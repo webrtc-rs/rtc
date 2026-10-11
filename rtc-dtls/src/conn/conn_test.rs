@@ -2670,3 +2670,39 @@ fn test_handshake_rx_set_after_queue_processing() {
         "After fix: handshake_rx must be set when a queued packet yields hs=true"
     );
 }
+
+/// RFC 6347 4.1: "Until the handshake has completed, implementations MUST accept packets from the
+/// old epoch." Between the peer's ChangeCipherSpec (remote_epoch already 1) and the end of the
+/// handshake, a plaintext epoch-0 alert is still honoured; only once the handshake has completed
+/// is it discarded.
+#[test]
+fn test_old_epoch_alert_honoured_until_handshake_completes() {
+    let fatal_alert: Vec<u8> = vec![
+        0x15, // content_type: Alert
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x00, // epoch: 0
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x05, // sequence_number: 5
+        0x00, 0x02, // content_len: 2
+        0x02, 0x28, // fatal handshake_failure
+    ];
+
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    conn.state.remote_epoch = 1; // ChangeCipherSpec has been processed
+    assert!(!conn.is_handshake_completed());
+    assert!(
+        matches!(conn.read(&fatal_alert), Err(Error::ErrAlertFatalOrClose)),
+        "an old-epoch alert must be accepted until the handshake completes"
+    );
+
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    conn.state.remote_epoch = 1;
+    conn.set_handshake_completed();
+    assert!(
+        conn.read(&fatal_alert).is_ok(),
+        "an old-epoch alert must be discarded once the handshake has completed"
+    );
+    assert!(
+        conn.outgoing_packets.is_empty(),
+        "a discarded alert was answered"
+    );
+}

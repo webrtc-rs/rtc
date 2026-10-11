@@ -297,8 +297,9 @@ impl RTCDataChannel<'_> {
     /// The condition mirrors what `DataChannelHandler::handle_write` requires: the channel
     /// must be registered *and* its SCTP stream established. Checking it here, synchronously,
     /// is what makes the failure visible — the handler runs later, on the pipeline's write
-    /// pass, where an `Err` is only logged and cannot reach the caller.
-    fn ensure_sendable(&self) -> Result<()> {
+    /// pass, where an `Err` is only logged and cannot reach the caller. The same holds for
+    /// `SctpHandler::handle_write`'s max-message-size check.
+    fn ensure_sendable(&self, data_len: usize) -> Result<()> {
         let dc = self
             .peer_connection
             .data_channels
@@ -312,6 +313,13 @@ impl RTCDataChannel<'_> {
             } else {
                 Error::ErrDataChannelClosed
             });
+        }
+
+        // W3C `send()`: data larger than `maxMessageSize` throws.
+        if let Some(max_message_size) = self.peer_connection.sctp_transport().max_message_size()
+            && data_len > max_message_size as usize
+        {
+            return Err(Error::ErrOutboundPacketTooLarge);
         }
 
         Ok(())
@@ -329,12 +337,14 @@ impl RTCDataChannel<'_> {
     /// - [`Error::ErrDataChannelNotOpen`] if the channel's SCTP stream has not been established
     ///   yet — wait for the channel's open event before sending.
     /// - [`Error::ErrDataChannelClosed`] once the channel is gone.
+    /// - [`Error::ErrOutboundPacketTooLarge`] if `data` is larger than the negotiated
+    ///   [`max_message_size`](crate::peer_connection::transport::RTCSctpTransport::max_message_size).
     ///
     /// The check is made here, synchronously, rather than deeper in the pipeline where an error
     /// could only be logged. A rejected send never charges [`Self::outstanding_bytes`].
     pub fn send(&mut self, now: Instant, data: BytesMut) -> Result<()> {
-        self.ensure_sendable()?;
         let data_len = data.len();
+        self.ensure_sendable(data_len)?;
         self.peer_connection.handle_write(TaggedRTCMessage {
             now,
             message: RTCMessage::DataChannelMessage(
@@ -360,8 +370,9 @@ impl RTCDataChannel<'_> {
     ///
     /// Identical to [`Self::send`].
     pub fn send_text(&mut self, now: Instant, s: impl Into<String>) -> Result<()> {
-        self.ensure_sendable()?;
-        let data = BytesMut::from(s.into().as_str());
+        let s = s.into();
+        self.ensure_sendable(s.len())?;
+        let data = BytesMut::from(s.as_str());
         let data_len = data.len();
         self.peer_connection.handle_write(TaggedRTCMessage {
             now,

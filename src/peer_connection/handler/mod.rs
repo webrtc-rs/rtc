@@ -130,6 +130,18 @@ pub(crate) struct PipelineContext {
 
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
+
+    /// The newest instant the pipeline has been given, through a datagram, a write or a timeout.
+    ///
+    /// `close()` takes no time of its own, and this crate reads no clock, so the `close_notify`
+    /// it sends is stamped with this.
+    pub(crate) now: Instant,
+}
+
+impl PipelineContext {
+    fn observe(&mut self, now: Instant) {
+        self.now = self.now.max(now);
+    }
 }
 
 impl RTCPeerConnection {
@@ -241,23 +253,45 @@ impl RTCPeerConnection {
             &mut self.pipeline_context.stats,
         )
     }
-}
 
-impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedBytesMut;
-    type Eout = RTCPeerConnectionEvent;
-    type Error = Error;
-    type Time = Instant;
+    /// Runs every handler's pending writes down the pipeline into `write_outs`, where
+    /// [`poll_write`](sansio::Protocol::poll_write) hands them out.
+    fn flush_writes(&mut self) {
+        use sansio::Protocol;
 
-    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        let mut intermediate_routs = VecDeque::new();
-        intermediate_routs.push_back(TaggedRTCMessageInternal {
-            now: msg.now,
-            transport: msg.transport,
-            message: RTCMessageInternal::Raw(msg.message),
-        });
+        let mut intermediate_wouts = VecDeque::new();
 
+        for_each_handler!(reverse: process_handler!(self, handler, {
+            while let Some(msg) = intermediate_wouts.pop_front() {
+                if let Err(err) = handler.handle_write(msg) {
+                    warn!("{}.handle_write got error: {}", handler.name(), err);
+                }
+            }
+            while let Some(msg) = handler.poll_write() {
+                intermediate_wouts.push_back(msg);
+            }
+        }));
+
+        // Final poll write out to pipeline's write out
+        while let Some(msg) = intermediate_wouts.pop_front() {
+            if let RTCMessageInternal::Raw(message) = msg.message {
+                self.pipeline_context.write_outs.push_back(TaggedBytesMut {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message,
+                });
+            }
+        }
+    }
+
+    fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
+        let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
+
+        if let Some(msg) = msg {
+            intermediate_routs.push_back(msg);
+        }
+
+        use sansio::Protocol;
         for_each_handler!(forward: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
                 if let Err(err) = handler.handle_read(msg) {
@@ -315,11 +349,70 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 }
             }
         }
+    }
 
+    /// Returns whether any handler raised an event during the sweep.
+    fn pump_events(&mut self) -> bool {
+        let mut intermediate_eouts = VecDeque::new();
+        let mut raised = false;
+
+        use sansio::Protocol;
+
+        for_each_handler!(forward: process_handler!(self, handler, {
+            while let Some(evt) = intermediate_eouts.pop_front() {
+                if let Err(err) = handler.handle_event(evt) {
+                    warn!("{}.handle_event got error: {}", handler.name(), err);
+                }
+            }
+            while let Some(msg) = handler.poll_event() {
+                raised = true;
+                intermediate_eouts.push_back(msg);
+            }
+        }));
+
+        // Finally, put intermediate_eouts into RTCPeerConnection's eouts
+        while let Some(evt_internal) = intermediate_eouts.pop_front() {
+            match &evt_internal.event {
+                RTCEventInternal::RTCPeerConnectionEvent(
+                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
+                )
+                | RTCEventInternal::DTLSHandshakeComplete(_, _)
+                | RTCEventInternal::DTLSClosed => {
+                    self.update_connection_state(false);
+                }
+                _ => {}
+            };
+
+            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal.event {
+                self.pipeline_context.event_outs.push_back(evt);
+            }
+        }
+
+        raised
+    }
+}
+
+impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedBytesMut;
+    type Eout = RTCPeerConnectionEvent;
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        self.pipeline_context.observe(msg.now);
+        let msg = TaggedRTCMessageInternal {
+            now: msg.now,
+            transport: msg.transport,
+            message: RTCMessageInternal::Raw(msg.message),
+        };
+        self.pump_reads(Some(msg));
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.pump_reads(None);
+
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
             self.pipeline_context.media_read_outs.front(),
@@ -338,6 +431,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
         let now = msg.now;
+        self.pipeline_context.observe(now);
         let rtc_message_internal = match msg.message {
             RTCMessage::DataChannelMessage(data_channel_id, data_channel_message) => {
                 RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
@@ -363,30 +457,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        let mut intermediate_wouts = VecDeque::new();
-
-        for_each_handler!(reverse: process_handler!(self, handler, {
-            while let Some(msg) = intermediate_wouts.pop_front() {
-                if let Err(err) = handler.handle_write(msg) {
-                    warn!("{}.handle_write got error: {}", handler.name(), err);
-                }
-            }
-            while let Some(msg) = handler.poll_write() {
-                intermediate_wouts.push_back(msg);
-            }
-        }));
-
-        // Final poll write out to pipeline's write out
-        while let Some(msg) = intermediate_wouts.pop_front() {
-            if let RTCMessageInternal::Raw(message) = msg.message {
-                self.pipeline_context.write_outs.push_back(TaggedBytesMut {
-                    now: msg.now,
-                    transport: msg.transport,
-                    message,
-                });
-            }
-        }
-
+        self.flush_writes();
         self.pipeline_context.write_outs.pop_front()
     }
 
@@ -400,40 +471,25 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        let mut intermediate_eouts = VecDeque::new();
+        // Drain the backlog before sweeping the pipeline again: anything a sweep adds lands
+        // behind it anyway, and the sweep runs once the backlog is empty.
+        if let Some(evt) = self.pipeline_context.event_outs.pop_front() {
+            return Some(evt);
+        }
 
-        for_each_handler!(forward: process_handler!(self, handler, {
-            while let Some(evt) = intermediate_eouts.pop_front() {
-                if let Err(err) = handler.handle_event(evt) {
-                    warn!("{}.handle_event got error: {}", handler.name(), err);
-                }
-            }
-            while let Some(msg) = handler.poll_event() {
-                intermediate_eouts.push_back(msg);
-            }
-        }));
-
-        // Finally, put intermediate_eouts into RTCPeerConnection's eouts
-        while let Some(evt_internal) = intermediate_eouts.pop_front() {
-            match &evt_internal.event {
-                RTCEventInternal::RTCPeerConnectionEvent(
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
-                )
-                | RTCEventInternal::DTLSHandshakeComplete(_, _) => {
-                    self.update_connection_state(false);
-                }
-                _ => {}
-            };
-
-            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal.event {
-                self.pipeline_context.event_outs.push_back(evt);
-            }
+        // Handling an event can queue read messages, like the open of a negotiated data channel
+        // on `SCTPHandshakeComplete`. Deliver them, and the events they raise, now rather than
+        // on the next incoming packet.
+        if self.pump_events() {
+            self.pump_reads(None);
+            self.pump_events();
         }
 
         self.pipeline_context.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
+        self.pipeline_context.observe(now);
         for_each_handler!(forward: process_handler!(self, handler, {
             handler.handle_timeout(now)?;
         }));
@@ -458,6 +514,19 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
 
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #3)
         self.signaling_state = RTCSignalingState::Closed;
+
+        // Tell the peer before tearing anything down, so it can close at once instead of waiting
+        // for its ICE consent checks to time out (rtc#255). During this flush the SCTP handler
+        // sends the data it still holds and then an ABORT for each association (W3C close():
+        // "tear down the underlying SCTP association by sending an SCTP ABORT chunk"), and the
+        // DTLS handler queues a close_notify behind them, so nothing pending is dropped or sent
+        // after it. They are routed now because closing the ICE handler below forgets the
+        // selected candidate pair every outbound packet is addressed with; the packets wait in
+        // `write_outs` for the caller's next `poll_write`.
+        let now = self.pipeline_context.now;
+        self.get_sctp_handler().request_abort();
+        self.get_dtls_handler().request_close(now);
+        self.flush_writes();
 
         // Try closing everything and collect the errors
         // Shutdown strategy:
@@ -525,8 +594,11 @@ mod handler_test {
     use super::*;
     use crate::data_channel::message::RTCDataChannelMessage;
     use crate::peer_connection::RTCPeerConnectionBuilder;
+    use crate::peer_connection::event::RTCDataChannelEvent;
     use bytes::BytesMut;
     use sansio::Protocol;
+    use shared::{TransportContext, TransportProtocol};
+    use std::net::Ipv4Addr;
     use std::time::Duration;
 
     /// Media must be drainable while data-channel output is held back.
@@ -658,5 +730,104 @@ mod handler_test {
             "the internal message carries the caller's instant, not an ambient reading"
         );
         assert_ne!(queued.now, t(0), "and not the construction instant either");
+    }
+
+    /// The open of a negotiated data channel is queued as a read message while
+    /// `SCTPHandshakeComplete` is being handled, i.e. inside `poll_event`. That same `poll_event`
+    /// call must return the `OnOpen`: the async `webrtc` driver drains events until `poll_event`
+    /// returns `None` and then waits for the next packet or timer.
+    #[test]
+    fn negotiated_channel_opens_within_the_same_poll_event() {
+        use crate::data_channel::RTCDataChannelInit;
+        use crate::peer_connection::event::TaggedRTCEventInternal;
+        use crate::peer_connection::transport::RTCDtlsRole;
+
+        let base = Instant::now();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(base)
+            .expect("a default peer connection builds");
+        let id = pc
+            .create_data_channel(
+                "negotiated",
+                Some(RTCDataChannelInit {
+                    negotiated: Some(1),
+                    ..Default::default()
+                }),
+            )
+            .expect("a negotiated data channel is created")
+            .id();
+
+        // Drain what creating the channel raised (`OnNegotiationNeeded`): an unrelated event
+        // returned alongside would keep the loop below polling and hide a stuck open.
+        while pc.poll_event().is_some() {}
+
+        // Resolved by the DTLS handshake, which precedes the association.
+        pc.dtls_transport_mut().dtls_role = RTCDtlsRole::Client;
+
+        // What the SCTP handler emits once the association is up.
+        pc.pipeline_context
+            .sctp_handler_context
+            .event_outs
+            .push_back(TaggedRTCEventInternal {
+                now: base,
+                event: RTCEventInternal::SCTPHandshakeComplete(0),
+            });
+
+        let mut opened = false;
+        while let Some(event) = pc.poll_event() {
+            if matches!(
+                event,
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(opened_id)) if opened_id == id
+            ) {
+                opened = true;
+            }
+        }
+        assert!(
+            opened,
+            "the open must not wait for the next incoming packet"
+        );
+    }
+
+    /// Check that messages in the `read_out` queues don't get stuck until the next incoming packet triggers `handle_read`.
+    #[test]
+    fn pump_read_outs() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(t(0))
+            .expect("a default peer connection builds");
+
+        // drop a message into the data channel handler read outs, like DataChannel::emit_data_channel_opened() does
+        pc.pipeline_context
+            .datachannel_handler_context
+            .read_outs
+            .push_back(TaggedRTCMessageInternal {
+                now: t(5),
+                transport: TransportContext {
+                    local_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    peer_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                    transport_protocol: TransportProtocol::UDP,
+                    ecn: None,
+                },
+                message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                    data_channel_id: 42,
+                    data_channel_event: DataChannelEvent::Open,
+                })),
+            });
+
+        // call `poll_read` to pump the read outs
+        let msg = pc.poll_read();
+        assert!(
+            msg.is_none(),
+            "The message should be consumed by the enpoint handler"
+        );
+
+        // we should get a channel opened event
+        let event = pc.poll_event().expect("should have an event");
+        assert!(matches!(
+            event,
+            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(42))
+        ));
     }
 }

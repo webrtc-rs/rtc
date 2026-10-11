@@ -103,6 +103,8 @@ pub enum SignatureScheme {
     RsaPkcs1Sha384,
     /// RSA PKCS#1 v1.5 with SHA-512.
     RsaPkcs1Sha512,
+    /// ECDSA P-384 with SHA-256 and ASN.1 DER signatures.
+    EcdsaP384Sha256,
 }
 
 /// The encoding of public-key bytes.

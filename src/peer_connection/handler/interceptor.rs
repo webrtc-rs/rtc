@@ -543,12 +543,11 @@ impl<'a> InterceptorHandler<'a> {
             return false;
         };
 
-        if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
-            if coding.ssrc == Some(ssrc) {
-                // Already established for this layer.
-                return true;
-            }
-            coding.ssrc = Some(ssrc);
+        // Validate rid against SDP. If invalid then drop it.
+        match receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
+            None => return false,
+            Some(coding) if coding.ssrc == Some(ssrc) => return true,
+            Some(coding) => coding.ssrc = Some(ssrc),
         }
 
         // Get RTX and FEC SSRCs from coding parameters.
