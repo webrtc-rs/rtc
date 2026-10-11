@@ -425,6 +425,24 @@ impl SettingEngine {
     pub fn discard_local_candidates_during_ice_restart(&self) -> bool {
         self.candidates.discard_local_candidates_during_ice_restart
     }
+
+    /// The ICE credentials configured on this engine.
+    ///
+    /// Both empty (the default) means every peer connection generates fresh random
+    /// credentials when its ICE agent is created.
+    pub fn ice_credentials(&self) -> (&str, &str) {
+        (
+            self.candidates.username_fragment.as_str(),
+            self.candidates.password.as_str(),
+        )
+    }
+
+    /// Set ICE credentials on this engine.
+    #[doc(hidden)]
+    pub fn set_ice_credentials(&mut self, username_fragment: String, password: String) {
+        self.candidates.username_fragment = username_fragment;
+        self.candidates.password = password;
+    }
 }
 
 /// Fluent registry for [`SettingEngine`].
@@ -1467,6 +1485,24 @@ mod tests {
         assert_eq!(
             setting_engine.turn_allocation_refresh_interval_cap(),
             Some(cap)
+        );
+    }
+
+    #[test]
+    fn test_ice_credentials_roundtrip() {
+        let setting_engine = SettingEngine::default();
+        assert_eq!(setting_engine.ice_credentials(), ("", ""));
+
+        let setting_engine = SettingEngineBuilder::new()
+            .with_ice_credentials("ufrag".to_owned(), "password".to_owned())
+            .build();
+        assert_eq!(setting_engine.ice_credentials(), ("ufrag", "password"));
+
+        let mut setting_engine = SettingEngine::default();
+        setting_engine.set_ice_credentials("other_ufrag".to_owned(), "other_password".to_owned());
+        assert_eq!(
+            setting_engine.ice_credentials(),
+            ("other_ufrag", "other_password")
         );
     }
 }
