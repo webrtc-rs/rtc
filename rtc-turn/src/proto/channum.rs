@@ -12,16 +12,16 @@ use shared::error::Result;
 // 16 bits of uint + 16 bits of RFFU = 0.
 const CHANNEL_NUMBER_SIZE: usize = 4;
 
-// See https://tools.ietf.org/html/rfc5766#section-11:
+// See https://www.rfc-editor.org/rfc/rfc8656#section-12:
 //
-// 0x4000 through 0x7FFF: These values are the allowed channel
-// numbers (16,383 possible values).
+// 0x4000 through 0x4FFF: These values are the allowed channel
+// numbers (4,096 possible values).
 /// The lowest channel number a client may bind.
 ///
 /// The range is chosen so ChannelData can be told apart from STUN messages on the same port.
 pub const MIN_CHANNEL_NUMBER: u16 = 0x4000;
 /// The highest channel number a client may bind.
-pub const MAX_CHANNEL_NUMBER: u16 = 0x7FFF;
+pub const MAX_CHANNEL_NUMBER: u16 = 0x4FFF;
 
 /// `ChannelNumber` represents `CHANNEL-NUMBER` attribute. Encoded as `u16`.
 ///
@@ -63,13 +63,13 @@ impl Getter for ChannelNumber {
 }
 
 impl ChannelNumber {
-    /// Returns true if c in `[0x4000, 0x7FFF]`.
+    /// Returns true if c in `[0x4000, 0x4FFF]`.
     fn is_channel_number_valid(&self) -> bool {
         self.0 >= MIN_CHANNEL_NUMBER && self.0 <= MAX_CHANNEL_NUMBER
     }
 
     /// returns `true` if channel number has correct value that complies
-    /// [RFC 5766 Section 11](https://www.rfc-editor.org/rfc/rfc5766#section-11) range.
+    /// [RFC 8656 Section 12](https://www.rfc-editor.org/rfc/rfc8656#section-12) range.
     pub fn valid(&self) -> bool {
         self.is_channel_number_valid()
     }
