@@ -15,6 +15,8 @@
 //! * [`proto`] — the TURN-specific STUN attributes and methods (`ALLOCATE`,
 //!   `CREATE-PERMISSION`, `CHANNEL-BIND`, `XOR-RELAYED-ADDRESS`, ChannelData framing),
 //!   built on [`rtc-stun`].
+//! * [`server`] — a bounded Sans-I/O UDP server: the host owns relay sockets, feeds it
+//!   datagrams and time, and consumes allocation, release and forwarding events.
 //!
 //! # Example
 //!
@@ -43,6 +45,8 @@
 //!
 //! Most applications do not depend on this crate directly — [`rtc-ice`] gathers relay
 //! candidates through it, and the [`rtc`](https://docs.rs/rtc) crate drives that.
+//! Applications hosting a TURN server use [`server::Server`] directly; see
+//! `examples/turn_server_udp.rs` for a runtime-independent UDP host.
 //!
 //! [RFC 5766]: https://datatracker.ietf.org/doc/html/rfc5766
 //! [RFC 6156]: https://datatracker.ietf.org/doc/html/rfc6156
@@ -60,3 +64,5 @@ pub use crypto;
 pub mod client;
 /// The TURN-specific STUN attributes, methods and ChannelData framing.
 pub mod proto;
+/// A Sans-I/O UDP TURN server with host-managed relay sockets.
+pub mod server;
