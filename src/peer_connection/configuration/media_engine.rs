@@ -192,6 +192,25 @@ pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
 /// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_SMPTE336M: &str = "application/smpte336m";
 
+/// MPEG4-GENERIC (RFC 3640) MIME type for non-audio/visual MPEG-4 Systems streams, registered
+/// under [`RtpCodecKind::Application`], not audio or video.
+///
+/// Not a standard WebRTC codec; useful for interop with SIP/RTSP gateways.
+/// Note: MIME type matching is case-insensitive.
+pub const MIME_TYPE_MPEG4_GENERIC_APPLICATION: &str = "application/mpeg4-generic";
+
+/// MPEG4-GENERIC (RFC 3640) audio MIME type, e.g. for streaming raw AAC.
+///
+/// Not a standard WebRTC codec; useful for interop with SIP/RTSP gateways.
+/// Note: MIME type matching is case-insensitive.
+pub const MIME_TYPE_MPEG4_GENERIC_AUDIO: &str = "audio/mpeg4-generic";
+
+/// MPEG4-GENERIC (RFC 3640) video MIME type, e.g. for streaming raw MPEG-4 Visual (MPEG4V-ES).
+///
+/// Not a standard WebRTC codec; useful for interop with SIP/RTSP gateways.
+/// Note: MIME type matching is case-insensitive.
+pub const MIME_TYPE_MPEG4_GENERIC_VIDEO: &str = "video/mpeg4-generic";
+
 const VALID_EXT_IDS: Range<u16> = 1..15;
 
 #[derive(Default, Clone)]
@@ -323,7 +342,7 @@ impl MediaEngine {
     /// - VP8 with RTCP feedback
     /// - VP9 (multiple profiles) with RTCP feedback
     /// - H.264 (multiple profiles/packetization modes) with RTCP feedback
-    /// - AV1 with RTCP feedback  
+    /// - AV1 with RTCP feedback
     /// - H.265/HEVC with RTCP feedback
     /// - ULP FEC (forward error correction)
     ///
