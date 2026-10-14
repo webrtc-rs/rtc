@@ -1020,3 +1020,526 @@ fn signed_errors_do_not_consume_a_pending_bind_replay_reservation() {
         .unwrap();
     assert_eq!(response(&mut f.server).raw, first.raw);
 }
+
+fn with_transaction_id(message: &Message, id: TransactionId, key: &[u8]) -> Message {
+    let mut result = Message::new();
+    result.set_type(message.typ);
+    result.transaction_id = id;
+    result.write_header();
+    for attr in &message.attributes.0 {
+        if attr.typ != ATTR_MESSAGE_INTEGRITY && attr.typ != ATTR_FINGERPRINT {
+            result.add(attr.typ, &attr.value);
+        }
+    }
+    MessageIntegrity::new_raw_integrity_with_provider(
+        key.to_vec(),
+        default_provider().unwrap().crypto(),
+    )
+    .add_to(&mut result)
+    .unwrap();
+    FINGERPRINT.add_to(&mut result).unwrap();
+    result
+}
+
+#[test]
+fn pending_transaction_collision_cannot_poison_allocate_replay() {
+    for method in [METHOD_ALLOCATE, METHOD_REFRESH, METHOD_BINDING] {
+        let mut f = fixture();
+        let mut transport = f.transport;
+        transport.peer_addr.set_port(12346);
+        let nonce = f.server.nonce(f.now, FiveTuple::from(transport)).unwrap();
+        let allocate = request(
+            METHOD_ALLOCATE,
+            "alice",
+            &nonce,
+            &[Box::new(RequestedTransport {
+                protocol: PROTO_UDP,
+            })],
+        );
+        f.server
+            .handle_datagram(f.now, transport, &allocate.raw)
+            .unwrap();
+        let Some(Event::AllocateRelay { allocation_id, .. }) = f.server.poll_event() else {
+            panic!("expected pending allocation");
+        };
+        let collision = with_transaction_id(
+            &request(
+                method,
+                "alice",
+                &nonce,
+                &[Box::new(Lifetime(Duration::from_secs(60)))],
+            ),
+            allocate.transaction_id,
+            &f.key,
+        );
+        f.server
+            .handle_datagram(f.now, transport, &collision.raw)
+            .unwrap();
+        assert!(
+            f.server.poll_event().is_none(),
+            "colliding method {method:?} must be discarded"
+        );
+        assert!(
+            !f.server
+                .cache
+                .contains_key(&(FiveTuple::from(transport), allocate.transaction_id))
+        );
+        f.server
+            .complete_allocate(
+                f.now,
+                allocation_id,
+                Ok("198.51.100.1:50001".parse().unwrap()),
+            )
+            .unwrap();
+        let success = response(&mut f.server);
+        assert_eq!(success.typ.class, CLASS_SUCCESS_RESPONSE);
+        f.server
+            .handle_datagram(f.now, transport, &allocate.raw)
+            .unwrap();
+        assert_eq!(response(&mut f.server).raw, success.raw);
+        assert_eq!(f.server.allocation_count(), 2);
+    }
+}
+
+#[test]
+fn active_transaction_collision_cannot_poison_allocate_replay() {
+    for method in [METHOD_ALLOCATE, METHOD_REFRESH, METHOD_BINDING] {
+        let mut f = fixture();
+        let tuple = FiveTuple::from(f.transport);
+        let original = message::decode(&f.server.allocations[&tuple].allocate_request).unwrap();
+        let expected = f.server.allocations[&tuple].allocate_response.clone();
+        let expiry = f.server.allocations[&tuple].expires;
+        // The allocation retains its transaction after the short replay cache expires.
+        f.now += Duration::from_secs(45);
+        let collision = with_transaction_id(
+            &request(
+                method,
+                "alice",
+                &f.nonce,
+                &[Box::new(Lifetime(Duration::ZERO))],
+            ),
+            original.transaction_id,
+            &f.key,
+        );
+        f.server
+            .handle_datagram(f.now, f.transport, &collision.raw)
+            .unwrap();
+        assert!(
+            f.server.poll_event().is_none(),
+            "colliding method {method:?} must be discarded"
+        );
+        assert_eq!(f.server.allocations[&tuple].expires, expiry);
+        f.server
+            .handle_datagram(f.now, f.transport, &original.raw)
+            .unwrap();
+        assert_eq!(response(&mut f.server).raw, expected);
+    }
+}
+
+#[test]
+fn configuration_rejects_fractional_lifetime_overruns() {
+    let tick = Duration::from_nanos(1);
+    for config in [
+        ServerConfig {
+            max_lifetime: Duration::from_secs(3600) + tick,
+            ..Default::default()
+        },
+        ServerConfig {
+            nonce_lifetime: Duration::from_secs(3600) + tick,
+            ..Default::default()
+        },
+        ServerConfig {
+            pending_lifetime: Duration::from_secs(60) + tick,
+            ..Default::default()
+        },
+        ServerConfig {
+            replay_lifetime: Duration::from_secs(600) + tick,
+            ..Default::default()
+        },
+    ] {
+        assert!(
+            config.validate().is_err(),
+            "over-limit config accepted: {config:?}"
+        );
+    }
+}
+
+type RequestAttributes = Vec<Box<dyn Setter>>;
+
+struct WireAttribute(AttrType, Vec<u8>);
+impl Setter for WireAttribute {
+    fn add_to(&self, message: &mut Message) -> Result<()> {
+        message.add(self.0, &self.1);
+        Ok(())
+    }
+}
+
+#[test]
+fn allocate_validation_errors_are_signed_and_leave_no_pending_bind() {
+    let cases: Vec<(RequestAttributes, ErrorCode)> = vec![
+        (vec![], CODE_BAD_REQUEST),
+        (
+            vec![Box::new(RequestedTransport {
+                protocol: crate::proto::PROTO_TCP,
+            })],
+            CODE_UNSUPPORTED_TRANS_PROTO,
+        ),
+        (
+            vec![Box::new(WireAttribute(ATTR_REQUESTED_TRANSPORT, vec![17]))],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            vec![
+                Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                }),
+                Box::new(WireAttribute(
+                    ATTR_REQUESTED_ADDRESS_FAMILY,
+                    vec![3, 0, 0, 0],
+                )),
+            ],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            vec![
+                Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                }),
+                Box::new(WireAttribute(ATTR_LIFETIME, vec![0])),
+            ],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            vec![
+                Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                }),
+                Box::new(WireAttribute(ATTR_EVEN_PORT, vec![0])),
+            ],
+            CODE_UNKNOWN_ATTRIBUTE,
+        ),
+        (
+            vec![
+                Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                }),
+                Box::new(WireAttribute(ATTR_RESERVATION_TOKEN, vec![0; 8])),
+            ],
+            CODE_UNKNOWN_ATTRIBUTE,
+        ),
+        (
+            vec![
+                Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                }),
+                Box::new(WireAttribute(ATTR_DONT_FRAGMENT, vec![])),
+            ],
+            CODE_UNKNOWN_ATTRIBUTE,
+        ),
+    ];
+    for (attrs, expected) in cases {
+        let mut f = fixture();
+        let mut transport = f.transport;
+        transport.peer_addr.set_port(12346);
+        let nonce = f.server.nonce(f.now, FiveTuple::from(transport)).unwrap();
+        let packet = request(METHOD_ALLOCATE, "alice", &nonce, &attrs);
+        f.server
+            .handle_datagram(f.now, transport, &packet.raw)
+            .unwrap();
+        let mut reply = response(&mut f.server);
+        assert!(error(&reply) == expected);
+        MessageIntegrity::check(&mut reply, &f.key, default_provider().unwrap().crypto()).unwrap();
+        assert!(f.server.pending.is_empty());
+        f.server
+            .handle_datagram(f.now, transport, &packet.raw)
+            .unwrap();
+        assert_eq!(response(&mut f.server).raw, reply.raw);
+    }
+}
+
+#[test]
+fn permission_and_channel_errors_do_not_install_partial_state() {
+    let cases: Vec<(Method, RequestAttributes, ErrorCode)> = vec![
+        (METHOD_CREATE_PERMISSION, vec![], CODE_BAD_REQUEST),
+        (
+            METHOD_CREATE_PERMISSION,
+            vec![Box::new(WireAttribute(ATTR_XOR_PEER_ADDRESS, vec![0]))],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            METHOD_CREATE_PERMISSION,
+            vec![Box::new(PeerAddress {
+                ip: "::1".parse().unwrap(),
+                port: 1,
+            })],
+            CODE_PEER_ADDR_FAMILY_MISMATCH,
+        ),
+        (
+            METHOD_CREATE_PERMISSION,
+            vec![Box::new(PeerAddress {
+                ip: "224.0.0.1".parse().unwrap(),
+                port: 1,
+            })],
+            CODE_FORBIDDEN,
+        ),
+        (
+            METHOD_CHANNEL_BIND,
+            vec![
+                Box::new(ChannelNumber(0x4000)),
+                Box::new(PeerAddress {
+                    ip: "203.0.113.1".parse().unwrap(),
+                    port: 0,
+                }),
+            ],
+            CODE_FORBIDDEN,
+        ),
+        (
+            METHOD_CHANNEL_BIND,
+            vec![Box::new(PeerAddress {
+                ip: "203.0.113.1".parse().unwrap(),
+                port: 9000,
+            })],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            METHOD_REFRESH,
+            vec![Box::new(REQUESTED_FAMILY_IPV6)],
+            CODE_PEER_ADDR_FAMILY_MISMATCH,
+        ),
+        (
+            METHOD_REFRESH,
+            vec![Box::new(WireAttribute(
+                ATTR_REQUESTED_ADDRESS_FAMILY,
+                vec![0],
+            ))],
+            CODE_BAD_REQUEST,
+        ),
+        (
+            METHOD_REFRESH,
+            vec![Box::new(WireAttribute(ATTR_LIFETIME, vec![0]))],
+            CODE_BAD_REQUEST,
+        ),
+    ];
+    for (method, attrs, expected) in cases {
+        let mut f = fixture();
+        let tuple = FiveTuple::from(f.transport);
+        let expiry = f.server.allocations[&tuple].expires;
+        let packet = request(method, "alice", &f.nonce, &attrs);
+        f.server
+            .handle_datagram(f.now, f.transport, &packet.raw)
+            .unwrap();
+        assert!(error(&response(&mut f.server)) == expected);
+        let allocation = &f.server.allocations[&tuple];
+        assert!(allocation.permissions.is_empty());
+        assert!(allocation.channels.is_empty());
+        assert_eq!(allocation.expires, expiry);
+    }
+}
+
+#[test]
+fn invalid_relay_completion_releases_socket_and_replays_failure() {
+    for address in [
+        "0.0.0.0:50001",
+        "224.0.0.1:50001",
+        "198.51.100.1:0",
+        "[2001:db8::1]:50001",
+    ] {
+        let mut f = fixture();
+        let mut transport = f.transport;
+        transport.peer_addr.set_port(12346);
+        let nonce = f.server.nonce(f.now, FiveTuple::from(transport)).unwrap();
+        let packet = request(
+            METHOD_ALLOCATE,
+            "alice",
+            &nonce,
+            &[Box::new(RequestedTransport {
+                protocol: PROTO_UDP,
+            })],
+        );
+        f.server
+            .handle_datagram(f.now, transport, &packet.raw)
+            .unwrap();
+        let Some(Event::AllocateRelay { allocation_id, .. }) = f.server.poll_event() else {
+            panic!()
+        };
+        f.server
+            .complete_allocate(f.now, allocation_id, Ok(address.parse().unwrap()))
+            .unwrap();
+        assert!(
+            matches!(f.server.poll_event(), Some(Event::ReleaseRelay { allocation_id: id }) if id == allocation_id)
+        );
+        let failed = response(&mut f.server);
+        assert!(error(&failed) == CODE_INSUFFICIENT_CAPACITY);
+        assert_eq!(f.server.allocation_count(), 1);
+        f.server
+            .handle_datagram(f.now, transport, &packet.raw)
+            .unwrap();
+        assert_eq!(response(&mut f.server).raw, failed.raw);
+    }
+}
+
+#[test]
+fn default_peer_policy_rejects_local_and_mapped_local_addresses() {
+    struct Public;
+    impl Authenticator for Public {
+        fn credential_key(&self, _: &str, _: &str) -> Option<Vec<u8>> {
+            None
+        }
+    }
+    for peer in [
+        "0.1.2.3:80",
+        "0.0.0.0:80",
+        "127.0.0.1:80",
+        "10.0.0.1:80",
+        "169.254.1.1:80",
+        "224.0.0.1:80",
+        "255.255.255.255:80",
+        "240.0.0.1:80",
+        "8.8.8.8:0",
+        "[::]:80",
+        "[::1]:80",
+        "[fc00::1]:80",
+        "[fe80::1]:80",
+        "[ff02::1]:80",
+        "[::ffff:127.0.0.1]:80",
+    ] {
+        assert!(
+            !Public.allow_peer("alice", peer.parse().unwrap()),
+            "allowed {peer}"
+        );
+    }
+    for peer in [
+        "8.8.8.8:53",
+        "[2606:4700:4700::1111]:53",
+        "[::ffff:8.8.8.8]:53",
+    ] {
+        assert!(
+            Public.allow_peer("alice", peer.parse().unwrap()),
+            "denied {peer}"
+        );
+    }
+}
+
+#[test]
+fn protocol_adapter_preserves_actions_feedback_and_deadlines() {
+    use sansio::Protocol;
+    use shared::TaggedBytesMut;
+    type Adapter = dyn Protocol<
+            TaggedBytesMut,
+            (),
+            HostEvent,
+            Rout = (),
+            Wout = (),
+            Eout = Event,
+            Error = Error,
+            Time = Instant,
+        >;
+    let mut f = fixture();
+    let peer = "203.0.113.1:9000".parse().unwrap();
+    permission(&mut f, peer);
+    let adapter: &mut Adapter = &mut f.server;
+    assert_eq!(
+        adapter.poll_timeout(),
+        Some(f.now + Duration::from_secs(40))
+    );
+    assert!(adapter.poll_read().is_none());
+    adapter.handle_write(()).unwrap();
+    assert!(adapter.poll_write().is_none());
+    adapter
+        .handle_event(HostEvent::PeerData {
+            now: f.now,
+            allocation_id: f.id,
+            peer,
+            data: BytesMut::from(&b"payload"[..]),
+        })
+        .unwrap();
+    let Some(Event::SendToClient { data, transport }) = adapter.poll_event() else {
+        panic!()
+    };
+    assert_eq!(transport.peer_addr, f.transport.peer_addr);
+    assert_eq!(
+        message::decode(&data).unwrap().get(ATTR_DATA).unwrap(),
+        b"payload"
+    );
+    let mut transport = f.transport;
+    transport.peer_addr.set_port(12346);
+    let nonce = f.server.nonce(f.now, FiveTuple::from(transport)).unwrap();
+    let packet = request(
+        METHOD_ALLOCATE,
+        "alice",
+        &nonce,
+        &[Box::new(RequestedTransport {
+            protocol: PROTO_UDP,
+        })],
+    );
+    let adapter: &mut Adapter = &mut f.server;
+    adapter
+        .handle_read(TaggedBytesMut {
+            now: f.now,
+            transport,
+            message: BytesMut::from(packet.raw.as_slice()),
+        })
+        .unwrap();
+    let Some(Event::AllocateRelay { allocation_id, .. }) = adapter.poll_event() else {
+        panic!()
+    };
+    adapter
+        .handle_event(HostEvent::AllocationComplete {
+            now: f.now,
+            allocation_id,
+            result: Ok("198.51.100.1:50001".parse().unwrap()),
+        })
+        .unwrap();
+    assert!(matches!(
+        adapter.poll_event(),
+        Some(Event::SendToClient { .. })
+    ));
+    adapter
+        .handle_timeout(f.now + Duration::from_secs(40))
+        .unwrap();
+    assert!(adapter.poll_timeout().unwrap() > f.now + Duration::from_secs(40));
+    adapter.close().unwrap();
+    let mut released = HashSet::new();
+    while let Some(event) = adapter.poll_event() {
+        let Event::ReleaseRelay { allocation_id } = event else {
+            panic!()
+        };
+        assert!(released.insert(allocation_id));
+    }
+    assert_eq!(released, HashSet::from([f.id, allocation_id]));
+    assert!(adapter.poll_timeout().is_none());
+}
+
+#[test]
+fn malformed_datagrams_and_time_reversal_leave_allocation_intact() {
+    let mut f = fixture();
+    let original = f.server.allocations[&FiveTuple::from(f.transport)]
+        .allocate_request
+        .clone();
+    let mut malformed = original.clone();
+    malformed.push(0);
+    for bytes in [vec![], vec![0; 19], malformed] {
+        assert!(
+            f.server
+                .handle_datagram(f.now, f.transport, &bytes)
+                .is_err()
+        );
+        assert!(f.server.poll_event().is_none());
+    }
+    let mut tcp = f.transport;
+    tcp.transport_protocol = TransportProtocol::TCP;
+    assert!(f.server.handle_datagram(f.now, tcp, &original).is_err());
+    assert!(
+        f.server
+            .handle_timeout(f.now - Duration::from_secs(1))
+            .is_err()
+    );
+    f.server.config.max_request_bytes = 20;
+    assert!(
+        f.server
+            .handle_datagram(f.now, f.transport, &original)
+            .is_err()
+    );
+    assert_eq!(f.server.allocation_count(), 1);
+    assert!(f.server.poll_event().is_none());
+}

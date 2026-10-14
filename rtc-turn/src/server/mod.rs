@@ -135,6 +135,7 @@ struct Allocation {
     expires: Instant,
     permissions: HashMap<IpAddr, Instant>,
     channels: HashMap<u16, Channel>,
+    allocate_transaction_id: TransactionId,
     allocate_request: Vec<u8>,
     allocate_response: Vec<u8>,
 }
@@ -260,6 +261,33 @@ impl Server {
                 "TURN control request exceeds configured limit".into(),
             ));
         }
+        // Replay the exact bytes, without renewing lifetimes or reapplying mutations.
+        if let Some(cached) = self.cache.get(&(tuple, request.transaction_id)) {
+            if cached.request == data {
+                let response = cached.response.clone();
+                self.send_client(tuple, &response);
+            }
+            return Ok(());
+        }
+        // Allocate transaction IDs stay reserved while binding and for the allocation's
+        // lifetime, even after the short response cache expires. Conflicting bytes (including
+        // a different method) must not cache an error or mutate the original allocation.
+        if let Some(allocation) = self.allocations.get(&tuple)
+            && allocation.allocate_transaction_id == request.transaction_id
+        {
+            if allocation.allocate_request == data {
+                let response = allocation.allocate_response.clone();
+                self.send_client(tuple, &response);
+            }
+            return Ok(());
+        }
+        if self
+            .pending
+            .get(&tuple)
+            .is_some_and(|pending| pending.request.transaction_id == request.transaction_id)
+        {
+            return Ok(());
+        }
         if request.typ.method == METHOD_BINDING {
             let unknown = message::unknown_attributes(&request);
             if !unknown.is_empty() {
@@ -272,30 +300,6 @@ impl Server {
             }
             .add_to(&mut response)?;
             return self.send_response(tuple, &request, response, None, false);
-        }
-        // Replay the exact bytes, without renewing lifetimes or reapplying mutations.
-        if let Some(cached) = self.cache.get(&(tuple, request.transaction_id)) {
-            if cached.request == data {
-                let response = cached.response.clone();
-                self.send_client(tuple, &response);
-            }
-            return Ok(());
-        }
-        if request.typ.method == METHOD_ALLOCATE
-            && let Some(allocation) = self.allocations.get(&tuple)
-            && allocation.allocate_request == data
-        {
-            let response = allocation.allocate_response.clone();
-            self.send_client(tuple, &response);
-            return Ok(());
-        }
-        if request.typ.method == METHOD_ALLOCATE
-            && self
-                .pending
-                .get(&tuple)
-                .is_some_and(|pending| pending.request.raw == data)
-        {
-            return Ok(());
         }
         let identity = match self.authenticate(now, tuple, &mut request) {
             Ok(identity) => identity,
@@ -467,6 +471,7 @@ impl Server {
                 expires: now + pending.lifetime,
                 permissions: HashMap::new(),
                 channels: HashMap::new(),
+                allocate_transaction_id: pending.request.transaction_id,
                 allocate_request: pending.request.raw.clone(),
                 allocate_response: encoded.clone(),
             },

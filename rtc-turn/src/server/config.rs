@@ -63,13 +63,13 @@ impl ServerConfig {
             || self.realm.len() > 763
             || self.default_lifetime.as_secs() == 0
             || self.default_lifetime > self.max_lifetime
-            || self.max_lifetime.as_secs() > 3600
+            || self.max_lifetime > Duration::from_secs(3600)
             || self.nonce_lifetime.as_secs() == 0
-            || self.nonce_lifetime.as_secs() > 3600
+            || self.nonce_lifetime > Duration::from_secs(3600)
             || self.pending_lifetime.is_zero()
-            || self.pending_lifetime.as_secs() > 60
+            || self.pending_lifetime > Duration::from_secs(60)
             || self.replay_lifetime < Duration::from_secs(40)
-            || self.replay_lifetime.as_secs() > 600
+            || self.replay_lifetime > Duration::from_secs(600)
             || self.max_allocations == 0
             || self.max_allocations_per_user == 0
             || self.max_permissions == 0

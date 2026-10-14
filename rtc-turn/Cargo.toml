@@ -48,3 +48,4 @@ bench = false
 name = "turn_server_udp"
 path = "examples/turn_server_udp.rs"
 bench = false
+test = true

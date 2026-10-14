@@ -166,18 +166,18 @@ fn drain(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let options = Options::parse();
-    if options.relay_min == 0 || options.relay_min > options.relay_max {
-        return Err("invalid relay port range".into());
-    }
-    let provider: Arc<dyn RTCCryptoProvider> = default_provider()?;
+fn credentials(
+    options: &Options,
+    provider: &dyn RTCCryptoProvider,
+) -> Result<Users, Box<dyn std::error::Error>> {
     let mut keys = HashMap::new();
     for entry in &options.user {
         let (username, password) = entry.split_once('=').ok_or("expected USERNAME=PASSWORD")?;
         if username.is_empty()
             || password.is_empty()
             || !username.is_ascii()
+            || !password.is_ascii()
+            || options.realm.is_empty()
             || !options.realm.is_ascii()
         {
             return Err(
@@ -194,6 +194,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?,
         );
     }
+    Ok(Users {
+        keys,
+        allow_private: options.allow_private_peers,
+    })
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = Options::parse();
+    if options.relay_min == 0 || options.relay_min > options.relay_max {
+        return Err("invalid relay port range".into());
+    }
+    let provider: Arc<dyn RTCCryptoProvider> = default_provider()?;
+    let users = credentials(&options, provider.as_ref())?;
     let listener = UdpSocket::bind(options.listen)?;
     listener.set_nonblocking(true)?;
     let listener_address = listener.local_addr()?;
@@ -202,10 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             realm: options.realm.clone(),
             ..Default::default()
         },
-        Arc::new(Users {
-            keys,
-            allow_private: options.allow_private_peers,
-        }),
+        Arc::new(users),
         provider,
         Instant::now(),
     )?;
@@ -271,4 +281,212 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Instant::now(),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+    use rtc_turn::proto::PROTO_UDP;
+    use rtc_turn::proto::data::Data;
+    use rtc_turn::proto::lifetime::Lifetime;
+    use rtc_turn::proto::peeraddr::PeerAddress;
+    use rtc_turn::proto::reqtrans::RequestedTransport;
+    use stun::attributes::*;
+    use stun::message::*;
+    use stun::textattrs::TextAttribute;
+
+    fn options() -> Options {
+        Options::try_parse_from([
+            "turn_server_udp",
+            "--user",
+            "alice=password",
+            "--allow-private-peers",
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn credentials_enforce_the_documented_ascii_profile() {
+        let provider = default_provider().unwrap();
+        let mut options = options();
+        for user in ["alice", "=password", "alice=", "alice=pa\u{00a0}ss"] {
+            options.user = vec![user.into()];
+            assert!(
+                credentials(&options, provider.as_ref()).is_err(),
+                "accepted {user}"
+            );
+        }
+        options.user = vec!["alice=password=with=equals".into()];
+        assert!(credentials(&options, provider.as_ref()).is_ok());
+    }
+
+    #[test]
+    fn peer_policy_requires_explicit_private_network_opt_in() {
+        let provider = default_provider().unwrap();
+        let mut options = options();
+        options.allow_private_peers = false;
+        let public = credentials(&options, provider.as_ref()).unwrap();
+        assert!(public.credential_key("missing", &options.realm).is_none());
+        assert!(public.allow_peer("alice", "8.8.8.8:53".parse().unwrap()));
+        assert!(!public.allow_peer("alice", "127.0.0.1:9000".parse().unwrap()));
+        options.allow_private_peers = true;
+        let private = credentials(&options, provider.as_ref()).unwrap();
+        assert!(private.allow_peer("alice", "127.0.0.1:9000".parse().unwrap()));
+        assert!(!private.allow_peer("alice", "224.0.0.1:9000".parse().unwrap()));
+        assert!(!private.allow_peer("alice", "127.0.0.1:0".parse().unwrap()));
+    }
+
+    #[test]
+    fn relay_binding_reports_family_and_port_exhaustion() {
+        let mut options = options();
+        assert_eq!(
+            bind_relay(&options, AddressFamily::Ipv6)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AddrNotAvailable
+        );
+        let occupied = UdpSocket::bind("0.0.0.0:0").unwrap();
+        options.relay_min = occupied.local_addr().unwrap().port();
+        options.relay_max = options.relay_min;
+        assert_eq!(
+            bind_relay(&options, AddressFamily::Ipv4)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AddrNotAvailable
+        );
+    }
+
+    fn receive(socket: &UdpSocket) -> Message {
+        let mut raw = [0; 4096];
+        let size = socket.recv(&mut raw).unwrap();
+        let mut message = Message::new();
+        message.unmarshal_binary(&raw[..size]).unwrap();
+        message
+    }
+
+    fn authenticated(
+        method: Method,
+        nonce: &[u8],
+        attrs: &[Box<dyn Setter>],
+        key: &[u8],
+    ) -> Message {
+        let mut message = Message::new();
+        message.set_type(MessageType::new(method, CLASS_REQUEST));
+        message.new_transaction_id().unwrap();
+        message.write_header();
+        for attr in attrs {
+            attr.add_to(&mut message).unwrap();
+        }
+        TextAttribute::new(ATTR_USERNAME, "alice".into())
+            .add_to(&mut message)
+            .unwrap();
+        TextAttribute::new(ATTR_REALM, "webrtc.rs".into())
+            .add_to(&mut message)
+            .unwrap();
+        message.add(ATTR_NONCE, nonce);
+        MessageIntegrity::new_raw_integrity_with_provider(
+            key.to_vec(),
+            default_provider().unwrap().crypto(),
+        )
+        .add_to(&mut message)
+        .unwrap();
+        message
+    }
+
+    #[test]
+    fn host_drains_allocation_forwarding_and_socket_release() {
+        let provider = default_provider().unwrap();
+        let mut options = options();
+        // Bind ephemeral ports in this isolated host test rather than assuming a free range.
+        options.relay_min = 0;
+        options.relay_max = 0;
+        let listener = UdpSocket::bind("127.0.0.1:0").unwrap();
+        options.listen = listener.local_addr().unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let users = credentials(&options, provider.as_ref()).unwrap();
+        let key = users.credential_key("alice", &options.realm).unwrap();
+        let now = Instant::now();
+        let mut server =
+            Server::new(ServerConfig::default(), Arc::new(users), provider, now).unwrap();
+        let transport = TransportContext {
+            local_addr: options.listen,
+            peer_addr: client.local_addr().unwrap(),
+            ..Default::default()
+        };
+        let mut relays = HashMap::new();
+        let mut challenge = Message::new();
+        challenge.set_type(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST));
+        challenge.write_header();
+        server
+            .handle_datagram(now, transport, &challenge.raw)
+            .unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        let nonce = receive(&client).get(ATTR_NONCE).unwrap();
+        let allocate = authenticated(
+            METHOD_ALLOCATE,
+            &nonce,
+            &[Box::new(RequestedTransport {
+                protocol: PROTO_UDP,
+            })],
+            &key,
+        );
+        server
+            .handle_datagram(now, transport, &allocate.raw)
+            .unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        assert_eq!(receive(&client).typ.class, CLASS_SUCCESS_RESPONSE);
+        assert_eq!(relays.len(), 1);
+        let id = *relays.keys().next().unwrap();
+        let permission = authenticated(
+            METHOD_CREATE_PERMISSION,
+            &nonce,
+            &[Box::new(PeerAddress {
+                ip: peer.local_addr().unwrap().ip(),
+                port: 0,
+            })],
+            &key,
+        );
+        server
+            .handle_datagram(now, transport, &permission.raw)
+            .unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        assert_eq!(receive(&client).typ.class, CLASS_SUCCESS_RESPONSE);
+        let mut send = Message::new();
+        send.set_type(MessageType::new(METHOD_SEND, CLASS_INDICATION));
+        send.write_header();
+        PeerAddress {
+            ip: peer.local_addr().unwrap().ip(),
+            port: peer.local_addr().unwrap().port(),
+        }
+        .add_to(&mut send)
+        .unwrap();
+        Data(b"outbound".to_vec()).add_to(&mut send).unwrap();
+        server.handle_datagram(now, transport, &send.raw).unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        let mut payload = [0; 32];
+        let (size, from) = peer.recv_from(&mut payload).unwrap();
+        assert_eq!(&payload[..size], b"outbound");
+        assert_eq!(from.port(), relays[&id].local_addr().unwrap().port());
+        server
+            .handle_peer_data(now, id, peer.local_addr().unwrap(), b"inbound")
+            .unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        assert_eq!(receive(&client).get(ATTR_DATA).unwrap(), b"inbound");
+        let delete = authenticated(
+            METHOD_REFRESH,
+            &nonce,
+            &[Box::new(Lifetime(Duration::ZERO))],
+            &key,
+        );
+        server.handle_datagram(now, transport, &delete.raw).unwrap();
+        drain(&mut server, &listener, &mut relays, &options, now).unwrap();
+        assert_eq!(receive(&client).typ.class, CLASS_SUCCESS_RESPONSE);
+        assert!(relays.is_empty());
+        assert!(UdpSocket::bind(SocketAddr::new(options.public_ip, from.port())).is_ok());
+    }
 }
