@@ -17,7 +17,10 @@ use crate::chunk::chunk_selective_ack::{ChunkSelectiveAck, GapAckBlock};
 use crate::chunk::chunk_shutdown::ChunkShutdown;
 use crate::chunk::chunk_shutdown_ack::ChunkShutdownAck;
 use crate::chunk::chunk_shutdown_complete::ChunkShutdownComplete;
-use crate::chunk::{ErrorCauseProtocolViolation, PROTOCOL_VIOLATION};
+use crate::chunk::{
+    Chunk, ErrorCause, ErrorCauseCode, ErrorCauseProtocolViolation, INVALID_STREAM_IDENTIFIER,
+    PROTOCOL_VIOLATION, UNRECOGNIZED_CHUNK_TYPE,
+};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
 use crate::param::param_reconfig_response::ParamReconfigResponse;
@@ -2731,6 +2734,154 @@ fn test_assoc_abort() -> Result<()> {
     assert_eq!(
         AssociationState::Closed,
         pair.server_conn_mut(server_ch).state()
+    );
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
+/// Wraps `chunks`, built by the client association, into a datagram addressed to the server.
+fn client_chunks_transmit(
+    pair: &mut Pair,
+    client_ch: AssociationHandle,
+    chunks: Vec<Box<dyn Chunk>>,
+) -> Result<TransportMessage<Payload>> {
+    let packet = pair
+        .client_conn_mut(client_ch)
+        .create_packet(chunks)
+        .marshal()?;
+
+    Ok(TransportMessage {
+        now: pair.time,
+        transport: TransportContext {
+            local_addr: pair.client.addr,
+            peer_addr: pair.server.addr,
+            ecn: None,
+            transport_protocol: Default::default(),
+        },
+        message: Payload::RawEncode(vec![packet]),
+    })
+}
+
+/// An ERROR chunk with the error causes a peer commonly reports, including one this
+/// implementation does not know.
+fn error_chunk() -> ChunkError {
+    ChunkError {
+        error_causes: vec![
+            // Stream Identifier 5, reserved
+            ErrorCause {
+                code: INVALID_STREAM_IDENTIFIER,
+                raw: Bytes::from_static(&[0x00, 0x05, 0x00, 0x00]),
+            },
+            // The unrecognized chunk: type 0xc1, no flags, length 4
+            ErrorCause {
+                code: UNRECOGNIZED_CHUNK_TYPE,
+                raw: Bytes::from_static(&[0xc1, 0x00, 0x00, 0x04]),
+            },
+            ErrorCause {
+                code: ErrorCauseCode::from(0x0100),
+                ..Default::default()
+            },
+        ],
+    }
+}
+
+/// RFC 9260 §3.3.10 (RFC 4960 §3.3.10): "An Operation Error is not considered fatal in and of
+/// itself". Receiving an ERROR chunk must leave the association established and usable.
+#[test]
+fn test_assoc_error_chunk_is_not_fatal() -> Result<()> {
+    let si: u16 = 1;
+    let msg: Bytes = Bytes::from_static(b"still established");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    debug!("send ChunkError");
+    let transmit = client_chunks_transmit(&mut pair, client_ch, vec![Box::new(error_chunk())])?;
+    pair.client.outbound.push_back(transmit);
+
+    pair.drive();
+
+    assert_eq!(
+        AssociationState::Established,
+        pair.client_conn_mut(client_ch).state()
+    );
+    assert_eq!(
+        AssociationState::Established,
+        pair.server_conn_mut(server_ch).state(),
+        "an ERROR chunk must not close the association"
+    );
+
+    // The association still carries data in both directions.
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+    assert_eq!(msg.len(), n, "unexpected length of written data");
+    pair.drive();
+
+    let mut buf = vec![0u8; 1024];
+    let chunks = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(&buf[..n], &msg[..], "received data mismatch");
+
+    let now = pair.time;
+    let n = pair.server_stream(server_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+    assert_eq!(msg.len(), n, "unexpected length of written data");
+    pair.drive();
+
+    let chunks = pair.client_stream(client_ch, si)?.read_sctp()?.unwrap();
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(&buf[..n], &msg[..], "received data mismatch");
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
+/// The chunks bundled after an ERROR chunk are still processed, so an ABORT that follows one in
+/// the same packet still ends the association.
+#[test]
+fn test_assoc_abort_bundled_after_error_chunk() -> Result<()> {
+    let si: u16 = 1;
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    let abort = ChunkAbort {
+        error_causes: vec![ErrorCauseProtocolViolation {
+            code: PROTOCOL_VIOLATION,
+            ..Default::default()
+        }],
+    };
+
+    debug!("send ChunkError + ChunkAbort");
+    let transmit = client_chunks_transmit(
+        &mut pair,
+        client_ch,
+        vec![Box::new(error_chunk()), Box::new(abort)],
+    )?;
+    pair.client.outbound.push_back(transmit);
+
+    pair.drive();
+
+    assert_eq!(
+        AssociationState::Established,
+        pair.client_conn_mut(client_ch).state()
+    );
+    assert_eq!(
+        AssociationState::Closed,
+        pair.server_conn_mut(server_ch).state(),
+        "the ABORT after the ERROR chunk must close the association"
     );
 
     close_association_pair(&mut pair, client_ch, server_ch, si);
