@@ -18,6 +18,10 @@ Every protocol deadline is driven by the host's monotonic `Instant`.
 5. Schedule `poll_timeout()` and call `handle_timeout(now)` when it expires. Never move the
    supplied clock backwards. Drain actions after every input and timeout.
 6. Close/cancel sockets on `ReleaseRelay`. On shutdown, call `close` and drain all releases.
+   On an unrecoverable relay socket failure, call `close_allocation` and drain its release;
+   the other allocations remain active. Endpoint errors from UDP ICMP feedback (such as
+   Windows `WSAECONNRESET`) do not imply a failed socket. Yield before receiving again
+   to avoid tight error retry loops; unrecoverable control listener errors remain fatal.
    A late bind completion rejected as unknown/expired remains host-owned and must be closed.
 
 The server also implements `sansio::Protocol<TaggedBytesMut, (), HostEvent>`. Control input

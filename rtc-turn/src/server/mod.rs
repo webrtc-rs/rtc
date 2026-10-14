@@ -590,6 +590,29 @@ impl Server {
         Ok(())
     }
 
+    /// Retire one allocation or pending bind after an unrecoverable host relay failure.
+    ///
+    /// Emits `ReleaseRelay` even when the regular output queue is full. Unknown or
+    /// already retired IDs are ignored. Drain events to close the affected socket;
+    /// other allocations and the control listener remain available.
+    pub fn close_allocation(&mut self, id: AllocationId) {
+        if let Some(tuple) = self
+            .allocations
+            .iter()
+            .find_map(|(tuple, allocation)| (allocation.id == id).then_some(*tuple))
+        {
+            self.release(tuple);
+        } else if let Some(tuple) = self
+            .pending
+            .iter()
+            .find_map(|(tuple, pending)| (pending.id == id).then_some(*tuple))
+        {
+            self.pending.remove(&tuple);
+            self.events
+                .push_back(Event::ReleaseRelay { allocation_id: id });
+        }
+    }
+
     /// Retire all allocations and pending binds, emitting releases. Drain before destroying sockets.
     pub fn close(&mut self) {
         self.closed = true;

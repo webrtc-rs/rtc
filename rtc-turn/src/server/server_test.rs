@@ -1543,3 +1543,67 @@ fn malformed_datagrams_and_time_reversal_leave_allocation_intact() {
     assert_eq!(f.server.allocation_count(), 1);
     assert!(f.server.poll_event().is_none());
 }
+
+#[test]
+fn host_can_retire_one_allocation_even_when_output_is_full() {
+    let mut f = fixture_with_config(ServerConfig {
+        max_events: 2,
+        ..Default::default()
+    });
+    for _ in 0..2 {
+        f.server
+            .send_client(FiveTuple::from(f.transport), b"queued");
+    }
+    f.server.close_allocation(f.id);
+    f.server.close_allocation(f.id);
+    f.server.close_allocation(AllocationId(u64::MAX));
+    assert_eq!(f.server.allocation_count(), 0);
+    assert_eq!(f.server.events.len(), 3);
+    assert!(
+        matches!(f.server.events.back(), Some(Event::ReleaseRelay { allocation_id }) if *allocation_id == f.id)
+    );
+    while f.server.poll_event().is_some() {}
+    f.server
+        .handle_peer_data(f.now, f.id, "203.0.113.1:9000".parse().unwrap(), b"late")
+        .unwrap();
+    assert!(f.server.poll_event().is_none());
+}
+
+#[test]
+fn host_can_cancel_a_pending_relay_without_resurrection() {
+    let mut f = fixture();
+    let mut transport = f.transport;
+    transport.peer_addr.set_port(12346);
+    let nonce = f.server.nonce(f.now, FiveTuple::from(transport)).unwrap();
+    let packet = request(
+        METHOD_ALLOCATE,
+        "alice",
+        &nonce,
+        &[Box::new(RequestedTransport {
+            protocol: PROTO_UDP,
+        })],
+    );
+    f.server
+        .handle_datagram(f.now, transport, &packet.raw)
+        .unwrap();
+    let Some(Event::AllocateRelay { allocation_id, .. }) = f.server.poll_event() else {
+        panic!()
+    };
+    f.server.close_allocation(allocation_id);
+    f.server.close_allocation(allocation_id);
+    assert!(
+        matches!(f.server.poll_event(), Some(Event::ReleaseRelay { allocation_id: id }) if id == allocation_id)
+    );
+    assert!(f.server.poll_event().is_none());
+    assert!(
+        f.server
+            .complete_allocate(
+                f.now,
+                allocation_id,
+                Ok("198.51.100.1:50001".parse().unwrap())
+            )
+            .is_err()
+    );
+    assert!(f.server.pending.is_empty());
+    assert_eq!(f.server.allocation_count(), 1);
+}

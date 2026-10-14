@@ -200,6 +200,91 @@ fn credentials(
     })
 }
 
+// An unconnected UDP socket can report an asynchronous error for a previous send
+// to an unreachable endpoint (notably WSAECONNRESET on Windows):
+// https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recvfrom
+// Yield this socket's
+// work budget, rather than retrying immediately or terminating unrelated clients.
+fn received_datagram(
+    received: io::Result<(usize, SocketAddr)>,
+) -> io::Result<Option<(usize, SocketAddr)>> {
+    match received {
+        Ok(datagram) => Ok(Some(datagram)),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            eprintln!("UDP endpoint receive error: {error}");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn poll_sockets(
+    server: &mut Server,
+    listener: &UdpSocket,
+    relays: &mut HashMap<AllocationId, UdpSocket>,
+    options: &Options,
+    now: Instant,
+    buffer: &mut [u8],
+    mut receive: impl FnMut(&UdpSocket, &mut [u8]) -> io::Result<(usize, SocketAddr)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener_address = listener.local_addr()?;
+    // Bound work per iteration so a busy listener cannot starve relay sockets or timers.
+    for _ in 0..64 {
+        match received_datagram(receive(listener, buffer)) {
+            Ok(Some((length, peer_addr))) => {
+                let transport = TransportContext {
+                    local_addr: listener_address,
+                    peer_addr,
+                    transport_protocol: TransportProtocol::UDP,
+                    ecn: None,
+                };
+                if let Err(error) = server.handle_datagram(now, transport, &buffer[..length]) {
+                    eprintln!("Control datagram discarded: {error}");
+                }
+                drain(server, listener, relays, options, now)?;
+            }
+            Ok(None) => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let ids: Vec<_> = relays.keys().copied().collect();
+    for id in ids {
+        for _ in 0..16 {
+            let received = relays
+                .get(&id)
+                .map(|socket| received_datagram(receive(socket, buffer)));
+            match received {
+                Some(Ok(Some((length, peer)))) => {
+                    server.handle_peer_data(now, id, peer, &buffer[..length])?;
+                    drain(server, listener, relays, options, now)?;
+                }
+                Some(Ok(None)) => break,
+                Some(Err(error)) => {
+                    eprintln!("Relay {id:?} receive failed; closing allocation: {error}");
+                    server.close_allocation(id);
+                    drain(server, listener, relays, options, now)?;
+                    break;
+                }
+                None => break,
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::parse();
     if options.relay_min == 0 || options.relay_min > options.relay_max {
@@ -234,40 +319,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let now = Instant::now();
         server.handle_timeout(now)?;
         drain(&mut server, &listener, &mut relays, &options, now)?;
-        // Bound work per iteration so a busy listener cannot starve relay sockets or timers.
-        for _ in 0..64 {
-            match listener.recv_from(&mut buffer) {
-                Ok((length, peer_addr)) => {
-                    let transport = TransportContext {
-                        local_addr: listener_address,
-                        peer_addr,
-                        transport_protocol: TransportProtocol::UDP,
-                        ecn: None,
-                    };
-                    if let Err(error) = server.handle_datagram(now, transport, &buffer[..length]) {
-                        eprintln!("Control datagram discarded: {error}");
-                    }
-                    drain(&mut server, &listener, &mut relays, &options, now)?;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let ids: Vec<_> = relays.keys().copied().collect();
-        for id in ids {
-            for _ in 0..16 {
-                let received = relays.get(&id).map(|socket| socket.recv_from(&mut buffer));
-                match received {
-                    Some(Ok((length, peer))) => {
-                        server.handle_peer_data(now, id, peer, &buffer[..length])?;
-                        drain(&mut server, &listener, &mut relays, &options, now)?;
-                    }
-                    Some(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => break,
-                    Some(Err(error)) => return Err(error.into()),
-                    None => break,
-                }
-            }
-        }
+        poll_sockets(
+            &mut server,
+            &listener,
+            &mut relays,
+            &options,
+            now,
+            &mut buffer,
+            UdpSocket::recv_from,
+        )?;
         // This polling example favors readability. Production hosts should use readiness I/O
         // and schedule server.poll_timeout() with their chosen runtime.
         std::thread::sleep(Duration::from_millis(2));
@@ -391,6 +451,231 @@ mod server_tests {
         .add_to(&mut message)
         .unwrap();
         message
+    }
+
+    struct TestHost {
+        server: Server,
+        listener: UdpSocket,
+        relays: HashMap<AllocationId, UdpSocket>,
+        options: Options,
+        now: Instant,
+        key: Vec<u8>,
+    }
+
+    impl TestHost {
+        fn new() -> Self {
+            let provider = default_provider().unwrap();
+            let mut options = options();
+            options.relay_min = 0;
+            options.relay_max = 0;
+            let listener = UdpSocket::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            options.listen = listener.local_addr().unwrap();
+            let users = credentials(&options, provider.as_ref()).unwrap();
+            let key = users.credential_key("alice", &options.realm).unwrap();
+            let now = Instant::now();
+            let server =
+                Server::new(ServerConfig::default(), Arc::new(users), provider, now).unwrap();
+            Self {
+                server,
+                listener,
+                relays: HashMap::new(),
+                options,
+                now,
+                key,
+            }
+        }
+
+        fn poll_with(
+            &mut self,
+            receive: impl FnMut(&UdpSocket, &mut [u8]) -> io::Result<(usize, SocketAddr)>,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            poll_sockets(
+                &mut self.server,
+                &self.listener,
+                &mut self.relays,
+                &self.options,
+                self.now,
+                &mut [0; 65536],
+                receive,
+            )
+        }
+
+        fn add_client(&mut self, peer: SocketAddr) -> (UdpSocket, AllocationId) {
+            let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut challenge = Message::new();
+            challenge.set_type(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST));
+            challenge.write_header();
+            client.send_to(&challenge.raw, self.options.listen).unwrap();
+            self.poll_with(UdpSocket::recv_from).unwrap();
+            let nonce = receive(&client).get(ATTR_NONCE).unwrap();
+            let previous: Vec<_> = self.relays.keys().copied().collect();
+            let allocate = authenticated(
+                METHOD_ALLOCATE,
+                &nonce,
+                &[Box::new(RequestedTransport {
+                    protocol: PROTO_UDP,
+                })],
+                &self.key,
+            );
+            client.send_to(&allocate.raw, self.options.listen).unwrap();
+            self.poll_with(UdpSocket::recv_from).unwrap();
+            assert_eq!(receive(&client).typ.class, CLASS_SUCCESS_RESPONSE);
+            let id = *self
+                .relays
+                .keys()
+                .find(|id| !previous.contains(id))
+                .unwrap();
+            let permission = authenticated(
+                METHOD_CREATE_PERMISSION,
+                &nonce,
+                &[Box::new(PeerAddress {
+                    ip: peer.ip(),
+                    port: 0,
+                })],
+                &self.key,
+            );
+            client
+                .send_to(&permission.raw, self.options.listen)
+                .unwrap();
+            self.poll_with(UdpSocket::recv_from).unwrap();
+            assert_eq!(receive(&client).typ.class, CLASS_SUCCESS_RESPONSE);
+            (client, id)
+        }
+
+        fn relay_address(&self, id: AllocationId) -> SocketAddr {
+            SocketAddr::new(
+                self.options.public_ip,
+                self.relays[&id].local_addr().unwrap().port(),
+            )
+        }
+    }
+
+    #[test]
+    fn listener_endpoint_errors_preserve_other_clients_and_yield() {
+        let mut host = TestHost::new();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let (_first, first_id) = host.add_client(peer.local_addr().unwrap());
+        let (second, second_id) = host.add_client(peer.local_addr().unwrap());
+        for kind in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionRefused,
+            io::ErrorKind::Interrupted,
+        ] {
+            peer.send_to(b"healthy", host.relay_address(second_id))
+                .unwrap();
+            let listener_address = host.options.listen;
+            let mut calls = 0;
+            host.poll_with(|socket, buffer| {
+                if socket.local_addr()? == listener_address {
+                    calls += 1;
+                    return Err(io::Error::from(kind));
+                }
+                socket.recv_from(buffer)
+            })
+            .unwrap();
+            assert_eq!(calls, 1, "must yield on a repeated error");
+            assert_eq!(receive(&second).get(ATTR_DATA).unwrap(), b"healthy");
+            assert_eq!(host.server.allocation_count(), 2);
+            assert!(host.relays.contains_key(&first_id));
+            // The next pass must still accept control traffic on the same socket.
+            let mut binding = Message::new();
+            binding.set_type(MessageType::new(METHOD_BINDING, CLASS_REQUEST));
+            binding.write_header();
+            second.send_to(&binding.raw, listener_address).unwrap();
+            host.poll_with(UdpSocket::recv_from).unwrap();
+            assert_eq!(receive(&second).typ.class, CLASS_SUCCESS_RESPONSE);
+        }
+    }
+
+    #[test]
+    fn relay_endpoint_errors_preserve_allocations_and_other_clients() {
+        let mut host = TestHost::new();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let (first, first_id) = host.add_client(peer.local_addr().unwrap());
+        let (second, second_id) = host.add_client(peer.local_addr().unwrap());
+        let failed_port = host.relay_address(first_id).port();
+        for kind in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionRefused,
+            io::ErrorKind::Interrupted,
+        ] {
+            peer.send_to(b"other client", host.relay_address(second_id))
+                .unwrap();
+            let mut calls = 0;
+            host.poll_with(|socket, buffer| {
+                if socket.local_addr()?.port() == failed_port {
+                    calls += 1;
+                    return Err(io::Error::from(kind));
+                }
+                socket.recv_from(buffer)
+            })
+            .unwrap();
+            assert_eq!(calls, 1, "must yield on a repeated error");
+            assert_eq!(receive(&second).get(ATTR_DATA).unwrap(), b"other client");
+            assert_eq!(host.server.allocation_count(), 2);
+            assert!(host.relays.contains_key(&first_id));
+        }
+        // The errored socket must still forward on a subsequent pass.
+        peer.send_to(b"recovered", host.relay_address(first_id))
+            .unwrap();
+        host.poll_with(UdpSocket::recv_from).unwrap();
+        assert_eq!(receive(&first).get(ATTR_DATA).unwrap(), b"recovered");
+    }
+
+    #[test]
+    fn fatal_relay_error_retires_only_its_allocation() {
+        let mut host = TestHost::new();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let (_first, first_id) = host.add_client(peer.local_addr().unwrap());
+        let (second, second_id) = host.add_client(peer.local_addr().unwrap());
+        let failed_address = host.relay_address(first_id);
+        peer.send_to(b"unaffected", host.relay_address(second_id))
+            .unwrap();
+        let mut calls = 0;
+        host.poll_with(|socket, buffer| {
+            if socket.local_addr()?.port() == failed_address.port() {
+                calls += 1;
+                return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+            socket.recv_from(buffer)
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(receive(&second).get(ATTR_DATA).unwrap(), b"unaffected");
+        assert_eq!(host.server.allocation_count(), 1);
+        assert!(!host.relays.contains_key(&first_id));
+        assert!(host.relays.contains_key(&second_id));
+        assert!(
+            UdpSocket::bind(failed_address).is_ok(),
+            "failed socket was not closed"
+        );
+        peer.send_to(b"still serving", host.relay_address(second_id))
+            .unwrap();
+        host.poll_with(UdpSocket::recv_from).unwrap();
+        assert_eq!(receive(&second).get(ATTR_DATA).unwrap(), b"still serving");
+    }
+
+    #[test]
+    fn fatal_listener_error_is_propagated() {
+        let mut host = TestHost::new();
+        let listener_address = host.options.listen;
+        let mut calls = 0;
+        let error = host
+            .poll_with(|socket, _| {
+                assert_eq!(socket.local_addr().unwrap(), listener_address);
+                calls += 1;
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            })
+            .unwrap_err();
+        assert_eq!(calls, 1);
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
     }
 
     #[test]
