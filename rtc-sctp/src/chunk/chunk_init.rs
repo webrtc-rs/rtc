@@ -158,7 +158,9 @@ impl Chunk for ChunkInit {
         let mut params = vec![];
         let mut offset = CHUNK_HEADER_SIZE + INIT_CHUNK_MIN_LENGTH;
         let mut remaining = raw.len() as isize - offset as isize;
-        while remaining > INIT_OPTIONAL_VAR_HEADER_LENGTH as isize
+        // `>=` (not `>`): a trailing zero-length parameter such as
+        // ForwardTsnSupported is exactly INIT_OPTIONAL_VAR_HEADER_LENGTH bytes.
+        while remaining >= INIT_OPTIONAL_VAR_HEADER_LENGTH as isize
             && offset < CHUNK_HEADER_SIZE + header.value_length()
         {
             let p = build_param(&raw.slice(offset..CHUNK_HEADER_SIZE + header.value_length()))?;
