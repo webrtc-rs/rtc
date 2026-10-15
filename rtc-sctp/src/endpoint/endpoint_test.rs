@@ -3494,6 +3494,7 @@ fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
             a.destination_port,
         )
     };
+    let request_sequence = pair.server_conn_mut(server_ch).expected_reset_sequence();
     let packet = Packet {
         common_header: CommonHeader {
             source_port: sport,
@@ -3513,7 +3514,7 @@ fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
             }),
             Box::new(ChunkReconfig {
                 param_a: Some(Box::new(ParamOutgoingResetRequest {
-                    reconfig_request_sequence_number: 100,
+                    reconfig_request_sequence_number: request_sequence,
                     reconfig_response_sequence_number: 0,
                     sender_last_tsn: tsn,
                     stream_identifiers: vec![si],
