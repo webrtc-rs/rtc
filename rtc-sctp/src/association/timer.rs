@@ -70,6 +70,7 @@ pub(crate) struct TimerTable {
     max_retrans: [usize; TIMER_COUNT],
     shutdown_interval: Option<u64>,
     reconfig_interval: Option<u64>,
+    reconfig_in_progress: bool,
 }
 
 impl TimerTable {
@@ -142,6 +143,19 @@ impl TimerTable {
         if let Some(interval) = self.control_interval(timer) {
             *interval = None;
         }
+        if timer == Timer::Reconfig {
+            self.reconfig_in_progress = false;
+        }
+    }
+
+    pub fn restart_reconfig_in_progress(&mut self, now: Instant, interval: u64) {
+        self.reset_retrans(Timer::Reconfig);
+        self.reconfig_in_progress = true;
+        self.start(Timer::Reconfig, now, interval);
+    }
+
+    pub fn is_reconfig_in_progress(&self) -> bool {
+        self.reconfig_in_progress
     }
 
     pub fn reset_retrans(&mut self, timer: Timer) {
@@ -154,7 +168,7 @@ impl TimerTable {
         if expired && let Some(interval) = self.control_interval(timer) {
             *interval = interval.map(|previous| calculate_next_timeout(previous, 1));
         }
-        if expired {
+        if expired && !(timer == Timer::Reconfig && self.reconfig_in_progress) {
             self.retrans[timer as usize] += 1;
             if self.retrans[timer as usize] > self.max_retrans[timer as usize] {
                 failure = true;
