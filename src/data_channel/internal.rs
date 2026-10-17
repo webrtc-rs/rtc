@@ -3,7 +3,7 @@ use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
-use sctp::{PayloadProtocolIdentifier, StreamId};
+use sctp::{PayloadProtocolIdentifier, ReliabilityType, StreamId};
 use shared::error::{Error, Result};
 use std::time::Instant;
 
@@ -162,10 +162,25 @@ impl RTCDataChannelInternal {
 
         let data_channel_config = data_channel.config();
 
-        let (unordered, _reliability_type) =
+        let (unordered, reliability_type) =
             ::datachannel::data_channel::DataChannel::get_reliability_params(
                 data_channel_config.channel_type,
             );
+
+        // RFC 8832 §5.1: the Reliability Parameter is the retransmission limit of a
+        // PartialReliableRexmit channel and the lifetime in milliseconds of a
+        // PartialReliableTimed one, and carries nothing for the reliable types. Recording it
+        // here is what lets `max_retransmits()` and `max_packet_life_time()` report the
+        // channel the peer opened. The wire field is 32 bits but the W3C attributes are
+        // `unsigned short`, so a larger value saturates; the SCTP stream itself is configured
+        // with the full value.
+        let reliability_parameter =
+            u16::try_from(data_channel_config.reliability_parameter).unwrap_or(u16::MAX);
+        let (max_retransmits, max_packet_life_time) = match reliability_type {
+            ReliabilityType::Rexmit => (Some(reliability_parameter), None),
+            ReliabilityType::Timed => (None, Some(reliability_parameter)),
+            _ => (None, None),
+        };
 
         // `negotiated: None` — the peer opened this channel in-band over DCEP, so it is not an
         // out-of-band channel however well-known its stream id now is. The stream id is set
@@ -174,8 +189,8 @@ impl RTCDataChannelInternal {
             label: data_channel_config.label.clone(),
             protocol: data_channel_config.protocol.clone(),
             ordered: !unordered,
-            max_packet_life_time: None,
-            max_retransmits: None,
+            max_packet_life_time,
+            max_retransmits,
             negotiated: None,
         });
         // Known from the wire: no deferral needed, and it must be registered so locally

@@ -10,7 +10,8 @@ use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
     Association, AssociationError, AssociationEvent, AssociationHandle, ClientConfig,
-    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
+    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, Stream, StreamEvent,
+    StreamId,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -49,6 +50,17 @@ pub(crate) struct SctpHandlerContext {
     /// level-triggered re-arm that closes that hole.
     pending_readable: HashSet<(AssociationHandle, StreamId)>,
 
+    /// Streams the peer created whose first message has not been drained yet.
+    ///
+    /// RFC 8832 §5.1: the Channel Type and Reliability Parameter of a `DATA_CHANNEL_OPEN`
+    /// describe the data channel, and both of its directions are sent with them. The opener
+    /// configures its stream from its own OPEN in `handle_write`; the accepting side has to
+    /// configure its outgoing direction from the OPEN it receives, which is the first message
+    /// on a stream the peer created. A stream enters this set on `StreamEvent::Opened` and
+    /// leaves it when its first message is drained, so only that message can configure it,
+    /// and a stream this side opened itself is never reconfigured by the peer.
+    peer_opened_streams: HashSet<(AssociationHandle, StreamId)>,
+
     /// Transport context of the most recent inbound datagram, **per association**.
     ///
     /// A resumed drain has no triggering packet to copy this from. A single `last_transport`
@@ -82,6 +94,7 @@ impl SctpHandlerContext {
             flush_dirty: false,
             abort_requested: false,
             pending_readable: HashSet::new(),
+            peer_opened_streams: HashSet::new(),
             association_transport: HashMap::new(),
             now,
         }
@@ -145,8 +158,14 @@ impl<'a> SctpHandler<'a> {
     /// Returns the messages read. The budget is checked **before** each `read_sctp()` because
     /// that call consumes a message: testing afterwards would mean having already taken the
     /// thing there was no room for.
+    ///
+    /// Both the immediate drain in `handle_read` and the resumed one in `resume_pending_reads`
+    /// come through here, so the first message of a peer-opened stream configures the stream
+    /// (see [`Self::apply_peer_reliability`]) whichever of the two delivers it.
+    #[allow(clippy::too_many_arguments)]
     fn drain_stream(
         ctx_pending: &mut HashSet<(AssociationHandle, StreamId)>,
+        peer_opened: &mut HashSet<(AssociationHandle, StreamId)>,
         conn: &mut Association,
         ch: AssociationHandle,
         id: StreamId,
@@ -181,6 +200,13 @@ impl<'a> SctpHandler<'a> {
             // scratch-buffer round-trip (`max_len` preserves the max-message-size bound
             // `read()` enforced via `ErrShortBuffer`).
             let payload = chunks.to_payload(max_len)?;
+            // An in-band channel is opened by a DATA_CHANNEL_OPEN on its stream (RFC 8832 §6),
+            // so only the first message of a stream the peer created can be the OPEN that
+            // describes it. A first message that is not DCEP belongs to an out-of-band
+            // negotiated channel, which this side configured itself.
+            if peer_opened.remove(&(ch, id)) && chunks.ppi == PayloadProtocolIdentifier::Dcep {
+                Self::apply_peer_reliability(&mut stream, &payload)?;
+            }
             messages.push(SctpMessage::Inbound(DataChannelMessage {
                 association_handle: ch.0,
                 stream_id: id,
@@ -190,6 +216,39 @@ impl<'a> SctpHandler<'a> {
             }));
             *budget -= 1;
         }
+    }
+
+    /// Configures this side's outgoing direction of a peer-opened stream from the peer's
+    /// `DATA_CHANNEL_OPEN`.
+    ///
+    /// RFC 8832 §5.1 defines the Channel Type and Reliability Parameter for the data channel
+    /// as a whole, not for the opener's direction alone. Without this the accepting side
+    /// sends every message ordered and fully reliable whatever the peer asked for: no U bit
+    /// on an unordered channel, and no abandonment on a partially reliable one. This is the
+    /// accept-side counterpart of the `set_reliability_params` call `handle_write` makes for
+    /// an OPEN sent from this side, and uses the same Channel Type mapping.
+    ///
+    /// A payload that is not a well-formed OPEN is left alone: the data channel handler
+    /// rejects it when it tries to accept the channel.
+    fn apply_peer_reliability(stream: &mut Stream<'_>, payload: &[u8]) -> Result<()> {
+        let mut buf = payload;
+        if let Ok(Message::DataChannelOpen(data_channel_open)) = Message::unmarshal(&mut buf) {
+            debug!(
+                "sctp data channel open from peer {:?} for stream id {}",
+                data_channel_open,
+                stream.stream_identifier()
+            );
+            let (unordered, reliability_type) =
+                ::datachannel::data_channel::DataChannel::get_reliability_params(
+                    data_channel_open.channel_type,
+                );
+            stream.set_reliability_params(
+                unordered,
+                reliability_type,
+                data_channel_open.reliability_parameter,
+            )?;
+        }
+        Ok(())
     }
 
     /// Retry streams parked by a full pipeline. The level-triggered half of the drain.
@@ -232,6 +291,7 @@ impl<'a> SctpHandler<'a> {
             let mut messages = vec![];
             Self::drain_stream(
                 &mut self.ctx.pending_readable,
+                &mut self.ctx.peer_opened_streams,
                 conn,
                 ch,
                 id,
@@ -284,6 +344,7 @@ impl<'a> SctpHandler<'a> {
             while association.poll().is_some() {}
         }
         self.ctx.pending_readable.clear();
+        self.ctx.peer_opened_streams.clear();
         self.flush_transmits(self.ctx.now);
     }
 
@@ -417,11 +478,17 @@ impl<'a>
                                     event: RTCEventInternal::SCTPStreamClosed(ch.0, id),
                                 });
                             }
+                            Event::Stream(StreamEvent::Opened { id }) => {
+                                // The peer's DATA created this stream. Its first message
+                                // may be the OPEN this side's sends must follow.
+                                self.ctx.peer_opened_streams.insert((*ch, id));
+                            }
                             Event::Stream(StreamEvent::Readable { id }) => {
                                 // Bounded: what is not read stays in the reassembly queue,
                                 // which is what lowers `a_rwnd` and throttles the peer.
                                 Self::drain_stream(
                                     &mut self.ctx.pending_readable,
+                                    &mut self.ctx.peer_opened_streams,
                                     conn,
                                     *ch,
                                     id,
@@ -493,6 +560,7 @@ impl<'a>
                     // accumulates entries for associations that no longer exist.
                     self.ctx.association_transport.remove(&ch);
                     self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
+                    self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
                 }
             }
 
@@ -603,6 +671,13 @@ impl<'a>
                                 reliability_type,
                                 data_channel_open.reliability_parameter,
                             )?;
+                            // This side owns the stream's parameters now. A record left by an
+                            // earlier, peer-created use of the same stream id must not let a
+                            // later OPEN from the peer override them.
+                            self.ctx.peer_opened_streams.remove(&(
+                                AssociationHandle(message.association_handle),
+                                message.stream_id,
+                            ));
 
                             // Out-of-band negotiated channels (W3C WebRTC
                             // `RTCDataChannelInit.negotiated`) only open the SCTP
@@ -743,6 +818,7 @@ impl<'a>
                 }
             }
             self.ctx.pending_readable.clear();
+            self.ctx.peer_opened_streams.clear();
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -796,6 +872,7 @@ impl<'a>
             sctp_associations.remove(&ch);
             self.ctx.association_transport.remove(&ch);
             self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
+            self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
         }
 
         for transmit in transmits {
