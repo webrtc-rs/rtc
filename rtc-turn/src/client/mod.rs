@@ -605,14 +605,13 @@ impl Client {
         ])?;
 
         debug!("client.Allocate call PerformTransaction 1");
-        let mut tid = self.perform_transaction(
+        let tid = self.perform_transaction(
             now,
             &msg,
             self.turn_server_addr()?,
             TransactionType::AllocateAttempt,
         );
-        tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
-        Ok(tid)
+        Ok(authenticated_allocate_id(tid))
     }
 
     fn handle_allocate_response(
@@ -652,8 +651,7 @@ impl Client {
 
                 // make it same as allocate() return value so that client can retrieve it
                 // from Event::AllocateResponse
-                let mut tid = response.transaction_id;
-                tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
+                let tid = authenticated_allocate_id(response.transaction_id);
 
                 // Trying to authorize.
                 msg.build(&[

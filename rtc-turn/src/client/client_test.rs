@@ -751,14 +751,8 @@ fn test_a_request_over_tcp_is_sent_once_and_times_out_at_ti() -> Result<()> {
         },
         test_crypto_provider(),
     )?;
-    client.allocate(start)?;
-    // allocate() returns the id its authenticated retry will use; the timeout names the
-    // request that was actually sent, so take the id from the wire.
-    let sent = client.poll_write().expect("the request goes out once");
-    let mut request = Message::new();
-    request.raw = sent.message.to_vec();
-    request.decode()?;
-    let tid = request.transaction_id;
+    let tid = client.allocate(start)?;
+    assert!(client.poll_write().is_some(), "the request goes out once");
 
     // Walk every deadline the client asks for, up to just short of Ti.
     let ti = Duration::from_millis(39_500);
@@ -782,7 +776,7 @@ fn test_a_request_over_tcp_is_sent_once_and_times_out_at_ti() -> Result<()> {
     assert!(client.poll_write().is_none(), "not even at the deadline");
     assert!(
         matches!(client.poll_event(), Some(Event::TransactionTimeout(id)) if id == tid),
-        "at Ti the request has timed out"
+        "at Ti the request has timed out, under the id allocate() handed out"
     );
     Ok(())
 }
@@ -810,5 +804,51 @@ fn test_a_request_over_udp_is_still_retransmitted() -> Result<()> {
     );
     client.handle_timeout(first)?;
     assert!(client.poll_write().is_some(), "UDP retransmits");
+    Ok(())
+}
+
+/// A timed-out Allocate is reported under the id [`Client::allocate`] returned — the one the
+/// caller has to match it with. An anonymous Allocate goes out under the id before it, so a
+/// caller that only knows what `allocate()` told it would never recognise the timeout and
+/// could wait on that allocation for ever; the responses already follow this convention.
+#[test]
+fn test_an_allocate_that_is_never_answered_times_out_under_the_id_allocate_returned() -> Result<()>
+{
+    for transport_protocol in [TransportProtocol::UDP, TransportProtocol::TCP] {
+        let start = Instant::now();
+        let mut client = Client::new(
+            ClientConfig {
+                turn_serv_addr: "127.0.0.1:3478".to_owned(),
+                local_addr: "127.0.0.1:50000".parse().unwrap(),
+                transport_protocol,
+                ..Default::default()
+            },
+            test_crypto_provider(),
+        )?;
+        let tid = client.allocate(start)?;
+        while client.poll_write().is_some() {}
+
+        // Every deadline the client asks for, until it has nothing left to wait on.
+        let mut timeout = None;
+        while let Some(deadline) = client.poll_timeout() {
+            client.handle_timeout(deadline)?;
+            while client.poll_write().is_some() {}
+            while let Some(event) = client.poll_event() {
+                if let Event::TransactionTimeout(id) = event {
+                    timeout = Some((id, deadline));
+                }
+            }
+        }
+        let (id, at) = timeout.expect("a server that never answers times the request out");
+        assert_eq!(
+            id, tid,
+            "{transport_protocol:?}: the timeout must name the allocation its caller knows"
+        );
+        assert!(
+            at <= start + Duration::from_millis(39_500),
+            "{transport_protocol:?}: timed out at {:?}",
+            at - start
+        );
+    }
     Ok(())
 }
