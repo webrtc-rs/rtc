@@ -684,23 +684,17 @@ fn test_init_unmarshal_trailing_forward_tsn_supported() -> Result<()> {
     let raw_pkt = p.marshal()?;
     let pkt = Packet::unmarshal(&raw_pkt)?;
 
-    if let Some(c) = pkt.chunks[0].as_any().downcast_ref::<ChunkInit>() {
-        assert_eq!(
-            2,
-            c.params.len(),
-            "Unmarshal dropped the trailing ForwardTsnSupported parameter exp: 2 act: {}",
-            c.params.len()
-        );
-        assert!(
-            c.params[1]
-                .as_any()
-                .downcast_ref::<ParamForwardTsnSupported>()
-                .is_some(),
-            "the last parameter should be ForwardTsnSupported"
-        );
-    } else {
-        assert!(false, "Failed to cast Chunk -> InitAck");
-    }
+    let c = pkt.chunks[0]
+        .as_any()
+        .downcast_ref::<ChunkInit>()
+        .expect("Failed to cast Chunk -> ChunkInit");
+    assert_eq!(2, c.params.len());
+    assert!(
+        c.params[1]
+            .as_any()
+            .downcast_ref::<ParamForwardTsnSupported>()
+            .is_some()
+    );
 
     Ok(())
 }
