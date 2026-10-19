@@ -1262,6 +1262,17 @@ impl RTCPeerConnection {
         self.current_local_description()
     }
 
+    /// Returns the local ICE credentials (username fragment, password) the ICE agent currently
+    /// holds.
+    ///
+    /// The ufrag is the routing key an async wrapper registers with a shared UDP mux, so this is
+    /// what it reads both at first bind and again after an ICE restart (where the pair has
+    /// rotated) to (re)register under the current credentials.
+    pub fn local_ice_credentials(&self) -> (String, String) {
+        let (ufrag, pwd) = self.ice_transport().get_local_user_credentials();
+        (ufrag.to_string(), pwd.to_string())
+    }
+
     /// Returns the current local description as last successfully negotiated since
     /// the last negotiation completed.
     ///
