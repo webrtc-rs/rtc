@@ -194,17 +194,17 @@ impl Endpoint {
                 conn.handshake(now)?;
             }
         } else if conn.received_handshake_in_last_datagram {
-            // RFC 6347 4.2.4: this datagram carried a handshake record although the association
-            // is already established, so the peer is repeating its own final flight — ours was
-            // lost and has to be sent again. The gate is this datagram's handshake record, not
+            // RFC 6347 4.2.4: this datagram carried an authenticated repeat of the peer's
+            // Finished, so our final flight may have been lost and has to be sent again.
+            // The gate is this datagram's accepted handshake record, not
             // the sticky `handshake_rx` flag, so ordinary post-handshake application data can
             // never provoke a spurious flight (certificate included, for a client). The
             // association is complete, so the FSM above is skipped, and `send()` never arms
             // `current_retransmit_timer` on the completed path, so `handle_timeout` cannot fire
             // for it either. `handshake_timeout`'s Finished branch regenerates the flight — with
             // fresh record sequence numbers, since a verbatim replay would be dropped by the
-            // peer's replay window (4.1.2.6) — under a retransmission budget, so an
-            // unauthenticated repeat cannot amplify without limit. Clear `handshake_rx` first so
+            // peer's replay window (4.1.2.6) — under the existing retransmission budget.
+            // Clear `handshake_rx` first so
             // that retransmission re-sends the buffered flight instead of re-parsing the whole
             // transcript in `finish()`.
             conn.handshake_rx = None;
@@ -798,6 +798,26 @@ mod tests {
         Ok(())
     }
 
+    // Generate the peer's genuine cached flight through the normal retransmission path,
+    // including encryption and fresh record sequence numbers.
+    #[cfg(feature = "crypto-ring")]
+    fn repeat_cached_flight(endpoint: &mut Endpoint, peer: SocketAddr) -> Result<Vec<BytesMut>> {
+        let conn = endpoint
+            .connections
+            .get_mut(&peer)
+            .expect("the peer is connected");
+        conn.handshake_timeout(Instant::now())?;
+        let mut datagrams = vec![];
+        while let Some(datagram) = conn.outgoing_raw_packet() {
+            datagrams.push(datagram);
+        }
+        assert!(
+            !datagrams.is_empty(),
+            "the peer actually repeats its flight"
+        );
+        Ok(datagrams)
+    }
+
     /// RFC 6347 4.2.4 for the client role: a completed client repeats its own last flight (Flight 5)
     /// when the peer repeats its final flight. Flight 5 carries the client certificate, so it spans
     /// epoch-0 records (certificate/key-exchange/verify/ChangeCipherSpec) plus the epoch-1 Finished,
@@ -806,14 +826,11 @@ mod tests {
     #[test]
     fn a_completed_client_retransmits_its_full_last_flight_with_fresh_record_sequence_numbers()
     -> Result<()> {
-        let (mut client, _server) = completed_client_and_server()?;
+        let (mut client, mut server) = completed_client_and_server()?;
 
-        client.read(
-            Instant::now(),
-            server_addr(),
-            None,
-            junk_epoch_zero_handshake_datagram(20_000),
-        )?;
+        for datagram in repeat_cached_flight(&mut server, client_addr())? {
+            client.read(Instant::now(), server_addr(), None, datagram)?;
+        }
         let mut first = vec![];
         while let Some(transmit) = client.poll_transmit() {
             first.push(transmit.message);
@@ -829,12 +846,9 @@ mod tests {
             "the retransmit is the full Flight 5 (epoch-0 records plus the epoch-1 Finished), not a bare answer"
         );
 
-        client.read(
-            Instant::now(),
-            server_addr(),
-            None,
-            junk_epoch_zero_handshake_datagram(20_001),
-        )?;
+        for datagram in repeat_cached_flight(&mut server, client_addr())? {
+            client.read(Instant::now(), server_addr(), None, datagram)?;
+        }
         let mut second = vec![];
         while let Some(transmit) = client.poll_transmit() {
             second.push(transmit.message);
@@ -847,10 +861,8 @@ mod tests {
         Ok(())
     }
 
-    /// A completed client fed a stream of unauthenticated epoch-0 handshake records must answer at
-    /// most `maximum_retransmit_number` times and then fall silent (closing the RFC 6347 4.2.4
-    /// retransmission amplification), and must never error out of `read` — an `ErrInvalidFsmTransition`
-    /// escaping here would tear down the established association.
+    /// Unauthenticated epoch-0 handshake records must neither provoke a flight nor spend
+    /// retries that the real peer may still need. They must not tear down the association.
     #[cfg(feature = "crypto-ring")]
     #[test]
     fn a_completed_client_neither_amplifies_nor_tears_down_when_flooded_with_handshake_records()
@@ -878,14 +890,96 @@ mod tests {
                 silent_after_budget &= !produced;
             }
         }
-        assert!(answered > 0, "the retransmission path is reachable at all");
-        assert!(
-            answered <= DEFAULT_MAXIMUM_RETRANSMIT_NUMBER,
-            "a completed client answered {answered} floods but the budget is {DEFAULT_MAXIMUM_RETRANSMIT_NUMBER}"
+        assert_eq!(answered, 0, "plaintext records must not provoke a flight");
+        assert_eq!(
+            client.connections[&server_addr()].current_retransmit_count,
+            0
         );
         assert!(
             silent_after_budget,
             "the retransmit budget must silence the flood once it is spent"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn authenticated_finished_repeats_still_obey_the_retry_budget() -> Result<()> {
+        for client_receives in [true, false] {
+            let (mut client, mut server) = completed_client_and_server()?;
+            let (receiver, sender, receiver_addr, sender_addr) = if client_receives {
+                (&mut client, &mut server, client_addr(), server_addr())
+            } else {
+                (&mut server, &mut client, server_addr(), client_addr())
+            };
+            let repeats = DEFAULT_MAXIMUM_RETRANSMIT_NUMBER + 5;
+            sender
+                .connections
+                .get_mut(&receiver_addr)
+                .unwrap()
+                .maximum_retransmit_number = repeats;
+            let mut answered = 0;
+            for index in 0..repeats {
+                for datagram in repeat_cached_flight(sender, receiver_addr)? {
+                    receiver.read(Instant::now(), sender_addr, None, datagram)?;
+                }
+                let mut produced = false;
+                while receiver.poll_transmit().is_some() {
+                    produced = true;
+                }
+                if produced {
+                    answered += 1;
+                }
+                if index >= DEFAULT_MAXIMUM_RETRANSMIT_NUMBER {
+                    assert!(
+                        !produced,
+                        "the receiver stops answering after its retry budget"
+                    );
+                }
+            }
+            assert_eq!(answered, DEFAULT_MAXIMUM_RETRANSMIT_NUMBER);
+            assert!(receiver.connections[&sender_addr].is_handshake_completed());
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn plaintext_repeats_do_not_change_the_completed_handshake_cache() -> Result<()> {
+        use crate::handshake::{HandshakeType, handshake_cache::HandshakeCachePullRule};
+        let (mut client, _server) = completed_client_and_server()?;
+        let rules = [HandshakeCachePullRule {
+            typ: HandshakeType::ServerHelloDone,
+            epoch: 0,
+            is_client: false,
+            optional: false,
+        }];
+        let before = client.connections[&server_addr()]
+            .cache
+            .pull_and_merge(&rules);
+        assert!(
+            !before.is_empty(),
+            "the server's original message is cached"
+        );
+        for sequence in 0u16..32 {
+            let mut datagram = vec![22, 0xfe, 0xfd, 0, 0];
+            datagram.extend_from_slice(&(1_000 + u64::from(sequence)).to_be_bytes()[2..]);
+            datagram.extend_from_slice(&12u16.to_be_bytes());
+            datagram.extend_from_slice(&[14, 0, 0, 0]);
+            datagram.extend_from_slice(&sequence.to_be_bytes());
+            datagram.extend_from_slice(&[0; 6]);
+            client.read(
+                Instant::now(),
+                server_addr(),
+                None,
+                datagram.as_slice().into(),
+            )?;
+        }
+        assert_eq!(
+            client.connections[&server_addr()]
+                .cache
+                .pull_and_merge(&rules),
+            before
         );
         Ok(())
     }

@@ -59,6 +59,48 @@ impl HandshakeCache {
         true
     }
 
+    // The caller authenticates the record first. Recognize the complete Finished or
+    // its final fragment without buffering a new post-handshake transcript. Only the
+    // ending fragment triggers a reply, so fragmentation does not spend a retry per fragment.
+    pub(crate) fn matches_received_finished(
+        &self,
+        mut data: &[u8],
+        epoch: u16,
+        is_client: bool,
+    ) -> bool {
+        while !data.is_empty() {
+            let mut reader = data;
+            let Ok(header) = HandshakeHeader::unmarshal(&mut reader) else {
+                return false;
+            };
+            let fragment_length = header.fragment_length as usize;
+            let Some(fragment) = reader.get(..fragment_length) else {
+                return false;
+            };
+            let fragment_start = header.fragment_offset as usize;
+            let fragment_end = fragment_start + fragment_length;
+            if header.handshake_type == HandshakeType::Finished
+                && fragment_length > 0
+                && fragment_end == header.length as usize
+                && self.cache.iter().any(|item| {
+                    item.typ == HandshakeType::Finished
+                        && item.epoch == epoch
+                        && item.is_client == is_client
+                        && item.message_sequence == header.message_sequence
+                        && item.data.len() == HANDSHAKE_HEADER_LENGTH + header.length as usize
+                        && item.data.get(
+                            HANDSHAKE_HEADER_LENGTH + fragment_start
+                                ..HANDSHAKE_HEADER_LENGTH + fragment_end,
+                        ) == Some(fragment)
+                })
+            {
+                return true;
+            }
+            data = &reader[fragment_length..];
+        }
+        false
+    }
+
     // returns a list handshakes that match the requested rules
     // the list will contain null entries for rules that can't be satisfied
     // multiple entries may match a rule, but only the last match is returned (ie ClientHello with cookies)

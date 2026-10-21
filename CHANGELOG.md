@@ -112,6 +112,9 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- Ignore unrelated post-handshake DTLS records without consuming the final-flight
+  retry budget or modifying the completed handshake cache.
+
 - `rtc-crypto`'s AES-CTR keystream now uses a batched implementation instead of one
   `encrypt_block` call per 16-byte block, which defeated AES-NI / ARMv8 instruction pipelining.
   Roughly 9-10% faster on a 1200-byte SRTP payload.
