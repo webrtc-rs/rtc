@@ -396,13 +396,18 @@ impl<'a>
                         dtls_handshake_config,
                         None,
                     )?;
-                    // NOTE: the first flight is buffered inside the endpoint here and only
-                    // leaves on the next driver write drain (same iteration, via the
-                    // events-before-writes loop order). Pumping `poll_transmit` directly
-                    // here instead races the peer's receive loop arming during its own
-                    // connect cascade (measured: first ClientHello lost until the 1 s
-                    // retransmit) — leave the tick-flush in place until that wake-up path
-                    // is fixed.
+                    // The first flight is buffered inside the endpoint when `connect`
+                    // returns; pump it out in the same event so it leaves on the write
+                    // drain of this very iteration. The peer receives the nomination
+                    // (the ICE handler's control-plane-first ordering) before this
+                    // ClientHello, so it no longer drops it.
+                    while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                            now: transmit.now,
+                            transport: transmit.transport,
+                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
+                        });
+                    }
                 };
             }
         } else {

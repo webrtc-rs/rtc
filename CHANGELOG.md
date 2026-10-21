@@ -82,6 +82,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is implemented.
 - Upgrade `nix` to the newer version that allow compile `ohos` targets.
 
+### Fixed
+
+- **Connect latency: the first DTLS flight no longer waits on a later flush, and can no
+  longer overtake the ICE nomination.** When the controlling side's ICE selects a pair,
+  the DTLS handler's `connect` buffers the ClientHello inside the endpoint; nothing in
+  that event drained it, so the first flight waited for the driver's write drain of a
+  later iteration — a ~200 ms tick on the wire. The handler now pumps the flight into
+  its `write_outs` the moment `connect` returns, so it leaves on the same iteration's
+  drain. Flushing it early resurfaces an ordering hazard the tick flush had been
+  masking: the ClientHello could overtake the ICE nomination (USE-CANDIDATE) ahead of
+  it, reach a peer whose pair was not yet selected, and be dropped — a full 1 s DTLS
+  retransmit cycle. The ICE handler therefore front-inserts its agent's transmits in
+  `poll_write`: the control plane stays first on the wire, its own order preserved.
+  Measured end-to-end connect (in-process loopback, 20 rounds): median 204 ms → 2 ms.
+
 ### Deprecated
 
 -

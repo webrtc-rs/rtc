@@ -150,12 +150,24 @@ impl<'a>
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        // Control-plane first. The agent's transmits — an ICE nomination, a consent check
+        // — must reach the peer before any data-plane packet the pipeline already queued
+        // ahead of this call. The one that matters: the first DTLS ClientHello is queued
+        // the instant the controlling side selects (its own nomination's success
+        // response), and if it overtakes the nomination's USE-CANDIDATE request on the
+        // wire, the peer has not set its selected pair yet and drops it — a full
+        // retransmit cycle of otherwise-dead connect latency. Front-insertion keeps the
+        // agent's traffic first while preserving its own order.
+        let mut agent_transmits = Vec::new();
         while let Some(transmit) = self.ctx.ice_transport.agent.poll_write() {
-            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+            agent_transmits.push(TaggedRTCMessageInternal {
                 now: transmit.now,
                 transport: transmit.transport,
                 message: RTCMessageInternal::Stun(STUNMessage::Raw(transmit.message)),
             });
+        }
+        for message in agent_transmits.into_iter().rev() {
+            self.ctx.write_outs.push_front(message);
         }
 
         self.ctx.write_outs.pop_front()
