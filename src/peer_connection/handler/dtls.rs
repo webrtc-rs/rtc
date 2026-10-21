@@ -396,6 +396,13 @@ impl<'a>
                         dtls_handshake_config,
                         None,
                     )?;
+                    // NOTE: the first flight is buffered inside the endpoint here and only
+                    // leaves on the next driver write drain (same iteration, via the
+                    // events-before-writes loop order). Pumping `poll_transmit` directly
+                    // here instead races the peer's receive loop arming during its own
+                    // connect cascade (measured: first ClientHello lost until the 1 s
+                    // retransmit) — leave the tick-flush in place until that wake-up path
+                    // is fixed.
                 };
             }
         } else {

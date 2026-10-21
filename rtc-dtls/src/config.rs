@@ -629,6 +629,56 @@ pub trait KeyLogger: Send + Sync {
     fn write_line(&self, line: &str);
 }
 
+/// A [`KeyLogger`] that appends to a file — the ergonomic equivalent of handing pion an
+/// already-open file, ready to be named in Wireshark's "TLS pre-master-secret log
+/// filename" field.
+///
+/// `SSLKEYLOGFILE=keys.log` plus `FileKeyLogger::create("keys.log")` is the whole setup:
+/// the file is opened once in append mode and each line is written and flushed as the
+/// handshake derives the keys, so a capture taken while the process runs is decryptable
+/// immediately, with no shutdown wait. Trailing writes after the last handshake are the
+/// only ones a hard kill can lose — the same durability window `SSLKEYLOGFILE` tooling
+/// already accepts.
+///
+/// This is a debugging facility and discloses session secrets: gate it behind an opt-in
+/// flag, exactly as an application gates `SSLKEYLOGFILE` itself.
+pub struct FileKeyLogger {
+    file: std::sync::Mutex<std::fs::File>,
+}
+
+impl std::fmt::Debug for FileKeyLogger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileKeyLogger").finish_non_exhaustive()
+    }
+}
+
+impl FileKeyLogger {
+    /// Opens (or creates) `path` for appending, returning a logger that streams key log
+    /// lines to it.
+    pub fn create<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            file: std::sync::Mutex::new(file),
+        })
+    }
+}
+
+impl KeyLogger for FileKeyLogger {
+    fn write_line(&self, line: &str) {
+        use std::io::Write as _;
+        // A failed write logs and moves on: key logging is a debugging aid, and failing
+        // the handshake over a full disk would trade a capture for the connection.
+        if let Ok(mut file) = self.file.lock() {
+            if let Err(err) = file.write_all(line.as_bytes()).and_then(|()| file.flush()) {
+                log::warn!("key logger write failed: {err}");
+            }
+        }
+    }
+}
+
 /// Emits one `CLIENT_RANDOM` line to the configured [`KeyLogger`], if any.
 ///
 /// `client_random` is the 32-byte ClientHello random of the client end (regardless of which
@@ -807,5 +857,35 @@ impl HandshakeConfig {
 
         // If nothing matches, return the first certificate.
         Ok(self.local_certificates[0].clone())
+    }
+}
+
+#[cfg(test)]
+mod file_key_logger_tests {
+    use super::{FileKeyLogger, KeyLogger};
+
+    /// Lines land verbatim — trailing newline included — and append, not truncate, so a
+    /// restart of the process extends the capture rather than replacing it.
+    #[test]
+    fn appends_lines_verbatim() {
+        let dir = std::env::temp_dir().join(format!("rtc-dtls-keylog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("keys.log");
+
+        for (i, line) in ["CLIENT_RANDOM a0 b1\n", "CLIENT_RANDOM c2 d3\n"].iter().enumerate() {
+            if i == 0 {
+                std::fs::remove_file(&path).ok();
+            }
+            let logger = FileKeyLogger::create(&path).unwrap();
+            logger.write_line(line);
+            // Dropped here: append mode means the next open extends, never truncates.
+        }
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents, "CLIENT_RANDOM a0 b1\nCLIENT_RANDOM c2 d3\n",
+            "both lines must be present, appended, with the newline carried through"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
