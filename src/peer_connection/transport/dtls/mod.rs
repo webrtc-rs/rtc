@@ -62,6 +62,8 @@ pub(crate) struct DtlsTransport {
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
+    /// Where DTLS session key material is reported, from SettingEngine.
+    pub(crate) dtls_key_logger: Option<Arc<dyn ::dtls::config::KeyLogger>>,
 }
 
 pub(crate) struct RTCDtlsTransportConfig {
@@ -74,6 +76,7 @@ pub(crate) struct RTCDtlsTransportConfig {
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
+    pub(crate) dtls_key_logger: Option<Arc<dyn ::dtls::config::KeyLogger>>,
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
 }
 
@@ -89,6 +92,7 @@ impl DtlsTransport {
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
+            dtls_key_logger,
             crypto_provider,
         } = config;
         if !certificates.is_empty() {
@@ -125,6 +129,7 @@ impl DtlsTransport {
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
+            dtls_key_logger,
             crypto_provider,
         })
     }
@@ -254,6 +259,7 @@ impl DtlsTransport {
                 .with_insecure_skip_verify(true)
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
                 .with_verify_peer_certificate(verify_peer_certificate)
+                .with_key_logger(self.dtls_key_logger.clone())
                 .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
                 .with_replay_protection_window(self.replay_protection.dtls)
                 .build(self.dtls_role == RTCDtlsRole::Client, None)?,
@@ -395,6 +401,7 @@ mod tests {
             allow_insecure_verification_algorithm: false,
             disable_certificate_fingerprint_verification: false,
             replay_protection: ReplayProtection::default(),
+            dtls_key_logger: None,
             crypto_provider: crypto::default_provider().expect("test crypto provider"),
         })
         .expect("a self-signed ECDSA certificate is generated when none is supplied")
@@ -503,6 +510,7 @@ mod tests {
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: ReplayProtection::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider.clone(),
             })
         };

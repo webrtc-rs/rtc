@@ -552,6 +552,7 @@ mod tests {
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider,
             },
         )
@@ -581,6 +582,7 @@ mod tests {
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider,
             },
         )

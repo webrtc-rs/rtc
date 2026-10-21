@@ -1,6 +1,7 @@
 use super::flight3::*;
 use super::*;
 use crate::change_cipher_spec::ChangeCipherSpec;
+use crate::config::log_master_secret;
 use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
@@ -682,6 +683,11 @@ fn initalize_cipher_suite(
             };
         }
     }
+
+    // Report the session keys to the key logger, if one is configured, after either
+    // master-secret derivation path. `client_random` here is our own random: flight 5 is
+    // the client's post-ServerHelloDone flight.
+    log_master_secret(cfg, &client_random, &state.master_secret);
 
     if cfg.local_psk_callback.is_none() {
         // Verify that the pair of hash algorithm and signiture is listed.

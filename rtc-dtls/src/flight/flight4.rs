@@ -396,6 +396,11 @@ impl Flight for Flight4 {
                     };
                 }
 
+                // Report the session keys to the key logger, if one is configured. Emitted
+                // here — after either master-secret derivation path, before the suite is
+                // initialized — so the logged secret is the final one.
+                log_master_secret(cfg, &client_random, &state.master_secret);
+
                 if let Some(cipher_suite) = &mut state.cipher_suite
                     && let Err(err) = cipher_suite.init(
                         cfg.provider().clone(),

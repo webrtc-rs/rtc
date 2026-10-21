@@ -363,6 +363,12 @@ pub struct SettingEngine {
     pub(crate) disable_media_engine_multiple_codecs: bool,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    /// Where DTLS session key material is reported, for decrypting captured traffic.
+    ///
+    /// Set from [`with_dtls_key_logger`](SettingEngineBuilder::with_dtls_key_logger); a
+    /// debugging facility, so `None` is the default and shipping it enabled discloses
+    /// session secrets.
+    pub(crate) dtls_key_logger: Option<std::sync::Arc<dyn ::dtls::config::KeyLogger>>,
     pub(crate) receive_mtu: usize,
     pub(crate) mid_generator: Option<Arc<dyn Fn(isize) -> String + Send + Sync>>,
     /// Determines the max size of any message that may be sent through an SCTP transport.
@@ -533,6 +539,23 @@ impl SettingEngineBuilder {
     /// that filters down to nothing usable fails with `ErrNoAvailableCipherSuites`.
     pub fn with_dtls_cipher_suites(mut self, cipher_suites: Vec<CipherSuiteId>) -> Self {
         self.0.dtls_cipher_suites = cipher_suites;
+        self
+    }
+
+    /// Receives DTLS session key material in the NSS key log format, once per handshake.
+    ///
+    /// The lines are what `SSLKEYLOGFILE` expects, so the usual implementation appends them
+    /// to a file Wireshark is pointed at, which is how you decrypt a capture's DTLS handshake
+    /// and the SRTP derived from it. Emitted on both ends of a connection: the client's and
+    /// the server's line for the same association are identical.
+    ///
+    /// A debugging facility: enabling it writes session secrets somewhere. Gate it behind an
+    /// opt-in flag, and leave it unset in production.
+    pub fn with_dtls_key_logger(
+        mut self,
+        key_logger: Option<std::sync::Arc<dyn ::dtls::config::KeyLogger>>,
+    ) -> Self {
+        self.0.dtls_key_logger = key_logger;
         self
     }
 

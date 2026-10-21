@@ -134,6 +134,7 @@ impl RTCPeerConnection {
             disable_certificate_fingerprint_verification: setting_engine
                 .disable_certificate_fingerprint_verification,
             replay_protection: setting_engine.replay_protection,
+            dtls_key_logger: setting_engine.dtls_key_logger.clone(),
             crypto_provider,
         })?;
 

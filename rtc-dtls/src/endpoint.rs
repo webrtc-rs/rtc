@@ -1035,4 +1035,94 @@ mod tests {
         );
         Ok(())
     }
+
+
+    /// The key logger must receive one NSS-format `CLIENT_RANDOM` line per completed handshake,
+    /// and — the property that makes the log actually useful — both ends of the same
+    /// association must write the identical line, because they derive the same master secret
+    /// from the same client random.
+    #[test]
+    fn key_logger_receives_identical_client_random_lines_on_both_ends() -> Result<()> {
+        use crate::config::KeyLogger;
+        use std::sync::Mutex;
+
+        struct CollectingLogger(Mutex<Vec<String>>);
+
+        impl KeyLogger for CollectingLogger {
+            fn write_line(&self, line: &str) {
+                self.0.lock().unwrap().push(line.to_owned());
+            }
+        }
+
+        let provider = crypto::default_provider().expect("built-in provider for tests");
+        let client_log = Arc::new(CollectingLogger(Mutex::new(vec![])));
+        let server_log = Arc::new(CollectingLogger(Mutex::new(vec![])));
+
+        let server_config = ConfigBuilder::default()
+            .with_crypto_provider(provider.clone())
+            .with_insecure_skip_verify(true)
+            .with_key_logger(Some(server_log.clone()))
+            .with_certificates(vec![Certificate::generate_self_signed(
+                vec!["localhost".to_owned()],
+                provider.crypto(),
+            )?])
+            .build(false, None)?;
+        let mut server =
+            Endpoint::new(server_addr(), TransportProtocol::UDP, Some(Arc::new(server_config)));
+
+        let client_config = ConfigBuilder::default()
+            .with_crypto_provider(provider.clone())
+            .with_insecure_skip_verify(true)
+            .with_key_logger(Some(client_log.clone()))
+            .with_cipher_suites(vec![CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256])
+            .build(true, None)?;
+        let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
+        client.connect(Instant::now(), server_addr(), Arc::new(client_config), None)?;
+
+        let mut client_complete = false;
+        let mut server_complete = false;
+        for _ in 0..32 {
+            for event in transfer(&mut client, &mut server, client_addr())? {
+                server_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+            for event in transfer(&mut server, &mut client, server_addr())? {
+                client_complete |= matches!(event, EndpointEvent::HandshakeComplete);
+            }
+            if client_complete && server_complete {
+                break;
+            }
+        }
+        assert!(
+            client_complete && server_complete,
+            "handshake did not complete with key loggers attached"
+        );
+
+        let client_lines = client_log.0.lock().unwrap().clone();
+        let server_lines = server_log.0.lock().unwrap().clone();
+        assert_eq!(client_lines.len(), 1, "client logs exactly one line");
+        assert_eq!(server_lines.len(), 1, "server logs exactly one line");
+
+        let expected_len = "CLIENT_RANDOM ".len() + 32 * 2 + 1 + 48 * 2 + 1;
+        for lines in [&client_lines, &server_lines] {
+            let line = &lines[0];
+            assert_eq!(line.len(), expected_len, "NSS key log line shape");
+            let rest = line
+                .strip_prefix("CLIENT_RANDOM ")
+                .expect("line prefix")
+                .strip_suffix('\n')
+                .expect("trailing newline");
+            let mut parts = rest.split(' ');
+            let random = parts.next().expect("client random");
+            let secret = parts.next().expect("master secret");
+            assert_eq!(random.len(), 64, "32-byte client random in hex");
+            assert_eq!(secret.len(), 96, "48-byte master secret in hex");
+            assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(random.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+        assert_eq!(
+            client_lines[0], server_lines[0],
+            "both ends must log the same client random and master secret"
+        );
+        Ok(())
+    }
 }

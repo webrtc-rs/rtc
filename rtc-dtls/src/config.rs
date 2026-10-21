@@ -32,8 +32,7 @@ use shared::error::*;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::Arc;use std::time::Duration;
 
 use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
@@ -122,6 +121,7 @@ pub struct ConfigBuilder {
     insecure_hashes: bool,
     insecure_verification: bool,
     verify_peer_certificate: Option<VerifyPeerCertificateFn>,
+    key_logger: Option<Arc<dyn KeyLogger>>,
     roots_cas: rustls::RootCertStore,
     client_cas: rustls::RootCertStore,
     verifier_adapter: Option<RustlsVerifierAdapter>,
@@ -147,6 +147,7 @@ impl Default for ConfigBuilder {
             insecure_hashes: false,
             insecure_verification: false,
             verify_peer_certificate: None,
+            key_logger: None,
             roots_cas: rustls::RootCertStore::empty(),
             client_cas: rustls::RootCertStore::empty(),
             verifier_adapter: default_verifier_adapter(),
@@ -278,6 +279,15 @@ impl ConfigBuilder {
         verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     ) -> Self {
         self.verify_peer_certificate = verify_peer_certificate;
+        self
+    }
+
+    /// key_logger, if set, receives the session's key material in the NSS key log format
+    /// once the master secret is derived, for decrypting captured traffic (Wireshark et al.).
+    ///
+    /// A debugging facility: every enabled process writes session secrets somewhere.
+    pub fn with_key_logger(mut self, key_logger: Option<Arc<dyn KeyLogger>>) -> Self {
+        self.key_logger = key_logger;
         self
     }
 
@@ -587,6 +597,7 @@ impl ConfigBuilder {
             insecure_skip_verify: self.insecure_skip_verify,
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
+            key_logger: self.key_logger.clone(),
             roots_cas: self.roots_cas,
             server_cert_verifier,
             client_cert_verifier,
@@ -605,6 +616,45 @@ impl ConfigBuilder {
 /// goes.
 pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
+
+/// Receives handshake key material in the NSS key log format, once per completed key
+/// derivation.
+///
+/// The lines are exactly what `SSLKEYLOGFILE` expects, so an implementation typically
+/// appends them to a file that Wireshark (or another analyzer) is pointed at to decrypt
+/// DTLS and the SRTP derived from it. This is a debugging facility: shipping it enabled
+/// discloses every session's secrets, so applications gate it behind an opt-in flag.
+pub trait KeyLogger: Send + Sync {
+    /// Receives one ready-to-append key log line, including its trailing newline.
+    fn write_line(&self, line: &str);
+}
+
+/// Emits one `CLIENT_RANDOM` line to the configured [`KeyLogger`], if any.
+///
+/// `client_random` is the 32-byte ClientHello random of the client end (regardless of which
+/// end we are), and `master_secret` the derived secret. Both are the raw bytes; the
+/// formatting and newline are added here so implementations cannot get the format wrong.
+pub(crate) fn log_master_secret(
+    cfg: &HandshakeConfig,
+    client_random: &[u8],
+    master_secret: &[u8],
+) {
+    use std::fmt::Write as _;
+    let Some(logger) = cfg.key_logger.as_ref() else {
+        return;
+    };
+    let mut line = String::with_capacity(13 + client_random.len() * 2 + 1 + master_secret.len() * 2 + 1);
+    line.push_str("CLIENT_RANDOM ");
+    for byte in client_random {
+        let _ = write!(line, "{byte:02x}");
+    }
+    line.push(' ');
+    for byte in master_secret {
+        let _ = write!(line, "{byte:02x}");
+    }
+    line.push('\n');
+    logger.write_line(&line);
+}
 
 /// Generates a self-signed certificate, as WebRTC endpoints use.
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
@@ -646,6 +696,8 @@ pub struct HandshakeConfig {
     pub(crate) insecure_skip_verify: bool,
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
+    /// Where completed key derivations are reported, for traffic decryption.
+    pub(crate) key_logger: Option<Arc<dyn KeyLogger>>,
     pub(crate) roots_cas: rustls::RootCertStore,
     pub(crate) server_cert_verifier: Option<Arc<dyn ServerCertVerifier>>,
     pub(crate) client_cert_verifier: Option<Arc<dyn ClientCertVerifier>>,
@@ -703,6 +755,7 @@ impl HandshakeConfig {
             insecure_skip_verify: false,
             insecure_verification: false,
             verify_peer_certificate: None,
+            key_logger: None,
             roots_cas: rustls::RootCertStore::empty(),
             server_cert_verifier: default_verifier_adapter().and_then(|adapter| {
                 server_cert_verifier(Arc::new(gen_self_signed_root_cert()), &adapter).ok()
