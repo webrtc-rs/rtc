@@ -192,7 +192,6 @@ impl DTLSConn {
                 srv_cli_str(self.state.is_client),
                 self.current_flight
             );
-            self.current_retransmit_timer = None;
             let result = self.current_flight.parse(
                 /*&mut self.handle_queue_tx,*/ &mut self.state,
                 &self.cache,
@@ -216,6 +215,9 @@ impl DTLSConn {
                     }
                 }
                 Ok(next_flight) => {
+                    // A partial or repeated flight must not cancel retransmission.
+                    // Only a complete next flight advances the handshake (RFC 6347 4.2.4).
+                    self.current_retransmit_timer = None;
                     debug!(
                         "[handshake:{}] {} -> {}",
                         srv_cli_str(self.state.is_client),
