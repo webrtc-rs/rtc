@@ -41,12 +41,14 @@ use shared::time::SystemInstant;
 
 pub mod certificate;
 pub mod codec;
+pub mod csrc;
 pub mod data_channel;
 pub mod ice_candidate;
 pub mod ice_candidate_pair;
 pub mod media;
 pub mod peer_connection;
 pub mod rtp_stream;
+pub mod sctp_transport;
 pub mod transport;
 
 /// The type of a statistics object.
@@ -103,6 +105,12 @@ pub enum RTCStatsType {
     /// Statistics for a certificate.
     #[serde(rename = "certificate")]
     Certificate,
+    /// Statistics for the SCTP association carrying data channels.
+    #[serde(rename = "sctp-transport")]
+    SctpTransport,
+    /// Statistics for a contributing source (CSRC) of an inbound RTP stream.
+    #[serde(rename = "csrc")]
+    Csrc,
 }
 
 /// The unique identifier for a statistics object.

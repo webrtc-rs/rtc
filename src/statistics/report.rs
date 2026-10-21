@@ -17,6 +17,8 @@ use crate::statistics::stats::rtp_stream::received::inbound::RTCInboundRtpStream
 use crate::statistics::stats::rtp_stream::received::remote_inbound::RTCRemoteInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::outbound::RTCOutboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::remote_outbound::RTCRemoteOutboundRtpStreamStats;
+use crate::statistics::stats::sctp_transport::RTCSctpTransportStats;
+use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
 use crate::statistics::stats::transport::RTCTransportStats;
 use std::collections::HashMap;
 
@@ -56,6 +58,10 @@ pub enum RTCStatsReportEntry {
     VideoSource(RTCVideoSourceStats),
     /// Audio playout statistics.
     AudioPlayout(RTCAudioPlayoutStats),
+    /// SCTP transport statistics.
+    SctpTransport(RTCSctpTransportStats),
+    /// Contributing source (CSRC) statistics for an inbound RTP stream.
+    Csrc(RTCRTPContributingSourceStats),
 }
 
 impl RTCStatsReportEntry {
@@ -77,6 +83,8 @@ impl RTCStatsReportEntry {
             RTCStatsReportEntry::AudioSource(_) => RTCStatsType::MediaSource,
             RTCStatsReportEntry::VideoSource(_) => RTCStatsType::MediaSource,
             RTCStatsReportEntry::AudioPlayout(_) => RTCStatsType::MediaPlayout,
+            RTCStatsReportEntry::SctpTransport(_) => RTCStatsType::SctpTransport,
+            RTCStatsReportEntry::Csrc(_) => RTCStatsType::Csrc,
         }
     }
 
@@ -106,6 +114,8 @@ impl RTCStatsReportEntry {
             RTCStatsReportEntry::AudioSource(s) => &s.media_source_stats.stats.id,
             RTCStatsReportEntry::VideoSource(s) => &s.media_source_stats.stats.id,
             RTCStatsReportEntry::AudioPlayout(s) => &s.stats.id,
+            RTCStatsReportEntry::SctpTransport(s) => &s.stats.id,
+            RTCStatsReportEntry::Csrc(s) => &s.stats.id,
         }
     }
 }
@@ -166,6 +176,20 @@ impl RTCStatsReport {
             entries: map,
             order,
         }
+    }
+
+    /// Appends an entry produced outside the accumulator snapshot.
+    ///
+    /// `get_stats` reads a few objects live from their owners (the SCTP association,
+    /// the receivers' contributing-source lists) instead of maintaining parallel
+    /// accumulator copies; this is how those entries join the report. Inserting
+    /// an id that is already present replaces it in place, keeping its position.
+    pub(crate) fn push_entry(&mut self, entry: RTCStatsReportEntry) {
+        let id = entry.id().to_string();
+        if !self.entries.contains_key(&id) {
+            self.order.push(id.clone());
+        }
+        self.entries.insert(id, entry);
     }
 
     /// Returns the number of stats entries in the report.
@@ -252,6 +276,22 @@ impl RTCStatsReport {
     pub fn candidate_pairs(&self) -> impl Iterator<Item = &RTCIceCandidatePairStats> {
         self.iter().filter_map(|e| match e {
             RTCStatsReportEntry::IceCandidatePair(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    /// Returns the SCTP transport stats, if an SCTP association has been negotiated.
+    pub fn sctp_transport(&self) -> Option<&RTCSctpTransportStats> {
+        self.iter().find_map(|e| match e {
+            RTCStatsReportEntry::SctpTransport(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    /// Returns an iterator over all contributing source stats.
+    pub fn contributing_sources(&self) -> impl Iterator<Item = &RTCRTPContributingSourceStats> {
+        self.iter().filter_map(|e| match e {
+            RTCStatsReportEntry::Csrc(s) => Some(s),
             _ => None,
         })
     }

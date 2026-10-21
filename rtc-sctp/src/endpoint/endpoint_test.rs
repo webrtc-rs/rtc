@@ -3773,3 +3773,68 @@ fn test_abort_closes_both_sides() -> Result<()> {
     pair.client_conn_mut(client_ch).abort()?;
     Ok(())
 }
+
+/// The association-level byte counters and congestion getters back the
+/// `sctp-transport` stats entry. `bytes_sent`/`bytes_received` count user payload
+/// once per DATA chunk — retransmissions do not re-count — and `cwnd`/`rwnd`/`mtu`
+/// must be readable while established so a stats snapshot can report live state.
+#[test]
+fn test_association_stats_count_payload_and_expose_congestion_state() -> Result<()> {
+    let si: u16 = 1;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    let before_client = pair.client_conn_mut(client_ch).stats().get_bytes_sent();
+    let before_server = pair.server_conn_mut(server_ch).stats().get_bytes_received();
+    // The DCEP handshake and the stream-open traffic already counted:
+    assert!(before_client > 0, "handshake user data must be counted");
+    assert!(before_server > 0, "handshake user data must be counted");
+
+    let payload = Bytes::from(vec![0xABu8; 1024]);
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?
+        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.drive();
+
+    // Read it out so the server's reassembly delivers; counters are recorded at
+    // chunk acceptance, which happened during drive.
+    let mut buf = vec![0u8; 2048];
+    let chunks = pair
+        .server_stream(server_ch, si)?
+        .read_sctp()?
+        .expect("the payload must arrive");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(n, 1024, "the payload must be intact");
+    pair.drive();
+
+    let client = pair.client_conn_mut(client_ch);
+    assert_eq!(
+        client.stats().get_bytes_sent(),
+        before_client + 1024,
+        "sent bytes must count the payload exactly once"
+    );
+    assert!(
+        client.stats().get_bytes_sent() >= 1024,
+        "sent bytes must at least cover the payload"
+    );
+
+    let server = pair.server_conn_mut(server_ch);
+    assert_eq!(
+        server.stats().get_bytes_received(),
+        before_server + 1024,
+        "received bytes must count the payload exactly once"
+    );
+
+    // Congestion state is live and readable while established. cwnd is seeded at
+    // handshake, rwnd once a SACK arrives (establish_session_pair drove several),
+    // and mtu is fixed by config. All three must be non-zero on an established pair.
+    let client = pair.client_conn_mut(client_ch);
+    assert!(client.cwnd() > 0, "cwnd must be positive while established");
+    assert!(client.mtu() > 0, "mtu must be positive");
+    let server = pair.server_conn_mut(server_ch);
+    assert!(
+        server.rwnd() > 0,
+        "rwnd must be positive after the client's SACK advertised receive credit"
+    );
+    Ok(())
+}

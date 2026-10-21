@@ -309,7 +309,10 @@ use crate::rtp_transceiver::{
 };
 use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use crate::statistics::report::RTCStatsReport;
+use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
+use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
+use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::AgentConfig;
@@ -2471,9 +2474,58 @@ impl RTCPeerConnection {
         self.update_ice_agent_stats(now);
         // Update codec stats from transceivers before taking snapshot
         self.update_codec_stats();
-        self.pipeline_context
+        let mut report = self
+            .pipeline_context
             .stats
-            .snapshot_with_selector(now, selector)
+            .snapshot_with_selector(now, selector);
+
+        // The SCTP association and the receivers' source lists are read live rather than
+        // maintained as parallel accumulator copies: their state is cumulative, so a fresh
+        // read each call is equivalent and cannot drift.
+        if let Some(sctp) = self
+            .pipeline_context
+            .sctp_handler_context
+            .sctp_transport
+            .stats(now)
+        {
+            report.push_entry(RTCStatsReportEntry::SctpTransport(sctp));
+        }
+        self.append_contributing_source_stats(now, &mut report);
+
+        report
+    }
+
+    /// Appends one `csrc` stats entry per (inbound stream, CSRC) pair that contributed
+    /// within the receiver's source memory window.
+    ///
+    /// The stream id in each entry mirrors the accumulator's inbound-stream id
+    /// (`RTCInboundRTPStream_{kind}_{ssrc}`) so a consumer can join the two entries.
+    fn append_contributing_source_stats(&self, now: Instant, report: &mut RTCStatsReport) {
+        for transceiver in &self.rtp_transceivers {
+            let Some(receiver) = transceiver.receiver() else {
+                continue;
+            };
+            let kind = receiver.kind();
+            for track_ssrc in receiver.track().ssrcs() {
+                for csrc in receiver.get_contributing_sources() {
+                    report.push_entry(RTCStatsReportEntry::Csrc(
+                        RTCRTPContributingSourceStats {
+                            stats: RTCStats {
+                                timestamp: SystemInstant::now(now),
+                                typ: RTCStatsType::Csrc,
+                                id: format!("RTCRTPContributingSource_{track_ssrc}_{}", csrc.source),
+                            },
+                            contributor_ssrc: csrc.source,
+                            inbound_rtp_stream_id: format!(
+                                "RTCInboundRTPStream_{kind}_{track_ssrc}"
+                            ),
+                            packets_contributed_to: csrc.packets_contributed_to,
+                            audio_level: csrc.audio_level,
+                        },
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -3156,4 +3208,98 @@ mod tests {
             "audio transceiver must be re-associated for the follow-up offer"
         );
     }
+
+    // The two stats entries `get_stats` reads live rather than from the accumulator: the
+    // `sctp-transport` entry once an association exists, and `csrc` entries from the receivers'
+    // source lists. Both are cumulative state read at snapshot time.
+    #[test]
+    fn get_stats_reports_sctp_transport_and_contributing_sources() {
+        use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
+        use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+        use crate::statistics::StatsSelector;
+        use crate::statistics::stats::RTCStatsType;
+        use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+        use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
+
+        let mut media_engine = MediaEngine::default();
+        media_engine
+            .register_default_codecs()
+            .expect("register default codecs");
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .with_media_engine(media_engine)
+            .build(Instant::now())
+            .expect("build peer connection");
+
+        // Before any SCTP negotiation and before any media: neither entry exists.
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        assert!(report.sctp_transport().is_none());
+        assert_eq!(report.contributing_sources().count(), 0);
+
+        // Start SCTP as negotiation does. `start()` alone creates the endpoint but no
+        // association, which is when the entry should still be absent: reporting congestion
+        // state for an association that does not exist would be fiction.
+        pc.sctp_transport_mut()
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        assert!(
+            report.sctp_transport().is_none(),
+            "no association yet, so no sctp-transport entry"
+        );
+
+        // Once the association exists the entry reads live, so it appears without any
+        // accumulator bookkeeping.
+        pc.pipeline_context
+            .sctp_handler_context
+            .sctp_transport
+            .sctp_associations
+            .insert(AssociationHandle(0), ::sctp::Association::default());
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        let sctp = report
+            .sctp_transport()
+            .expect("association exists: entry present");
+        assert_eq!(sctp.stats.id, "RTCSctpTransport");
+        assert_eq!(sctp.transport_id, "RTCTransport");
+        assert_eq!(sctp.stats.typ, RTCStatsType::SctpTransport);
+        // A default association has no measured state; the entry reports the zeros honestly.
+        assert_eq!(sctp.congestion_window, 0);
+        assert_eq!(sctp.bytes_sent, 0);
+
+        // csrc entries come from receivers that have seen CSRC-carrying packets. Register the
+        // stream on the receiver's track the way the inbound pipeline does, record a packet,
+        // and the entry must appear joined to that inbound stream's id.
+        pc.add_transceiver_from_kind(crate::rtp_transceiver::rtp_sender::RtpCodecKind::Video, None)
+            .expect("add transceiver");
+        let transceiver = pc.rtp_transceivers.last_mut().expect("transceiver");
+        let receiver = transceiver.receiver_mut().as_mut().expect("receiver");
+        receiver.track_mut().add_coding(RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(5000),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut header = rtp::Header::default();
+        header.ssrc = 5000;
+        header.csrc = vec![0x1111_1111];
+        receiver.on_rtp_packet(Instant::now(), &header);
+
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        let csrcs: Vec<_> = report.contributing_sources().collect();
+        assert_eq!(csrcs.len(), 1, "one csrc entry for one contributing source");
+        assert_eq!(csrcs[0].contributor_ssrc, 0x1111_1111);
+        assert_eq!(csrcs[0].packets_contributed_to, 1);
+        assert_eq!(
+            csrcs[0].inbound_rtp_stream_id, "RTCInboundRTPStream_video_5000",
+            "the entry joins to the inbound stream it contributed to"
+        );
+    }
 }
+

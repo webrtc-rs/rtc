@@ -6,6 +6,8 @@ pub struct AssociationStats {
     n_t3timeouts: u64,
     n_ack_timeouts: u64,
     n_fast_retrans: u64,
+    bytes_sent: u64,
+    bytes_received: u64,
 }
 
 impl AssociationStats {
@@ -59,6 +61,33 @@ impl AssociationStats {
         self.n_fast_retrans
     }
 
+    /// Counts application payload bytes accepted for transmission.
+    ///
+    /// One call per DATA chunk at `send_payload_data` time, so the count is of user data
+    /// handed to the association — not of retransmissions of it, which re-send bytes
+    /// already counted here.
+    pub fn add_bytes_sent(&mut self, bytes: usize) {
+        self.bytes_sent += bytes as u64;
+    }
+
+    /// The total application payload bytes accepted for transmission.
+    pub fn get_bytes_sent(&self) -> u64 {
+        self.bytes_sent
+    }
+
+    /// Counts application payload bytes accepted from the peer.
+    ///
+    /// Counted once per DATA chunk accepted into the payload queue; duplicates dropped
+    /// before reassembly are not counted.
+    pub fn add_bytes_received(&mut self, bytes: usize) {
+        self.bytes_received += bytes as u64;
+    }
+
+    /// The total application payload bytes accepted from the peer.
+    pub fn get_bytes_received(&self) -> u64 {
+        self.bytes_received
+    }
+
     /// Zeroes every counter.
     pub fn reset(&mut self) {
         self.n_datas = 0;
@@ -66,5 +95,7 @@ impl AssociationStats {
         self.n_t3timeouts = 0;
         self.n_ack_timeouts = 0;
         self.n_fast_retrans = 0;
+        self.bytes_sent = 0;
+        self.bytes_received = 0;
     }
 }

@@ -3,10 +3,14 @@ use crate::peer_connection::transport::RTCTransportId;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
+use crate::statistics::stats::sctp_transport::RTCSctpTransportStats;
+use crate::statistics::stats::{RTCStats, RTCStatsType};
 use sctp::{Association, AssociationHandle};
 use shared::error::Result;
+use shared::time::SystemInstant;
 use shared::{TransportContext, TransportProtocol};
 use std::collections::HashMap;
+use std::time::Instant;
 
 pub(crate) mod capabilities;
 pub(crate) mod state;
@@ -134,6 +138,33 @@ impl SctpTransport {
     /// attribute's value will be null until the SCTP transport goes into the `connected` state".
     pub(crate) fn max_channels(&self) -> Option<u16> {
         self.association()?.negotiated_max_streams()
+    }
+
+    /// Produces the `sctp-transport` stats entry, read live from the association.
+    ///
+    /// `None` while no association exists — before negotiation completes, or after the
+    /// association closed and was removed. The counters are cumulative association
+    /// state, so a fresh snapshot taken each call is lossless compared to maintaining
+    /// a parallel accumulator.
+    pub(crate) fn stats(&self, now: Instant) -> Option<RTCSctpTransportStats> {
+        let association = self.association()?;
+        let association_stats = association.stats();
+        Some(RTCSctpTransportStats {
+            stats: RTCStats {
+                timestamp: SystemInstant::now(now),
+                typ: RTCStatsType::SctpTransport,
+                id: "RTCSctpTransport".to_string(),
+            },
+            // Matches the id the accumulator's `RTCTransportStats` entry is filed under,
+            // which is what `transportId` exists to point at.
+            transport_id: "RTCTransport".to_string(),
+            smoothed_round_trip_time: association.rtt().as_secs_f64(),
+            congestion_window: association.cwnd(),
+            receiver_window: association.rwnd(),
+            mtu: association.mtu(),
+            bytes_sent: association_stats.get_bytes_sent(),
+            bytes_received: association_stats.get_bytes_received(),
+        })
     }
 
     /// Start the SCTPTransport. Since both local and remote parties must mutually

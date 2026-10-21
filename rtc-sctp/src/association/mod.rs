@@ -655,6 +655,34 @@ impl Association {
         Duration::from_millis(self.rto_mgr.srtt)
     }
 
+    /// The current congestion window, in bytes.
+    ///
+    /// Corresponds to `spinfo_cwnd` from [RFC 6458]. Zero before the association reaches
+    /// the `Established` state and the first transmission window is computed.
+    ///
+    /// [RFC 6458]: https://datatracker.ietf.org/doc/html/rfc6458#section-8.1.1
+    pub fn cwnd(&self) -> u32 {
+        self.cwnd
+    }
+
+    /// The peer's latest advertised receiver window (`a_rwnd`), in bytes.
+    ///
+    /// Corresponds to `sstat_rwnd` from [RFC 6458]. Zero until the first SACK arrives.
+    ///
+    /// [RFC 6458]: https://datatracker.ietf.org/doc/html/rfc6458#section-8.1.2
+    pub fn rwnd(&self) -> u32 {
+        self.rwnd
+    }
+
+    /// The path MTU the association transmits with, in bytes.
+    ///
+    /// This is the SCTP-level MTU — the maximum SCTP packet size — not the IP-layer MTU,
+    /// and it is already the configured/negotiated value: it accounts for the space taken by
+    /// the common SCTP header and a DATA chunk header.
+    pub fn mtu(&self) -> u32 {
+        self.mtu
+    }
+
     /// The local IP address which was used when the peer established
     /// the association
     ///
@@ -1394,6 +1422,7 @@ impl Association {
         let immediate_sack = d.immediate_sack;
 
         if stream_handle_data && let Some(s) = self.streams.get_mut(&d.stream_identifier) {
+            self.stats.add_bytes_received(d.user_data.len());
             self.events.push_back(Event::DatagramReceived);
             if s.handle_data(d) && s.reassembly_queue.is_readable() {
                 self.events.push_back(Event::Stream(StreamEvent::Readable {
@@ -1888,12 +1917,12 @@ impl Association {
         if self.cwnd <= self.ssthresh {
             // RFC 4096, sec 7.2.1.  Slow-Start
             //   o  When cwnd is less than or equal to ssthresh, an SCTP endpoint MUST
-            //		use the slow-start algorithm to increase cwnd only if the current
+            //          use the slow-start algorithm to increase cwnd only if the current
             //      congestion window is being fully utilized, an incoming SACK
             //      advances the Cumulative TSN Ack Point, and the data sender is not
             //      in Fast Recovery.  Only when these three conditions are met can
             //      the cwnd be increased; otherwise, the cwnd MUST not be increased.
-            //		If these conditions are met, then cwnd MUST be increased by, at
+            //          If these conditions are met, then cwnd MUST be increased by, at
             //      most, the lesser of 1) the total size of the previously
             //      outstanding DATA chunk(s) acknowledged, and 2) the destination's
             //      path MTU.
@@ -2452,7 +2481,7 @@ impl Association {
                     //      Retransmit those K DATA chunks in a single packet.  When a Fast
                     //      Retransmit is being performed, the sender SHOULD ignore the value
                     //      of cwnd and SHOULD NOT delay retransmission for this single
-                    //		packet.
+                    //          packet.
 
                     // Padded wire size, the same accounting
                     // bundle_data_chunks_into_packets uses for bundle
@@ -3257,6 +3286,7 @@ impl Association {
     pub(crate) fn send_payload_data(&mut self, id: MessageId, mut chunks: Vec<ChunkPayloadData>) {
         for c in &mut chunks {
             c.message_id = Some(id);
+            self.stats.add_bytes_sent(c.user_data.len());
         }
         self.pending_queue.push_message(chunks);
 

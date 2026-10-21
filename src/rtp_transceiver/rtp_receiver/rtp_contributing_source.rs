@@ -42,6 +42,14 @@ pub struct RTCRtpContributingSource {
     /// Corresponds to the `rtpTimestamp` attribute in
     /// [RTCRtpContributingSource](https://www.w3.org/TR/webrtc/#dom-rtcrtpcontributingsource-rtptimestamp).
     pub rtp_timestamp: u32,
+
+    /// The number of RTP packets this source has contributed to since it started being tracked.
+    ///
+    /// Not part of the W3C dictionary: it backs the `packetsContributedTo` field of the
+    /// [`csrc` stats entry](https://www.w3.org/TR/webrtc-stats/) that pion exposes as
+    /// `RTPContributingSourceStats`, so stats consumers can tell a long-standing mixer
+    /// contributor from a one-off.
+    pub packets_contributed_to: u32,
 }
 
 /// Synchronization source information.
