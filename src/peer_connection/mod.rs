@@ -1792,6 +1792,22 @@ impl RTCPeerConnection {
         Ok(())
     }
 
+    /// Returns the local ICE credentials — the username fragment and password the local
+    /// transport is (or, after a restart is armed, will be) listening with.
+    ///
+    /// This is what an I/O layer demultiplexing several peer connections over one shared
+    /// UDP socket keys incoming STUN by: an ICE connectivity check's `USERNAME` attribute
+    /// carries the local fragment of exactly one agent, so a shared-socket driver can route
+    /// the packet to the right connection. The fragments are generated at construction and
+    /// replaced on [`restart_ice`](Self::restart_ice), so reading them through this accessor
+    /// at bind time — and again on every rebind — always yields the fragment matching the
+    /// traffic about to arrive.
+    ///
+    /// [`RTCIceParameters`]: crate::peer_connection::transport::RTCIceParameters
+    pub fn local_ice_parameters(&self) -> Result<RTCIceParameters> {
+        self.ice_transport().get_local_parameters()
+    }
+
     /// Tells the peer connection that ICE should be restarted.
     ///
     /// This method causes the next call to `create_offer` to generate an offer that
