@@ -61,6 +61,15 @@ pub struct TransportConfig {
     max_num_outbound_streams: u16,
     max_num_inbound_streams: u16,
     timer_config: TimerConfig,
+    /// Whether packets carrying a zero checksum are accepted, per [RFC 9653].
+    ///
+    /// Off by default: it is only sound when the SCTP packets ride inside an
+    /// integrity-protected transport — for WebRTC, DTLS. On an association carrying it,
+    /// incoming packets whose checksum field is zero skip the CRC-32C (the DTLS record
+    /// MAC already covers them bit-for-bit), and the INIT/INIT-ACK advertises the
+    /// capability to the peer. Outgoing packets go zero-checksum once the *peer*
+    /// advertised the capability — see the association's `send_zero_checksum`.
+    enable_zero_checksum: bool,
 }
 
 impl Default for TransportConfig {
@@ -72,6 +81,7 @@ impl Default for TransportConfig {
             max_num_outbound_streams: u16::MAX,
             max_num_inbound_streams: u16::MAX,
             timer_config: TimerConfig::default(),
+            enable_zero_checksum: false,
         }
     }
 }
@@ -81,6 +91,25 @@ impl TransportConfig {
     pub fn with_sctp_port(mut self, value: u16) -> Self {
         self.sctp_port = value;
         self
+    }
+
+    /// Accepts packets with a zero checksum, per [RFC 9653], and advertises that in
+    /// INIT/INIT-ACK.
+    ///
+    /// Only sound when the association rides a transport that already integrity-protects
+    /// every packet — WebRTC's DTLS. This is the receive half: it covers what *this*
+    /// endpoint will accept. The transmit half turns on when the peer advertises the
+    /// capability in its own INIT/INIT-ACK.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub fn with_enable_zero_checksum(mut self, value: bool) -> Self {
+        self.enable_zero_checksum = value;
+        self
+    }
+
+    /// Whether this configuration accepts zero-checksum packets ([RFC 9653]).
+    pub fn enable_zero_checksum(&self) -> bool {
+        self.enable_zero_checksum
     }
 
     /// Sets the advertised receive window (a_rwnd), bounding how much unacknowledged data a peer

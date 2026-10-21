@@ -118,7 +118,10 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         data: Bytes,
     ) -> Option<(AssociationHandle, DatagramEvent)> {
-        let partial_decode = match PartialDecode::unmarshal(&data) {
+        // Lenient per RFC 9653: a zero checksum field passes without CRC-32C, for the
+        // association to accept-or-drop by its own configuration. Non-zero checksums are
+        // verified as before, and INIT / COOKIE ECHO are always verified even when zero.
+        let partial_decode = match PartialDecode::unmarshal_lenient(&data) {
             Ok(x) => x,
             Err(err) => {
                 trace!("malformed header: {}", err);

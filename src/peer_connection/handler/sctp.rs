@@ -1256,6 +1256,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1825,6 +1826,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1890,6 +1892,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );

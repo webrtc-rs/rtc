@@ -143,6 +143,7 @@ impl RTCPeerConnection {
             setting_engine.sctp_max_message_size,
             setting_engine.sctp_max_receive_buffer_size,
             setting_engine.sctp_mtu,
+            setting_engine.sctp_enable_zero_checksum,
             sctp_transport_id,
             dtls_transport_id,
         );

@@ -55,6 +55,10 @@ pub(crate) struct SctpTransport {
     // `EndpointConfig` in `start()`. None uses the sctp crate default (INITIAL_MTU, 1191).
     pub(crate) mtu: Option<u32>,
 
+    // Whether the association may accept and send zero-checksum packets ([RFC 9653]),
+    // from SettingEngine.
+    pub(crate) enable_zero_checksum: bool,
+
     pub(crate) internal_buffer: Vec<u8>,
 }
 
@@ -63,6 +67,7 @@ impl SctpTransport {
         max_message_size: SctpMaxMessageSize,
         max_receive_buffer_size: Option<u32>,
         mtu: Option<u32>,
+        enable_zero_checksum: bool,
         id: RTCTransportId,
         dtls_transport_id: RTCTransportId,
     ) -> Self {
@@ -78,6 +83,7 @@ impl SctpTransport {
             negotiated_max_message_size: None,
             max_receive_buffer_size,
             mtu,
+            enable_zero_checksum,
             internal_buffer: vec![],
         }
     }
@@ -216,6 +222,9 @@ impl SctpTransport {
         if let Some(recv_buf) = self.max_receive_buffer_size {
             sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
         }
+        if self.enable_zero_checksum {
+            sctp_transport_config = sctp_transport_config.with_enable_zero_checksum(true);
+        }
         //TODO: add remote_port support
 
         if dtls_role == RTCDtlsRole::Client {
@@ -258,6 +267,7 @@ mod tests {
             configured,
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -314,6 +324,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -327,6 +338,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -343,6 +355,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -365,6 +378,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             Some(200_000),
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -393,6 +407,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -425,6 +440,7 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             Some(1500),
+            false,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );

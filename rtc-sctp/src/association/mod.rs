@@ -27,12 +27,13 @@ use crate::chunk::{
 use crate::config::{COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, TransportConfig};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
-    Param,
+    DTLS_ERROR_DETECTION_METHOD, Param,
     param_heartbeat_info::ParamHeartbeatInfo,
     param_outgoing_reset_request::ParamOutgoingResetRequest,
     param_reconfig_response::{ParamReconfigResponse, ReconfigResult},
     param_state_cookie::ParamStateCookie,
     param_supported_extensions::ParamSupportedExtensions,
+    param_zero_checksum_acceptable::ParamZeroChecksumAcceptable,
 };
 use crate::queue::{
     payload_queue::PayloadQueue,
@@ -224,6 +225,12 @@ pub struct Association {
     // Congestion control parameters
     max_receive_buffer_size: u32,
     // my congestion window size
+    /// Accept zero-checksum packets ([RFC 9653]) on this association: config-driven.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) recv_zero_checksum: bool,
+    /// Send zero-checksum packets: set when the peer advertised the capability.
+    pub(crate) send_zero_checksum: bool,
     pub(crate) cwnd: u32,
     // calculated peer's receiver windows size
     rwnd: u32,
@@ -262,6 +269,8 @@ impl Default for Association {
         Association {
             side: Side::default(),
             state: AssociationState::default(),
+            recv_zero_checksum: false,
+            send_zero_checksum: false,
             handshake_completed: false,
             max_message_size: 0,
             inflight_queue_length: 0,
@@ -389,9 +398,17 @@ impl Association {
             tsn += 1;
         }
 
+        let recv_zero_checksum = config.enable_zero_checksum();
+
         let mut this = Association {
             side,
             handshake_completed: false,
+            // Zero-checksum acceptance is a configuration property, not a negotiated
+            // one: it says what this endpoint will take, and travels in the INIT as the
+            // RFC 9653 parameter. The send side starts false and turns on only when the
+            // peer's INIT/INIT-ACK advertises the capability back.
+            recv_zero_checksum,
+            send_zero_checksum: false,
             max_receive_buffer_size: config.max_receive_buffer_size(),
             max_message_size: config.max_message_size(),
             my_max_num_outbound_streams: config.max_num_outbound_streams(),
@@ -428,6 +445,11 @@ impl Association {
                 ..Default::default()
             };
             init.set_supported_extensions();
+            if this.recv_zero_checksum {
+                init.params.push(Box::new(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                }));
+            }
 
             this.set_state(AssociationState::CookieWait);
             this.stored_init = Some(init);
@@ -560,6 +582,16 @@ impl Association {
                 }*/
 
                 if let Payload::PartialDecode(partial_decode) = transmit.message {
+                    // RFC 9653: an association that never enabled zero-checksum
+                    // acceptance must not take packets the endpoint let through on the
+                    // lenient path — dropping here is what keeps the config meaning.
+                    if partial_decode.checksum_is_zero && !self.recv_zero_checksum {
+                        warn!(
+                            "[{}] discarding zero-checksum packet: not enabled",
+                            self.side
+                        );
+                        return;
+                    }
                     debug!(
                         "[{}] recving {} bytes",
                         self.side,
@@ -1092,6 +1124,18 @@ impl Association {
         self.source_port = p.common_header.destination_port;
         self.destination_port = p.common_header.source_port;
 
+        // RFC 9653: the peer advertising the DTLS error-detection method is permission
+        // for *our* outgoing packets to drop the CRC-32C from here on.
+        self.send_zero_checksum = i.params.iter().any(|param| {
+            matches!(
+                param.as_any().downcast_ref::<ParamZeroChecksumAcceptable>(),
+                Some(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                    ..
+                })
+            )
+        });
+
         // 13.2 This is the last TSN received in sequence.  This value
         // is set initially by taking the peer's initial TSN,
         // received in the INIT or INIT ACK chunk, and
@@ -1154,6 +1198,11 @@ impl Association {
         }
 
         init_ack.set_supported_extensions();
+        if self.recv_zero_checksum {
+            init_ack.params.push(Box::new(ParamZeroChecksumAcceptable {
+                edmid: DTLS_ERROR_DETECTION_METHOD,
+            }));
+        }
 
         outbound.chunks = vec![Box::new(init_ack)];
 
@@ -1183,6 +1232,18 @@ impl Association {
         self.my_max_num_outbound_streams =
             std::cmp::min(i.num_outbound_streams, self.my_max_num_outbound_streams);
         self.peer_verification_tag = i.initiate_tag;
+
+        // RFC 9653: see the mirror note in handle_init.
+        self.send_zero_checksum = i.params.iter().any(|param| {
+            matches!(
+                param.as_any().downcast_ref::<ParamZeroChecksumAcceptable>(),
+                Some(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                    ..
+                })
+            )
+        });
+
         self.peer_last_tsn = if i.initial_tsn == 0 {
             u32::MAX
         } else {
@@ -2194,7 +2255,14 @@ impl Association {
         let mut buf = BytesMut::with_capacity(
             COMMON_HEADER_SIZE as usize + CHUNK_HEADER_SIZE + chunk.value_length() + 3,
         );
-        Packet::write_framed(&common_header, std::iter::once(chunk), &mut buf)?;
+        // SACK / FORWARD-TSN never carry a chunk that mandates a checksum, so the
+        // association's send flag decides directly.
+        Packet::write_framed_with_checksum(
+            &common_header,
+            std::iter::once(chunk),
+            &mut buf,
+            self.send_zero_checksum,
+        )?;
         Ok(buf.freeze())
     }
 
@@ -2274,7 +2342,7 @@ impl Association {
 
         if !self.control_queue.is_empty() {
             for p in self.control_queue.drain(..) {
-                if let Ok(raw) = p.marshal() {
+                if let Ok(raw) = p.marshal_opt(self.send_zero_checksum) {
                     raw_packets.push(raw);
                 } else {
                     warn!("[{}] failed to serialize a control packet", self.side);
@@ -3103,10 +3171,11 @@ impl Association {
         // Second pass: marshal each datagram into the shared buffer.
         let mut buf = BytesMut::with_capacity(total_len);
         for (start, end) in bundles {
-            match Packet::write_framed(
+            match Packet::write_framed_with_checksum(
                 &common_header,
                 chunks[start..end].iter().map(|c| c as &dyn Chunk),
                 &mut buf,
+                self.send_zero_checksum,
             ) {
                 Ok(_) => {
                     let plen = buf.len();

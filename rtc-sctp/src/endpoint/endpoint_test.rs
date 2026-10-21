@@ -3838,3 +3838,195 @@ fn test_association_stats_count_payload_and_expose_congestion_state() -> Result<
     );
     Ok(())
 }
+
+// ───────────────────────── RFC 9653: zero checksum ─────────────────────────
+
+/// A pair whose two TransportConfigs apply `f`, with the standard session established on
+/// stream 1.
+fn zero_checksum_pair(
+    enable_on_client: bool,
+    enable_on_server: bool,
+) -> Result<(Pair, AssociationHandle, AssociationHandle)> {
+    let mut pair = Pair::new(
+        EndpointConfig::default(),
+        ServerConfig {
+            transport: Arc::new(
+                TransportConfig::default().with_enable_zero_checksum(enable_on_server),
+            ),
+            ..Default::default()
+        },
+    );
+    let (client_ch, server_ch) = pair.connect_with(ClientConfig {
+        transport: Arc::new(
+            TransportConfig::default().with_enable_zero_checksum(enable_on_client),
+        ),
+    });
+    pair.client_conn_mut(client_ch).ack_mode = AckMode::NoDelay;
+    pair.server_conn_mut(server_ch).ack_mode = AckMode::NoDelay;
+    establish_session_pair(&mut pair, client_ch, server_ch, 1)?;
+    Ok((pair, client_ch, server_ch))
+}
+
+/// The checksum field (bytes 8..12, little-endian) of every raw datagram queued for the
+/// receiving side, tagged with the first chunk type byte.
+///
+/// Read *after* `drive_client()` and *before* the receiving side processes them: that is
+/// where the bytes are exactly what went on the wire, neither queued nor consumed yet.
+fn checksums_in_flight_to_server(pair: &Pair) -> Vec<(u8, u32)> {
+    pair.server
+        .inbound
+        .iter()
+        .map(|(_, _, bytes)| {
+            // The first chunk's type byte sits right after the 12-byte common header.
+            (
+                bytes[12],
+                u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+            )
+        })
+        .collect()
+}
+
+/// Both ends advertising the capability (RFC 9653) must negotiate it in both directions,
+/// actually drop the CRC from their DATA packets, and still deliver every byte — DTLS
+/// already integrity-protects the datagram, so nothing else may change.
+#[test]
+fn test_zero_checksum_negotiated_pair_sends_and_receives() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(true, true)?;
+
+    assert!(
+        pair.client_conn_mut(client_ch).send_zero_checksum,
+        "client must send zero-checksum: the server advertised the DTLS EDMID"
+    );
+    assert!(
+        pair.server_conn_mut(server_ch).send_zero_checksum,
+        "server must send zero-checksum: the client advertised the DTLS EDMID"
+    );
+
+    let payload = Bytes::from(vec![0xCDu8; 512]);
+    let now = pair.time;
+    pair.client_stream(client_ch, 1)?
+        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.drive_client();
+
+    // The packets now queued for the server are exactly what went on the wire.
+    let in_flight = checksums_in_flight_to_server(&pair);
+    assert!(!in_flight.is_empty(), "the client must have sent packets");
+    for (_chunk_type, checksum) in &in_flight {
+        assert_eq!(*checksum, 0, "negotiated packets must carry checksum 0");
+    }
+
+    pair.drive();
+
+    let mut buf = vec![0u8; 1024];
+    let chunks = pair
+        .server_stream(server_ch, 1)?
+        .read_sctp()?
+        .expect("the payload must arrive over zero-checksum packets");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(n, 512);
+    assert_eq!(&buf[..n], &payload[..]);
+    Ok(())
+}
+
+/// Without the option both flags stay off and packets are CRC'd as before — the default
+/// behavior is byte-identical to what a peer without RFC 9653 expects.
+#[test]
+fn test_zero_checksum_disabled_by_default() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(false, false)?;
+
+    assert!(!pair.client_conn_mut(client_ch).send_zero_checksum);
+    assert!(!pair.server_conn_mut(server_ch).send_zero_checksum);
+
+    let payload = Bytes::from_static(b"still crc'd");
+    let now = pair.time;
+    pair.client_stream(client_ch, 1)?
+        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.drive_client();
+
+    let in_flight = checksums_in_flight_to_server(&pair);
+    assert!(!in_flight.is_empty());
+    for (_chunk_type, checksum) in &in_flight {
+        assert_ne!(*checksum, 0, "un-negotiated packets must carry a real CRC");
+    }
+
+    pair.drive();
+
+    let mut buf = vec![0u8; 64];
+    let chunks = pair
+        .server_stream(server_ch, 1)?
+        .read_sctp()?
+        .expect("payload arrives");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(&buf[..n], &payload[..]);
+    Ok(())
+}
+
+/// One end enabled: the enabled end accepts zero-checksum packets but the other never
+/// advertises, so nothing on the wire changes. The flags must reflect exactly that.
+#[test]
+fn test_zero_checksum_one_sided_negotiation() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(true, false)?;
+
+    // Client advertised; the server (answering) learned it may send zeros...
+    assert!(pair.server_conn_mut(server_ch).send_zero_checksum);
+    // ...but the server's own INIT-ACK carried no parameter (its config is off), so the
+    // client never gained permission.
+    assert!(!pair.client_conn_mut(client_ch).send_zero_checksum);
+    // The client's acceptance is config-driven and armed: should the server choose to
+    // send zeros, they will be taken.
+    assert!(pair.client_conn_mut(client_ch).recv_zero_checksum);
+    assert!(!pair.server_conn_mut(server_ch).recv_zero_checksum);
+    Ok(())
+}
+
+/// The parse layer: strict rejects a zero field, lenient takes it flagged, and a lenient
+/// parse still verifies a nonzero checksum. Handshake chunks stay verified even lenient.
+#[test]
+fn test_zero_checksum_parse_strict_and_lenient() -> Result<()> {
+    use crate::chunk::chunk_payload_data::ChunkPayloadData;
+
+    let packet = Packet {
+        common_header: CommonHeader {
+            source_port: 5000,
+            destination_port: 5000,
+            verification_tag: 12345,
+        },
+        chunks: vec![Box::new(ChunkPayloadData {
+            stream_identifier: 1,
+            ..Default::default()
+        })],
+    };
+    let crc_bytes = packet.marshal()?;
+    let raw = Bytes::from(crc_bytes.clone());
+    assert!(
+        PartialDecode::unmarshal(&raw).is_ok(),
+        "a real CRC must parse strictly"
+    );
+    assert!(
+        PartialDecode::unmarshal_lenient(&raw).is_ok(),
+        "...and leniently"
+    );
+
+    let zero_bytes = packet.marshal_opt(true)?;
+    assert_ne!(&zero_bytes[8..12], &crc_bytes[8..12]);
+    let raw_zero = Bytes::from(zero_bytes.clone());
+    assert!(
+        PartialDecode::unmarshal(&raw_zero).is_err(),
+        "strict must reject a zero checksum"
+    );
+    let lenient = PartialDecode::unmarshal_lenient(&raw_zero)
+        .expect("lenient accepts the zero-checksum form");
+    assert!(lenient.checksum_is_zero);
+
+    let tampered = {
+        let mut b = crc_bytes.to_vec();
+        b[20] ^= 0xFF;
+        Bytes::from(b)
+    };
+    assert!(PartialDecode::unmarshal(&tampered).is_err());
+    assert!(
+        PartialDecode::unmarshal_lenient(&tampered).is_err(),
+        "lenient is not lenient about a broken nonzero checksum"
+    );
+    Ok(())
+}

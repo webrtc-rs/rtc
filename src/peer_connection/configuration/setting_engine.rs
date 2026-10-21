@@ -380,6 +380,12 @@ pub struct SettingEngine {
     /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
     /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
+
+    /// Whether SCTP packets may carry a zero checksum, per [RFC 9653]. Off by default.
+    ///
+    /// Only sound on a DTLS-protected association, which every WebRTC data channel is.
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) sctp_enable_zero_checksum: bool,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1441,6 +1447,21 @@ impl SettingEngineBuilder {
     /// default, leave this unset.
     pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
         self.0.sctp_mtu = Some(mtu);
+        self
+    }
+
+    /// Enables the [RFC 9653] zero checksum on SCTP, pion's
+    /// `SettingEngine.SetEnableSCTPZeroChecksum`.
+    ///
+    /// The DTLS transport already integrity-protects every SCTP datagram, so once both
+    /// ends opt in, packets drop the redundant CRC-32C: one less pass over every byte of
+    /// every data-channel packet, both sending and receiving. Receiving turns on when this
+    /// is set and the capability is advertised in INIT/INIT-ACK; sending turns on once
+    /// the peer advertises it too.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub fn with_sctp_enable_zero_checksum(mut self, enable: bool) -> Self {
+        self.0.sctp_enable_zero_checksum = enable;
         self
     }
 
