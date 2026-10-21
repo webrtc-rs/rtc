@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCTP zero checksum (RFC 9653)**: `TransportConfig::with_enable_zero_checksum` advertises the capability (parameter 0x8001, EDMID 1, byte-compatible with pion/sctp) and accepts zero-checksum packets on the DTLS-protected association; the send side arms when the peer advertises back, and then skips the CRC-32C on the DATA/SACK/FORWARD-TSN hot paths. INIT and COOKIE ECHO stay checksummed per section 5; a zero-checksum packet reaching an association that never enabled it is dropped.
+- **DTLS key logging**: `ConfigBuilder::with_key_logger` receives the NSS key log line once the master secret is derived, on both client and server ends — and both ends of the same association log the identical line, which is the property that makes the log usable.
+- **sctp-transport stats entry** read live from the SCTP association (smoothed RTT, congestion window, receiver window, MTU, bytes sent/received), matching pion's `SCTPTransportStats`; `AssociationStats` gains byte counters (counted once per accepted DATA chunk, retransmissions not double-counted) and the association exposes `cwnd()`, `rwnd()`, `mtu()` alongside `rtt()`.
+- **csrc stats entry** per (inbound stream, CSRC) with `packetsContributedTo`. `getContributingSources` / `getSynchronizationSources` were stubs returning empty lists; receivers now record CSRCs/SSRC per packet (RFC 3550 section 5.1) with a 10-second memory window, per-packet counting, and per-receiver origin timestamps.
+
+### Added
+
 - `RTCCrypto::new_hmac` returns a keyed `Mac` whose key schedule is derived once, mirroring the
   existing keyed cipher factories. It replaces the removed one-shot `hmac`/`verify_hmac`.
 - **New `rtc-crypto` crate: a provider-neutral cryptographic API**
