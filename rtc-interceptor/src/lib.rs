@@ -38,6 +38,7 @@
 //!
 //! | Interceptor | Description |
 //! |-------------|-------------|
+//! | [`PacketDump`] | Writes a line per RTP/RTCP packet passing through, with filters, formatters and a pluggable output sink |
 //! | [`NoopInterceptor`] | Ends the inbound RTCP path; the last interceptor in a chain |
 //!
 //! # Design
@@ -99,6 +100,36 @@
 //! // `build` appends [`NoopInterceptor`] last, so inbound RTCP — control traffic the interceptors
 //! // above act on — stops there rather than arriving mixed in with the application's media. To
 //! // receive some of it, add an interceptor that marks those packets `DeliverToApplication`.
+//! # let _ = chain;
+//! ```
+//!
+//! # Packet dump
+//!
+//! [`PacketDump`] writes a line for every RTP and RTCP packet that crosses the chain, inbound
+//! and outbound, and forwards each one unchanged. It sits at [`Slot::PacketDump`], the
+//! wire-most slot, so the lines describe what actually went on the wire — after pacing and
+//! numbering on the way out, before recovery and re-stamping on the way in.
+//!
+//! ```
+//! use rtc_interceptor::{PacketDumpBuilder, Registry, Slot};
+//! use std::sync::{Arc, Mutex};
+//!
+//! // Keep the lines in memory instead of the `log` crate.
+//! #[derive(Clone, Default)]
+//! struct Recorder(Arc<Mutex<Vec<String>>>);
+//! impl rtc_interceptor::PacketDumpSink for Recorder {
+//!     fn write(&mut self, line: &str) {
+//!         self.0.lock().unwrap().push(line.to_owned());
+//!     }
+//! }
+//!
+//! let recorder = Recorder::default();
+//! let chain = Registry::new()
+//!     .with(Slot::PacketDump, PacketDumpBuilder::new()
+//!         .rtp_filter(|_| true)
+//!         .sink(Box::new(recorder.clone()))
+//!         .build())
+//!     .build();
 //! # let _ = chain;
 //! ```
 //!
@@ -223,6 +254,7 @@ use std::time::Instant;
 
 pub(crate) mod chain;
 pub(crate) mod noop;
+pub(crate) mod packetdump;
 pub(crate) mod registry;
 
 pub(crate) mod cc;
@@ -294,6 +326,7 @@ pub use pacing::sender::{
     PacerBuilder, PacerInterceptor,
 };
 pub use packet::{Attribute, AttributedPacket, Packet, TaggedPacket};
+pub use packetdump::{LogSink, PacketDump, PacketDumpBuilder, PacketDumpSink};
 pub use registry::{Registry, Slot};
 pub use report::receiver::{ReceiverReportBuilder, ReceiverReportInterceptor};
 pub use report::sender::{SenderReportBuilder, SenderReportInterceptor};
