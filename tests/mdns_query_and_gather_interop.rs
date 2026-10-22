@@ -291,6 +291,10 @@ async fn run_rtc_event_loop(
 /// advertise its own IP via mDNS.
 #[tokio::test]
 async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return (Ok(()));
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -457,6 +461,10 @@ async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// advertises its own IP via an mDNS name.
 #[tokio::test]
 async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return (Ok(()));
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -611,6 +619,10 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
 /// Test mDNS QueryOnly mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return (Ok(()));
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -786,6 +798,10 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
 /// Test mDNS QueryAndGather mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return (Ok(()));
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)

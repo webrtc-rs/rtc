@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking, hence 0.22.0)
+- `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
+- `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
+
+### Security / hardening (ported from pion's tests)
+- DTLS: the handshake fragment buffer is bounded in fragment count and bytes and reassembles
+  overlapping retransmits; the handshake cache and the next-epoch packet queue are bounded.
+- SCTP: DATA more than a bounded number of TSNs ahead of the cumulative TSN is not queued.
+- RTCP: a maximum-length FIR or transport-wide CC packet no longer overflows the parser; marshal
+  refuses packets the 16-bit length cannot describe, and NACKs may list up to that many pairs.
+- Data channels: an OPEN message with a label or protocol over 65535 bytes is refused, not truncated.
+
+
 ### Security
 
 - **SRTCP accepted forged packets with the E bit clear.** The authentication tag was only checked

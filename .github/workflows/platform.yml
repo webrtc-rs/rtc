@@ -64,15 +64,15 @@ jobs:
         run: |
           # FLAGS is deliberately split into words.
           # shellcheck disable=SC2086
-          cargo build --workspace --all-targets $FLAGS --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo build --workspace --all-targets $FLAGS --verbose
       - name: Test workspace
         run: |
           # shellcheck disable=SC2086
-          cargo test --workspace --no-fail-fast $FLAGS --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast $FLAGS --verbose
       - name: Test documentation
         run: |
           # shellcheck disable=SC2086
-          cargo test --workspace --doc $FLAGS --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --doc $FLAGS --verbose
 
   # Every parser is checked against pion's verdicts on a corpus of valid and mutated inputs
   # (see `tests/pion_golden.rs` in each protocol crate). They run in the job above in debug; this
@@ -92,10 +92,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Replay golden vectors in release
         run: |
-          cargo test --release \
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release \
             -p rtc-sdp -p rtc-rtcp -p rtc-rtp -p rtc-stun -p rtc-datachannel -p rtc-dtls -p rtc-srtp \
             --test pion_golden --verbose
-          cargo test --release -p rtc-sctp --lib pion_golden --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release -p rtc-sctp --lib pion_golden --verbose
 
   lint:
     name: lint / ${{ matrix.os }}
