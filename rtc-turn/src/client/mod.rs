@@ -42,10 +42,13 @@ use crate::proto::PROTO_UDP;
 use crate::proto::chandata::*;
 use crate::proto::channum::ChannelNumber;
 use crate::proto::data::*;
+use crate::proto::evenport::EvenPort;
 use crate::proto::lifetime::Lifetime;
 use crate::proto::peeraddr::*;
 use crate::proto::relayaddr::RelayedAddress;
+use crate::proto::reqfamily::{REQUESTED_FAMILY_IPV4, REQUESTED_FAMILY_IPV6};
 use crate::proto::reqtrans::RequestedTransport;
+use crate::proto::rsrvtoken::ReservationToken;
 use shared::error::{Error, Result};
 use shared::util::lookup_host;
 use shared::{TransportContext, TransportMessage, TransportProtocol};
@@ -74,6 +77,11 @@ pub type PeerAddr = SocketAddr;
 pub enum Event {
     /// A request exhausted its retransmissions without a response.
     TransactionTimeout(TransactionId),
+
+    /// An Allocate that asked for the next port up to be reserved succeeded; this is the token
+    /// to claim it with ([`AllocateOptions::reservation_token`]). Comes before the
+    /// `AllocateResponse` of the same transaction.
+    ReservationToken(TransactionId, Vec<u8>),
 
     /// A STUN Binding succeeded, reporting this client's server-reflexive address.
     BindingResponse(TransactionId, ReflexiveAddr),
@@ -111,6 +119,26 @@ enum AllocateState {
 // 5: 15500 ms  +16000
 // 6: 31500 ms  +32000
 // -: 63500 ms  failed
+
+/// What an Allocate asks of the relay beyond the basics ([RFC 5766 §6.1], [RFC 6156]).
+///
+/// [RFC 5766 §6.1]: https://www.rfc-editor.org/rfc/rfc5766#section-6.1
+/// [RFC 6156]: https://www.rfc-editor.org/rfc/rfc6156
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllocateOptions {
+    /// Ask for a relayed port that is even (`Some`), and for the next port up to be held for a
+    /// second Allocate when the value is `true`. The server answers with a
+    /// [`Event::ReservationToken`] in that case. Excludes [`Self::reservation_token`].
+    pub even_port: Option<bool>,
+    /// Claim the port a previous Allocate reserved with `even_port: Some(true)`. Excludes
+    /// [`Self::even_port`] and [`Self::address_family`].
+    pub reservation_token: Option<Vec<u8>>,
+    /// The address family of the relay; the server's default if `None`.
+    pub address_family: Option<RelayFamily>,
+}
+
+/// The address family of a relayed address.
+pub use crate::server::RelayFamily;
 
 /// ClientConfig is a bag of config parameters for Client.
 pub struct ClientConfig {
@@ -173,6 +201,7 @@ pub struct Client {
     rto_in_ms: u64,
     allocation_refresh_interval_cap: Option<Duration>,
 
+    allocate_options: AllocateOptions,
     relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
     events: VecDeque<Event>,
@@ -219,6 +248,7 @@ impl Client {
                 DEFAULT_RTO_IN_MS
             },
             allocation_refresh_interval_cap: config.allocation_refresh_interval_cap,
+            allocate_options: AllocateOptions::default(),
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -591,8 +621,30 @@ impl Client {
 
     /// Allocate sends a TURN allocation request to the given transport address
     pub fn allocate(&mut self, now: Instant) -> Result<TransactionId> {
+        self.allocate_with(now, AllocateOptions::default())
+    }
+
+    /// As [`allocate`](Self::allocate), asking for the relay described by `options`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `options` asks for things that exclude each other (a reservation token with an
+    /// even port or an address family), or if the request cannot be encoded.
+    pub fn allocate_with(
+        &mut self,
+        now: Instant,
+        options: AllocateOptions,
+    ) -> Result<TransactionId> {
+        if options.reservation_token.is_some()
+            && (options.even_port.is_some() || options.address_family.is_some())
+        {
+            return Err(Error::Other(
+                "a reservation token excludes EVEN-PORT and REQUESTED-ADDRESS-FAMILY".to_owned(),
+            ));
+        }
+        self.allocate_options = options;
         let mut msg = Message::new();
-        msg.build(&[
+        let mut setters: Vec<Box<dyn Setter + '_>> = vec![
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
             Box::new(RequestedTransport {
@@ -601,8 +653,10 @@ impl Client {
                 // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
                 protocol: PROTO_UDP,
             }),
-            Box::new(FINGERPRINT),
-        ])?;
+        ];
+        setters.extend(self.allocate_option_setters());
+        setters.push(Box::new(FINGERPRINT));
+        msg.build(&setters)?;
 
         debug!("client.Allocate call PerformTransaction 1");
         let mut tid = self.perform_transaction(
@@ -613,6 +667,25 @@ impl Client {
         );
         tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
         Ok(tid)
+    }
+
+    /// The attributes that carry [`AllocateOptions`], for both rounds of an Allocate.
+    fn allocate_option_setters(&self) -> Vec<Box<dyn Setter + 'static>> {
+        let options = &self.allocate_options;
+        let mut setters: Vec<Box<dyn Setter + 'static>> = Vec::new();
+        if let Some(reserve) = options.even_port {
+            setters.push(Box::new(EvenPort::new(reserve)));
+        }
+        if let Some(token) = &options.reservation_token {
+            setters.push(Box::new(ReservationToken(token.clone())));
+        }
+        if let Some(family) = options.address_family {
+            setters.push(Box::new(match family {
+                RelayFamily::V4 => REQUESTED_FAMILY_IPV4,
+                RelayFamily::V6 => REQUESTED_FAMILY_IPV6,
+            }));
+        }
+        setters
     }
 
     fn handle_allocate_response(
@@ -656,7 +729,7 @@ impl Client {
                 tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
 
                 // Trying to authorize.
-                msg.build(&[
+                let mut setters: Vec<Box<dyn Setter + '_>> = vec![
                     Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
@@ -665,12 +738,15 @@ impl Client {
                         // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
                         protocol: PROTO_UDP,
                     }),
-                    Box::new(self.username.clone()),
-                    Box::new(self.realm.clone()),
-                    Box::new(nonce.clone()),
-                    Box::new(integrity),
-                    Box::new(FINGERPRINT),
-                ])?;
+                ];
+                setters.extend(self.allocate_option_setters());
+                setters.push(Box::new(self.username.clone()));
+                setters.push(Box::new(self.realm.clone()));
+                setters.push(Box::new(nonce.clone()));
+                setters.push(Box::new(integrity));
+                setters.push(Box::new(FINGERPRINT));
+                msg.build(&setters)?;
+                drop(setters);
 
                 debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
@@ -742,6 +818,13 @@ impl Client {
                         self.allocation_refresh_interval_cap,
                     ),
                 );
+                if response.contains(ATTR_RESERVATION_TOKEN) {
+                    let mut token = ReservationToken::default();
+                    if token.get_from(&response).is_ok() {
+                        self.events
+                            .push_back(Event::ReservationToken(response.transaction_id, token.0));
+                    }
+                }
                 self.events.push_back(Event::AllocateResponse(
                     response.transaction_id,
                     relayed_addr,

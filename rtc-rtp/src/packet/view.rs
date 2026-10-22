@@ -1,7 +1,7 @@
 use crate::header::{
-    CC_MASK, CSRC_LENGTH, CSRC_OFFSET, EXTENSION_MASK, EXTENSION_PROFILE_ONE_BYTE,
-    EXTENSION_PROFILE_TWO_BYTE, EXTENSION_SHIFT, Header, HeaderSummary, PADDING_MASK,
-    PADDING_SHIFT, VERSION_MASK, VERSION_SHIFT, step_extension,
+    CSRC_LENGTH, CSRC_OFFSET, EXTENSION_MASK, EXTENSION_PROFILE_ONE_BYTE,
+    EXTENSION_PROFILE_TWO_BYTE, EXTENSION_SHIFT, HeaderSummary, PADDING_MASK, PADDING_SHIFT,
+    VERSION_MASK, VERSION_SHIFT, locate, step_extension,
 };
 use shared::error::{Error, Result};
 
@@ -51,39 +51,40 @@ impl<'a> PacketView<'a> {
     ///
     /// Exactly those of [`Packet::unmarshal`](super::Packet): a datagram too short for the header
     /// it announces, an extension element that overruns its block, or invalid trailing padding.
+    #[inline]
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
-        let summary = Header::peek(buf)?;
+        let located = locate(buf)?;
+        let summary = located.summary;
         let first = buf[0];
-        let csrc_end = CSRC_OFFSET + (first & CC_MASK) as usize * CSRC_LENGTH;
+        let csrc_end = located.csrc_end;
 
-        let (extension_profile, extension_region) =
-            if (first >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
-                (
-                    u16::from_be_bytes([buf[csrc_end], buf[csrc_end + 1]]),
-                    &buf[csrc_end + 4..summary.header_len],
-                )
-            } else {
-                (0, &buf[..0])
-            };
+        let extension_region = if (first >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
+            &buf[csrc_end + 4..summary.header_len]
+        } else {
+            &buf[..0]
+        };
 
         let mut payload = &buf[summary.header_len..];
         let mut padding_size = 0;
         if (first >> PADDING_SHIFT & PADDING_MASK) > 0 {
-            padding_size = *payload.last().ok_or(Error::ErrShortPacket)?;
-            if padding_size == 0 {
+            let Some(&last) = payload.last() else {
+                return Err(Error::ErrShortPacket);
+            };
+            if last == 0 {
                 return Err(Error::ErrInvalidRtpPadding);
             }
-            if padding_size as usize > payload.len() {
+            if last as usize > payload.len() {
                 return Err(Error::ErrShortPacket);
             }
-            payload = &payload[..payload.len() - padding_size as usize];
+            padding_size = last;
+            payload = &payload[..payload.len() - last as usize];
         }
 
         Ok(Self {
             first,
             summary,
             csrc: &buf[CSRC_OFFSET..csrc_end],
-            extension_profile,
+            extension_profile: located.profile,
             extension_region,
             payload,
             padding_size,
@@ -139,7 +140,7 @@ impl<'a> PacketView<'a> {
     /// The header extensions, in packet order, as `(id, payload)` pairs.
     ///
     /// A one-byte or two-byte (RFC 8285) block yields its elements; any other profile yields the
-    /// whole block as a single element with id `0`, as [`Header`] stores it.
+    /// whole block as a single element with id `0`, as [`Header`](crate::header::Header) stores it.
     pub fn extensions(&self) -> Extensions<'a> {
         let rfc8285 = matches!(
             self.extension_profile,
@@ -155,7 +156,31 @@ impl<'a> PacketView<'a> {
     }
 
     /// The payload of the first extension element with `id`.
+    #[inline]
     pub fn extension(&self, id: u8) -> Option<&'a [u8]> {
+        if self.extension_profile == EXTENSION_PROFILE_ONE_BYTE && self.has_extension() {
+            // The block was validated by `parse`, so every element lies inside it.
+            let region = self.extension_region;
+            let mut n = 0;
+            while n < region.len() {
+                let b = region[n];
+                if b == 0 {
+                    n += 1;
+                    continue;
+                }
+                let found = b >> 4;
+                if found == 0 || found == 0xF {
+                    return None;
+                }
+                let len = (b & 0x0F) as usize + 1;
+                n += 1;
+                if found == id {
+                    return region.get(n..n + len);
+                }
+                n += len;
+            }
+            return None;
+        }
         self.extensions()
             .find_map(|(found, payload)| (found == id).then_some(payload))
     }

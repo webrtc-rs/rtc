@@ -28,3 +28,11 @@
 <p align="center">
  RTC TURN Protocol in Rust With Sans-IO
 </p>
+
+## Server
+
+`rtc_turn::server::Server` is a TURN server without sockets or a clock: feed it datagrams (from the
+listening socket and from each relay socket), time, and the result of binding relay sockets, and
+send what it produces. See `examples/turn_server_udp.rs` for a complete tokio server and
+`examples/turn_echo_check.rs` for a client that checks a relay end to end; `interop/run-turn.sh`
+runs both against pion's TURN server and client.

@@ -9,6 +9,7 @@ use libfuzzer_sys::fuzz_target;
 use rtc_rtp::codec::av1::Av1Payloader;
 use rtc_rtp::codec::h264::H264Payloader;
 use rtc_rtp::codec::h265::HevcPayloader;
+use rtc_rtp::codec::h266::H266Payloader;
 use rtc_rtp::codec::opus::OpusPayloader;
 use rtc_rtp::codec::vp8::Vp8Payloader;
 use rtc_rtp::codec::vp9::Vp9Payloader;
@@ -27,6 +28,7 @@ fuzz_target!(|data: &[u8]| {
         Box::new(Vp9Payloader::default()),
         Box::new(H264Payloader::default()),
         Box::new(HevcPayloader::default()),
+        Box::new(H266Payloader::default()),
         Box::new(Av1Payloader::default()),
         Box::new(OpusPayloader),
     ];

@@ -69,3 +69,42 @@ pub fn multicast_loopback_works() -> bool {
     };
     probe().unwrap_or(false)
 }
+
+/// Sends one mDNS datagram. Where the interface the OS picks for multicast cannot carry it (a
+/// virtual NIC with no multicast route, as on GitHub's macOS runners, answers `EHOSTUNREACH`),
+/// retries through every local interface, loopback included, which still reaches this host.
+#[allow(dead_code)]
+pub async fn send_mdns(
+    socket: &tokio::net::UdpSocket,
+    data: &[u8],
+    to: std::net::SocketAddr,
+) -> std::io::Result<usize> {
+    let first = match socket.send_to(data, to).await {
+        Err(err) if rtc::mdns::is_route_error(&err) => err,
+        other => return other,
+    };
+    let mut sent = 0;
+    for iface in rtc::mdns::multicast_interfaces() {
+        if rtc::mdns::set_multicast_interface(socket, iface).is_ok()
+            && let Ok(n) = socket.send_to(data, to).await
+        {
+            sent = sent.max(n);
+        }
+    }
+    let _ = rtc::mdns::set_multicast_interface(socket, std::net::Ipv4Addr::UNSPECIFIED);
+    if sent > 0 { Ok(sent) } else { Err(first) }
+}
+
+/// Whether an IPv4 multicast datagram can be sent without choosing an interface, as an mDNS
+/// implementation that does not know about the fallback in [`send_mdns`] sends it.
+///
+/// GitHub's macOS runners answer `EHOSTUNREACH` there: the default multicast route points at a
+/// virtual NIC that carries nothing. Tests that pair this stack with another mDNS implementation
+/// (which would hit the same error) call this first and say so when they skip.
+#[allow(dead_code)]
+pub fn default_multicast_route_works() -> bool {
+    let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+        return false;
+    };
+    socket.send_to(b"probe", "224.0.0.251:5353").is_ok()
+}
