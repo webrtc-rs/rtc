@@ -229,10 +229,8 @@ impl LongTermCredentials {
 
     fn check(&self, request: &AuthRequest<'_>, rest: bool) -> Option<AuthCredentials> {
         let (timestamp, user_id) = if rest {
-            match request.username.split_once(':') {
-                Some((t, user)) => (t, user),
-                None => (request.username, request.username),
-            }
+            // `<timestamp>:<user>`; a username without the colon is not a REST login.
+            request.username.split_once(':')?
         } else {
             (request.username, request.username)
         };

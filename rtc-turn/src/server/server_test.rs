@@ -1647,6 +1647,25 @@ fn a_channel_lapses_and_can_then_be_rebound_elsewhere() {
 }
 
 #[test]
+fn rebinding_a_channel_restarts_its_clock() {
+    // Allocation and permission outlive the channel, so only the binding's clock is tested.
+    let mut net = Net::with(|config| {
+        config.default_allocation_lifetime = Duration::from_secs(3600);
+        config.permission_lifetime = Duration::from_secs(3600);
+    });
+    net.allocate_raw();
+    bound_channel(&mut net, 0x4000);
+    let relay = local_relay(&net);
+    // Two thirds of the way through the channel's life, bind it again to the same peer.
+    net.advance(CHANNEL_BIND_LIFETIME * 2 / 3);
+    bound_channel(&mut net, 0x4000);
+    net.advance(CHANNEL_BIND_LIFETIME * 2 / 3);
+    // Past the first binding's end, inside the second's.
+    net.deliver(client_addr(), &channel_data(0x4000, b"still"));
+    assert_eq!(net.to_peers, vec![(relay, peer_addr(), b"still".to_vec())]);
+}
+
+#[test]
 fn channel_data_on_an_unbound_channel_is_dropped() {
     let mut net = Net::new();
     allocated_with_permission(&mut net);
@@ -1780,6 +1799,40 @@ fn time_limited_credentials_work_until_they_expire() {
     clock.store(1_000_000, std::sync::atomic::Ordering::SeqCst);
     let rest = make(clock).rest_auth_handler();
     assert_eq!(rest.auth(&request(&rest_user)).unwrap().user_id, "alice");
+}
+
+#[test]
+fn a_rest_username_without_a_colon_does_not_authenticate() {
+    let handler = LongTermCredentials::with_clock("secret", crypto_provider(), || 1_000_000)
+        .rest_auth_handler();
+    let request = |username| AuthRequest {
+        username,
+        realm: REALM,
+        src_addr: client_addr(),
+        method: METHOD_ALLOCATE,
+    };
+    // A live timestamp alone is a login for the plain handler, not for the REST one.
+    assert!(handler.auth(&request("2000000")).is_none());
+    assert!(handler.auth(&request("1700000000")).is_none());
+    assert!(handler.auth(&request("2000000:alice")).is_some());
+}
+
+#[test]
+fn five_tuples_differ_by_protocol() {
+    let udp = FiveTuple {
+        client: client_addr(),
+        server: server_addr(),
+        protocol: TransportProtocol::UDP,
+    };
+    let tcp = FiveTuple {
+        protocol: TransportProtocol::TCP,
+        ..udp
+    };
+    assert_ne!(udp, tcp);
+    let mut seen = std::collections::HashSet::new();
+    assert!(seen.insert(udp));
+    assert!(seen.insert(tcp));
+    assert!(!seen.insert(udp));
 }
 
 #[test]
