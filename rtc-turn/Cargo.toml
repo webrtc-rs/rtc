@@ -26,6 +26,8 @@ crypto.workspace = true
 
 bytes.workspace = true
 log.workspace = true
+rand.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

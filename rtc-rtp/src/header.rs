@@ -367,6 +367,97 @@ pub struct HeaderSummary {
     pub header_len: usize,
 }
 
+/// Whether an RFC 8285 one-byte extension block is well formed: every element fits in the block.
+///
+/// The same verdict as walking it with [`step_extension`], without building a `Result` and an
+/// element per step; the datagrams that matter (media with a handful of extensions) go through
+/// here, and a block this rejects is handed to the general walk to produce the error.
+#[inline]
+pub(crate) fn one_byte_block_is_valid(block: &[u8]) -> bool {
+    let end = block.len();
+    let mut n = 0;
+    while n < end {
+        let b = block[n];
+        if b == 0x00 {
+            n += 1;
+            continue;
+        }
+        let id = b >> 4;
+        if id == EXTENSION_ID_RESERVED || id == 0 {
+            // Ends the block early; whatever follows is not looked at.
+            return true;
+        }
+        n += 1 + ((b & 0x0F) as usize + 1);
+        if n > end {
+            return false;
+        }
+    }
+    true
+}
+
+/// Where the pieces of a validated header sit in a datagram.
+pub(crate) struct Located {
+    pub(crate) summary: HeaderSummary,
+    /// The end of the CSRC list: the offset of the extension block header, if there is one.
+    pub(crate) csrc_end: usize,
+    /// The extension profile, or 0 when there is no extension block.
+    pub(crate) profile: u16,
+}
+
+/// Validates the header at the front of `buf` and says where its parts are.
+///
+/// The one implementation behind [`Header::peek`] and `PacketView::parse`, written so the
+/// compiler sees one bounds check for the twelve fixed bytes and plain loads after it.
+#[inline]
+pub(crate) fn locate(buf: &[u8]) -> Result<Located> {
+    let Some(fixed) = buf.first_chunk::<CSRC_OFFSET>() else {
+        return Err(Error::ErrHeaderSizeInsufficient);
+    };
+    let first = fixed[0];
+    let csrc_end = CSRC_OFFSET + (first & CC_MASK) as usize * CSRC_LENGTH;
+    if buf.len() < csrc_end {
+        return Err(Error::ErrHeaderSizeInsufficient);
+    }
+
+    let mut header_len = csrc_end;
+    let mut profile = 0;
+    if (first >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
+        let Some(block) = buf.get(csrc_end..csrc_end + 4) else {
+            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+        };
+        profile = u16::from_be_bytes([block[0], block[1]]);
+        header_len = csrc_end + 4 + u16::from_be_bytes([block[2], block[3]]) as usize * 4;
+        if buf.len() < header_len {
+            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+        }
+        let elements = &buf[csrc_end + 4..header_len];
+        match profile {
+            EXTENSION_PROFILE_ONE_BYTE => {
+                if !one_byte_block_is_valid(elements) {
+                    walk_extensions(buf, csrc_end + 4, header_len, profile, |_, _, _| {})?;
+                }
+            }
+            EXTENSION_PROFILE_TWO_BYTE => {
+                walk_extensions(buf, csrc_end + 4, header_len, profile, |_, _, _| {})?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Located {
+        summary: HeaderSummary {
+            marker: (fixed[1] >> MARKER_SHIFT & MARKER_MASK) > 0,
+            payload_type: fixed[1] & PT_MASK,
+            sequence_number: u16::from_be_bytes([fixed[2], fixed[3]]),
+            timestamp: u32::from_be_bytes([fixed[4], fixed[5], fixed[6], fixed[7]]),
+            ssrc: u32::from_be_bytes([fixed[8], fixed[9], fixed[10], fixed[11]]),
+            header_len,
+        },
+        csrc_end,
+        profile,
+    })
+}
+
 impl Header {
     /// Reads and validates the header at the front of `buf` without allocating.
     ///
@@ -379,25 +470,7 @@ impl Header {
     /// Fails if `buf` is too short for the header it announces, or if a one-byte or two-byte
     /// extension element overruns its block.
     pub fn peek(buf: &[u8]) -> Result<HeaderSummary> {
-        let header_len = Self::wire_len(buf)?;
-        if (buf[0] >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
-            let at = CSRC_OFFSET + (buf[0] & CC_MASK) as usize * CSRC_LENGTH;
-            let profile = u16::from_be_bytes([buf[at], buf[at + 1]]);
-            if matches!(
-                profile,
-                EXTENSION_PROFILE_ONE_BYTE | EXTENSION_PROFILE_TWO_BYTE
-            ) {
-                walk_extensions(buf, at + 4, header_len, profile, |_, _, _| {})?;
-            }
-        }
-        Ok(HeaderSummary {
-            marker: (buf[1] >> MARKER_SHIFT & MARKER_MASK) > 0,
-            payload_type: buf[1] & PT_MASK,
-            sequence_number: u16::from_be_bytes([buf[2], buf[3]]),
-            timestamp: u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
-            ssrc: u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]),
-            header_len,
-        })
+        locate(buf).map(|located| located.summary)
     }
 }
 
