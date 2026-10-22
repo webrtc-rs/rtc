@@ -11,15 +11,22 @@ log="$(mktemp)"
 status=${PIPESTATUS[0]}
 
 if [ "$status" -ne 0 ]; then
+  # Colour codes and cargo's `--verbose` command lines bury the cause; drop them.
+  clean="$(mktemp)"
+  sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "$log" \
+    | grep -vE '^[[:space:]]*(Running|Fresh|Dirty|Compiling|Checking|Documenting|Downloaded|Downloading|Blocking|Locking|Adding|Updating)[[:space:]]' \
+    > "$clean" || true
   {
-    grep -E '^(error(\[|:)|warning: unused)|panicked at|^test .* FAILED|^failures:|^---- |assertion|FAIL|GATE' "$log" | head -60
+    # The failure itself, with what follows it (a panic message is on the lines after "panicked at").
+    grep -nE 'panicked at|^error(\[|:)|^test .* FAILED|^failures:|assertion|GATE|Traceback|Error:' "$clean" \
+      | cut -d: -f1 | head -12 | while read -r n; do sed -n "${n},$((n + 4))p" "$clean"; echo '...'; done
     echo '--- tail ---'
-    tail -n 30 "$log"
+    tail -n 40 "$clean"
   } > "$log.summary"
   msg="$(cat "$log.summary")"
-  msg="${msg//'%'/'%25'}"
-  msg="${msg//$'\r'/'%0D'}"
-  msg="${msg//$'\n'/'%0A'}"
+  msg="${msg//%/%25}"
+  msg="${msg//$'\r'/%0D}"
+  msg="${msg//$'\n'/%0A}"
   echo "::error title=command failed (exit ${status})::${msg:0:30000}"
 fi
 exit "$status"

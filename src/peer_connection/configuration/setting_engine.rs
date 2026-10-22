@@ -249,7 +249,8 @@ pub struct Candidates {
 /// Replay attack protection window sizes.
 ///
 /// Larger windows provide better protection against packet reordering
-/// but consume more memory. Set to 0 to disable replay protection (not recommended).
+/// but consume more memory. A window of 0 selects the default (64 packets); to turn replay
+/// protection off for SRTP or SRTCP use the `disable_*` flags (not recommended).
 #[derive(Default, Copy, Clone)]
 pub struct ReplayProtection {
     /// DTLS replay protection window size (in packets).
@@ -260,6 +261,12 @@ pub struct ReplayProtection {
 
     /// SRTCP replay protection window size (in packets).
     pub srtcp: usize,
+
+    /// Turns SRTP replay protection off entirely.
+    pub srtp_disabled: bool,
+
+    /// Turns SRTCP replay protection off entirely.
+    pub srtcp_disabled: bool,
 }
 
 /// Maximum message size for SCTP data channels.
@@ -363,6 +370,10 @@ pub struct SettingEngine {
     pub(crate) disable_media_engine_multiple_codecs: bool,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    /// How strictly the DTLS handshake insists on the extended master secret (RFC 7627).
+    pub(crate) dtls_extended_master_secret: Option<::dtls::config::ExtendedMasterSecretType>,
+    /// How often unanswered DTLS handshake flights are retransmitted; `None` is the default, 1 s.
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
     /// Where DTLS session key material is reported, for decrypting captured traffic.
     ///
     /// Set from [`with_dtls_key_logger`](SettingEngineBuilder::with_dtls_key_logger); a
@@ -546,6 +557,27 @@ impl SettingEngineBuilder {
     /// that filters down to nothing usable fails with `ErrNoAvailableCipherSuites`.
     pub fn with_dtls_cipher_suites(mut self, cipher_suites: Vec<CipherSuiteId>) -> Self {
         self.0.dtls_cipher_suites = cipher_suites;
+        self
+    }
+
+    /// Sets how strictly the DTLS handshake insists on the extended master secret ([RFC 7627]).
+    ///
+    /// The default is `Require`, which is what browsers do. `Request` and `Disable` exist for
+    /// peers that predate the extension; both weaken the handshake against triple-handshake
+    /// attacks.
+    ///
+    /// [RFC 7627]: https://www.rfc-editor.org/rfc/rfc7627
+    pub fn with_dtls_extended_master_secret(
+        mut self,
+        policy: ::dtls::config::ExtendedMasterSecretType,
+    ) -> Self {
+        self.0.dtls_extended_master_secret = Some(policy);
+        self
+    }
+
+    /// Sets how often an unanswered DTLS handshake flight is retransmitted (default 1 second).
+    pub fn with_dtls_retransmission_interval(mut self, interval: std::time::Duration) -> Self {
+        self.0.dtls_retransmission_interval = Some(interval);
         self
     }
 
@@ -1089,6 +1121,21 @@ impl SettingEngineBuilder {
         self
     }
 
+    /// Turns SRTP replay protection off. Not recommended: a captured packet can then be replayed.
+    ///
+    /// For when something upstream already guarantees uniqueness, or the stream legitimately
+    /// repeats sequence numbers.
+    pub fn with_disable_srtp_replay_protection(mut self, disabled: bool) -> Self {
+        self.0.replay_protection.srtp_disabled = disabled;
+        self
+    }
+
+    /// Turns SRTCP replay protection off. Not recommended.
+    pub fn with_disable_srtcp_replay_protection(mut self, disabled: bool) -> Self {
+        self.0.replay_protection.srtcp_disabled = disabled;
+        self
+    }
+
     /// Allows gathering of loopback candidates.
     ///
     /// By default, loopback candidates (127.x.x.x, ::1) are not gathered per
@@ -1549,5 +1596,39 @@ mod tests {
             setting_engine.ice_credentials(),
             ("other_ufrag", "other_password")
         );
+    }
+
+    #[test]
+    fn dtls_handshake_settings_default_to_the_strict_ones() {
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert!(setting_engine.dtls_extended_master_secret.is_none());
+        assert!(setting_engine.dtls_retransmission_interval.is_none());
+
+        let setting_engine = SettingEngineBuilder::new()
+            .with_dtls_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Request)
+            .with_dtls_retransmission_interval(std::time::Duration::from_millis(250))
+            .build();
+        assert_eq!(
+            setting_engine.dtls_extended_master_secret,
+            Some(::dtls::config::ExtendedMasterSecretType::Request)
+        );
+        assert_eq!(
+            setting_engine.dtls_retransmission_interval,
+            Some(std::time::Duration::from_millis(250))
+        );
+    }
+
+    #[test]
+    fn srtp_replay_protection_can_be_disabled() {
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert!(!setting_engine.replay_protection.srtp_disabled);
+        assert!(!setting_engine.replay_protection.srtcp_disabled);
+
+        let setting_engine = SettingEngineBuilder::new()
+            .with_disable_srtp_replay_protection(true)
+            .with_disable_srtcp_replay_protection(true)
+            .build();
+        assert!(setting_engine.replay_protection.srtp_disabled);
+        assert!(setting_engine.replay_protection.srtcp_disabled);
     }
 }

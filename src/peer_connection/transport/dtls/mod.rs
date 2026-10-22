@@ -65,6 +65,8 @@ pub(crate) struct DtlsTransport {
     /// Empty means "use the `dtls` crate's default set" (see
     /// [`SettingEngineBuilder::with_dtls_cipher_suites`](crate::peer_connection::configuration::setting_engine::SettingEngineBuilder::with_dtls_cipher_suites)).
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    pub(crate) dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType,
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
@@ -79,6 +81,8 @@ pub(crate) struct RTCDtlsTransportConfig {
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    pub(crate) dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType,
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
@@ -95,6 +99,8 @@ impl DtlsTransport {
             answering_dtls_role,
             srtp_protection_profiles,
             dtls_cipher_suites,
+            dtls_extended_master_secret,
+            dtls_retransmission_interval,
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
@@ -134,6 +140,8 @@ impl DtlsTransport {
             answering_dtls_role,
             srtp_protection_profiles,
             dtls_cipher_suites,
+            dtls_extended_master_secret,
+            dtls_retransmission_interval,
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
@@ -268,8 +276,12 @@ impl DtlsTransport {
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
                 .with_verify_peer_certificate(verify_peer_certificate)
                 .with_key_logger(self.dtls_key_logger.clone())
-                .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
+                .with_extended_master_secret(self.dtls_extended_master_secret)
                 .with_replay_protection_window(self.replay_protection.dtls)
+                .with_flight_interval(
+                    self.dtls_retransmission_interval
+                        .unwrap_or(std::time::Duration::from_secs(1)),
+                )
                 .build(self.dtls_role == RTCDtlsRole::Client, None)?,
         ))
     }
@@ -406,6 +418,8 @@ mod tests {
             answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
             srtp_protection_profiles: vec![],
             dtls_cipher_suites,
+            dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType::Require,
+            dtls_retransmission_interval: None,
             allow_insecure_verification_algorithm: false,
             disable_certificate_fingerprint_verification: false,
             replay_protection: ReplayProtection::default(),
@@ -515,6 +529,8 @@ mod tests {
                 answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
                 srtp_protection_profiles: profiles,
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: ReplayProtection::default(),

@@ -492,12 +492,16 @@ impl<'a> DtlsHandler<'a> {
             profile,
             ..Default::default()
         };
-        if replay_protection.srtp != 0 {
+        if replay_protection.srtp_disabled {
+            srtp_config.remote_rtp_options = Some(srtp::option::srtp_no_replay_protection());
+        } else if replay_protection.srtp != 0 {
             srtp_config.remote_rtp_options =
                 Some(srtp::option::srtp_replay_protection(replay_protection.srtp));
         }
 
-        if replay_protection.srtcp != 0 {
+        if replay_protection.srtcp_disabled {
+            srtp_config.remote_rtcp_options = Some(srtp::option::srtcp_no_replay_protection());
+        } else if replay_protection.srtcp != 0 {
             srtp_config.remote_rtcp_options = Some(srtp::option::srtcp_replay_protection(
                 replay_protection.srtcp,
             ));
@@ -570,6 +574,8 @@ mod tests {
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),
@@ -600,6 +606,8 @@ mod tests {
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),

@@ -131,6 +131,10 @@ impl RTCPeerConnection {
             answering_dtls_role: setting_engine.answering_dtls_role,
             srtp_protection_profiles: setting_engine.srtp_protection_profiles.clone(),
             dtls_cipher_suites: setting_engine.dtls_cipher_suites.clone(),
+            dtls_extended_master_secret: setting_engine
+                .dtls_extended_master_secret
+                .unwrap_or(::dtls::config::ExtendedMasterSecretType::Require),
+            dtls_retransmission_interval: setting_engine.dtls_retransmission_interval,
             allow_insecure_verification_algorithm: setting_engine
                 .allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification: setting_engine
