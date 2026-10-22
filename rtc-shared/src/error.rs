@@ -2253,6 +2253,24 @@ pub enum Error {
     /// An H.265 NAL unit's fragments are not a complete, ordered start-to-end sequence.
     #[error("h265 fragmentation units are incomplete")]
     ErrH265FragmentsIncomplete,
+    /// An H.266 aggregation packet or fragment set holds fewer than two NAL units.
+    #[error("h266 aggregation and fragmentation packets require at least 2 packets")]
+    ErrH266NotEnoughPackets,
+    /// An H.266 aggregation unit holds a packet that is not a single NAL unit.
+    #[error("invalid h266 packet type")]
+    ErrInvalidH266PacketType,
+    /// An H.266 NAL unit passed to aggregation is larger than the format's length field.
+    #[error("h266 packet passed in is larger than 65535 bytes")]
+    ErrH266PacketTooLarge,
+    /// An H.266 fragment set's first unit does not carry the start bit.
+    #[error("expecting the first h266 fragmentation packet")]
+    ErrH266FirstFragmentationUnitMissing,
+    /// An H.266 fragment set's last unit does not carry the end bit.
+    #[error("expecting the last h266 fragmentation packet")]
+    ErrH266LastFragmentationUnitMissing,
+    /// An H.266 fragmentation unit arrived mid-NAL-unit with no start fragment before it.
+    #[error("expecting a h266 fragmentation start unit")]
+    ErrH266ExpectedFragmentationStart,
     /// An AV1 OBU header has its forbidden bit set.
     #[error("invalid OBU header: forbidden bit is set")]
     ErrInvalidObuHeader,

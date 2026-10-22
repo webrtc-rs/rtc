@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rtc-rtp`: H.266/VVC payloader and depacketizer ([RFC 9328]), byte-compatible with pion's
+  `H266Packetizer`/`H266Depacketizer` (aggregation packets, fragmentation units, DONL handling).
+  The 320 H.266 rows of the pion golden corpus now run, and pion's 13 `TestH266*` unit tests
+  are ported. New public items: `codec::h266::{H266Payloader, H266Depacketizer, H266NALUHeader}`.
+- `rtc-shared`: H.266 error variants (`ErrH266*`).
+
+[RFC 9328]: https://datatracker.ietf.org/doc/html/rfc9328
+
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
 - `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
