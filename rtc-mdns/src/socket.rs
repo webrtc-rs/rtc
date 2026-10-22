@@ -206,8 +206,52 @@ impl MulticastSocket {
         let iface = self.interface.unwrap_or(Ipv4Addr::UNSPECIFIED);
         socket.join_multicast_v4(&MDNS_MULTICAST_IPV4, &iface)?;
 
+        // `INADDR_ANY` joins on the one interface the OS picks, which is not always the one that
+        // carries the traffic (a VM's virtual NIC that drops multicast, a VPN, loopback only).
+        // Also join on every other local IPv4 interface; an interface that cannot join (no
+        // multicast flag, already a member) is skipped.
+        if self.interface.is_none() {
+            for addr in multicast_interfaces() {
+                let _ = socket.join_multicast_v4(&MDNS_MULTICAST_IPV4, &addr);
+            }
+        }
+
         Ok(socket.into())
     }
+}
+
+/// The local IPv4 addresses a multicast datagram can be sent from or received on: every
+/// interface address the OS reports, loopback included, each once.
+///
+/// Returns an empty list where interface enumeration is unsupported.
+pub fn multicast_interfaces() -> Vec<Ipv4Addr> {
+    let mut out: Vec<Ipv4Addr> = Vec::new();
+    for iface in shared::ifaces::ifaces().unwrap_or_default() {
+        if let Some(SocketAddr::V4(v4)) = iface.addr
+            && !out.contains(v4.ip())
+        {
+            out.push(*v4.ip());
+        }
+    }
+    out
+}
+
+/// True for the errors a send reports when the route the OS chose for a multicast datagram does
+/// not work: no route, network unreachable or down, interface address unavailable.
+///
+/// A send that fails this way may still succeed through another interface, so the caller can
+/// retry with `IP_MULTICAST_IF` set to each of [`multicast_interfaces`].
+pub fn is_route_error(err: &io::Error) -> bool {
+    if matches!(
+        err.kind(),
+        io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::AddrNotAvailable
+    ) {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -240,6 +284,28 @@ mod tests {
             .with_multicast_local_port(5353)
             .with_interface(interface);
         assert_eq!(builder.interface, Some(interface));
+    }
+
+    #[test]
+    fn route_errors_are_recognised() {
+        assert!(is_route_error(&io::Error::from(
+            io::ErrorKind::HostUnreachable
+        )));
+        assert!(is_route_error(&io::Error::from(
+            io::ErrorKind::NetworkUnreachable
+        )));
+        assert!(!is_route_error(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+    }
+
+    #[test]
+    fn multicast_interfaces_lists_each_address_once() {
+        let list = multicast_interfaces();
+        let mut dedup = list.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(list.len(), dedup.len());
     }
 
     // Note: Socket creation tests would require actual network access
