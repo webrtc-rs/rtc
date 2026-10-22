@@ -46,10 +46,14 @@ impl Unmarshal for Packet {
         Self: Sized,
         B: Buf,
     {
-        let mut header = Header::unmarshal(raw_packet)?;
-        let payload_len = raw_packet.remaining();
-        let payload = raw_packet.copy_to_bytes(payload_len);
-        let payload = strip_padding(&mut header, payload)?;
+        // One `Bytes` for the whole datagram: for a `Bytes` input taking it is a move, and the
+        // payload below is that same handle with the header cut off, so the only reference
+        // counts touched are the extension elements'. Every count is an atomic read-modify-write.
+        let mut data = raw_packet.copy_to_bytes(raw_packet.remaining());
+        let header_len = Header::wire_len(&data)?;
+        let mut header = Header::parse(&data)?;
+        data.advance(header_len);
+        let payload = strip_padding(&mut header, data)?;
         Ok(Packet { header, payload })
     }
 }

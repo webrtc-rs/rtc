@@ -36,6 +36,18 @@ impl fmt::Display for EvenPort {
 const EVEN_PORT_SIZE: usize = 1;
 const FIRST_BIT_SET: u8 = 0b10000000; //FIXME? (1 << 8) - 1;
 
+impl EvenPort {
+    /// An `EVEN-PORT` attribute; `reserve_port` also asks the server to reserve the next port up.
+    pub fn new(reserve_port: bool) -> Self {
+        Self { reserve_port }
+    }
+
+    /// Whether the server is asked to reserve the next-higher port.
+    pub fn reserve_port(&self) -> bool {
+        self.reserve_port
+    }
+}
+
 impl Setter for EvenPort {
     /// Adds `EVEN-PORT` to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {

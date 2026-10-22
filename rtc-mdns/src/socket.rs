@@ -236,6 +236,26 @@ pub fn multicast_interfaces() -> Vec<Ipv4Addr> {
     out
 }
 
+/// Sets the interface `socket` sends multicast datagrams out of (`IP_MULTICAST_IF`); pass
+/// `Ipv4Addr::UNSPECIFIED` to go back to the operating system's choice.
+#[cfg(unix)]
+pub fn set_multicast_interface<S: std::os::fd::AsFd>(
+    socket: &S,
+    interface: Ipv4Addr,
+) -> io::Result<()> {
+    socket2::SockRef::from(socket).set_multicast_if_v4(&interface)
+}
+
+/// Sets the interface `socket` sends multicast datagrams out of (`IP_MULTICAST_IF`); pass
+/// `Ipv4Addr::UNSPECIFIED` to go back to the operating system's choice.
+#[cfg(windows)]
+pub fn set_multicast_interface<S: std::os::windows::io::AsSocket>(
+    socket: &S,
+    interface: Ipv4Addr,
+) -> io::Result<()> {
+    socket2::SockRef::from(socket).set_multicast_if_v4(&interface)
+}
+
 /// True for the errors a send reports when the route the OS chose for a multicast datagram does
 /// not work: no route, network unreachable or down, interface address unavailable.
 ///

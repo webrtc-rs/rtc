@@ -140,7 +140,7 @@ impl<'a> PacketView<'a> {
     /// The header extensions, in packet order, as `(id, payload)` pairs.
     ///
     /// A one-byte or two-byte (RFC 8285) block yields its elements; any other profile yields the
-    /// whole block as a single element with id `0`, as [`Header`] stores it.
+    /// whole block as a single element with id `0`, as [`Header`](crate::header::Header) stores it.
     pub fn extensions(&self) -> Extensions<'a> {
         let rfc8285 = matches!(
             self.extension_profile,

@@ -170,7 +170,7 @@ impl Header {
     }
 
     /// Parses a header from `data`, whose first [`Header::wire_len`] bytes are the header.
-    fn parse(data: &Bytes) -> Result<Header> {
+    pub(crate) fn parse(data: &Bytes) -> Result<Header> {
         let mut header = Header::default();
         header.parse_into(data)?;
         Ok(header)

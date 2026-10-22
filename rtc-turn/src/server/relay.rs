@@ -109,7 +109,7 @@ impl RelayAddressGeneratorPortRange {
         let mut rng = rand::rng();
         loop {
             let port = rng.random_range(lo..=hi) as u16;
-            if !even || port % 2 == 0 {
+            if !even || port.is_multiple_of(2) {
                 return port;
             }
             // A range holding no even port at all is rejected by `validate`, so this ends.
@@ -168,7 +168,9 @@ pub struct RelayAddressGeneratorNone {
 impl RelayAddressGenerator for RelayAddressGeneratorNone {
     fn validate(&self) -> Result<()> {
         if self.address.is_unspecified() {
-            return Err(Error::Other("address must be a specific address".to_owned()));
+            return Err(Error::Other(
+                "address must be a specific address".to_owned(),
+            ));
         }
         Ok(())
     }
