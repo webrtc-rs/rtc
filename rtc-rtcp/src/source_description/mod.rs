@@ -372,6 +372,7 @@ impl Marshal for SourceDescription {
         if self.chunks.len() > COUNT_MAX {
             return Err(Error::TooManyChunks);
         }
+        crate::header::length_field(self.marshal_size())?;
 
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);

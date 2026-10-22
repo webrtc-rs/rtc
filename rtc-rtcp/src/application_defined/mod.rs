@@ -90,6 +90,7 @@ impl Marshal for ApplicationDefined {
         if self.data.len() > 0xFFFF - 12 {
             return Err(Error::AppDefinedDataTooLarge);
         }
+        crate::header::length_field(self.marshal_size())?;
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
         }

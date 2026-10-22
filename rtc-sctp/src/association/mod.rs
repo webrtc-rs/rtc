@@ -371,6 +371,21 @@ impl Default for Association {
     }
 }
 
+/// The estimate of an average DATA chunk's size used to turn a receive buffer size into a count of
+/// chunks (there is no theory behind it).
+const AVG_CHUNK_SIZE: u32 = 500;
+/// The fewest TSNs ahead of the cumulative TSN that are always accepted, however small the buffer.
+const MIN_TSN_OFFSET: u32 = 2000;
+/// The most TSNs ahead of the cumulative TSN that are ever accepted.
+const MAX_TSN_OFFSET: u32 = 40000;
+
+/// How far past the cumulative TSN a DATA chunk may be and still be queued: enough to keep the
+/// bytes held in the receive queue within a small multiple of `max_receive_buffer_size`.
+pub(crate) fn max_tsn_offset(max_receive_buffer_size: u32) -> u32 {
+    (max_receive_buffer_size.saturating_mul(4) / AVG_CHUNK_SIZE)
+        .clamp(MIN_TSN_OFFSET, MAX_TSN_OFFSET)
+}
+
 impl Association {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -1441,7 +1456,13 @@ impl Association {
         );
         self.stats.inc_datas();
 
-        let can_push = self.payload_queue.can_push(d, self.peer_last_tsn);
+        // A chunk this far ahead of the cumulative TSN is either an attack or hopelessly lost
+        // anyway: queueing it would let a peer grow the receive queue (and the cost of every
+        // insert into it) far beyond what `max_receive_buffer_size` is meant to allow. Dropped
+        // like any chunk the receiver cannot take; the sender retransmits what matters.
+        let within_tsn_offset =
+            d.tsn.wrapping_sub(self.peer_last_tsn) <= max_tsn_offset(self.max_receive_buffer_size);
+        let can_push = within_tsn_offset && self.payload_queue.can_push(d, self.peer_last_tsn);
         let mut stream_handle_data = false;
         if can_push {
             if self.get_or_create_stream(d.stream_identifier).is_some() {

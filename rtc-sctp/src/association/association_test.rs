@@ -1715,3 +1715,47 @@ fn test_reopened_receive_window_is_announced_without_waiting_for_a_probe() -> Re
     assert_eq!(before, receiver.ack_state);
     Ok(())
 }
+
+/// pion `TestAssociationMaxTSNOffset`: a DATA chunk far ahead of the cumulative TSN is not
+/// queued, so a peer cannot make the receive queue (and each insert into it) grow without bound.
+#[test]
+fn test_association_max_tsn_offset() -> Result<()> {
+    let mut a = create_association(TransportConfig::default());
+    let chunk_at = |a: &Association, offset: u32| ChunkPayloadData {
+        beginning_fragment: true,
+        ending_fragment: true,
+        tsn: a.peer_last_tsn.wrapping_add(offset),
+        stream_identifier: 1,
+        user_data: Bytes::from(vec![0u8; 1000]),
+        ..Default::default()
+    };
+    let limit = max_tsn_offset(a.max_receive_buffer_size);
+    assert!(limit >= 2000 && limit <= 40000);
+
+    for offset in [100_000, limit + 1] {
+        let c = chunk_at(&a, offset);
+        a.handle_data(&c)?;
+        assert_eq!(
+            a.payload_queue.len(),
+            0,
+            "offset {offset} must not be queued"
+        );
+    }
+
+    let c = chunk_at(&a, limit);
+    a.handle_data(&c)?;
+    assert_eq!(
+        a.payload_queue.len(),
+        1,
+        "the last acceptable offset is queued"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_max_tsn_offset_scales_with_the_receive_buffer_within_bounds() {
+    assert_eq!(max_tsn_offset(0), 2000);
+    assert_eq!(max_tsn_offset(100 * 1024), 2000); // 819 chunks, raised to the floor
+    assert_eq!(max_tsn_offset(512 * 1024), 512 * 1024 * 4 / 500);
+    assert_eq!(max_tsn_offset(u32::MAX), 40000);
+}

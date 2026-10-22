@@ -1583,6 +1583,9 @@ pub enum Error {
     /// Unknow Protocol.
     #[error("Unknow Protocol")]
     UnknownProtocol,
+    /// An RTCP packet is longer than its 16-bit word-count length field can describe.
+    #[error("rtcp: invalid packet length")]
+    BadLength,
     /// A data channel label is too long for the 16-bit length field of the OPEN message.
     #[error("label is too long, must be less than 65536 characters")]
     ErrTooLongLabel,

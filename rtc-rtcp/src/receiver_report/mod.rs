@@ -98,6 +98,7 @@ impl Marshal for ReceiverReport {
         if self.reports.len() > COUNT_MAX {
             return Err(Error::TooManyReports);
         }
+        crate::header::length_field(self.marshal_size())?;
 
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
