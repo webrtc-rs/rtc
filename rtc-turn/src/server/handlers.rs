@@ -14,10 +14,11 @@ use stun::textattrs::{Software, TextAttribute};
 use stun::uattrs::UnknownAttributes;
 use stun::xoraddr::XorMappedAddress;
 
+use super::allocation::Allocation;
 use super::allocation::{Channel, FiveTuple};
 use super::auth::AuthRequest;
 use super::relay::RelayFamily;
-use super::{PendingAllocation, RelayId, Server, ServerEvent, Timer};
+use super::{PendingAllocation, RelayId, Server, ServerEvent, Stage, Timer};
 use crate::proto::PROTO_UDP;
 use crate::proto::channum::ChannelNumber;
 use crate::proto::data::Data;
@@ -26,6 +27,7 @@ use crate::proto::lifetime::Lifetime;
 use crate::proto::peeraddr::PeerAddress;
 use crate::proto::relayaddr::RelayedAddress;
 use crate::proto::reqtrans::RequestedTransport;
+use crate::proto::rsrvtoken::ReservationToken;
 
 /// A request's author, once their credentials checked out.
 struct Authed {
@@ -216,8 +218,10 @@ impl Server {
             self.challenge(now, ctx, m, CODE_STALE_NONCE);
             return None;
         }
-        let credentials = if realm == self.realm {
-            self.auth_handler.auth(&AuthRequest {
+        let credentials = if realm == self.realm
+            && let Some(handler) = &self.auth_handler
+        {
+            handler.auth(&AuthRequest {
                 username: &username,
                 realm: &realm,
                 src_addr: ctx.peer_addr,
@@ -252,13 +256,15 @@ impl Server {
     }
 
     /// `420 Unknown Attribute` if the request carries a comprehension-required attribute this
-    /// server does not understand. Returns whether it did (and so was answered).
+    /// server does not understand ([RFC 8489 §6.3.1]). Returns whether it did (and so was
+    /// answered).
+    ///
+    /// [RFC 8489 §6.3.1]: https://www.rfc-editor.org/rfc/rfc8489#section-6.3.1
     fn reject_unknown_attributes(
         &mut self,
         now: Instant,
         ctx: &TransportContext,
         m: &Message,
-        auth: &Authed,
     ) -> bool {
         let unknown: Vec<AttrType> = m
             .attributes
@@ -276,14 +282,25 @@ impl Server {
             m,
             CODE_UNKNOWN_ATTRIBUTE,
             vec![Box::new(UnknownAttributes(unknown))],
-            Some(&auth.key),
+            None,
         );
         true
     }
 
     pub(super) fn handle_stun(&mut self, now: Instant, ctx: &TransportContext, mut m: Message) {
+        if m.typ.class == CLASS_REQUEST && self.reject_unknown_attributes(now, ctx, &m) {
+            return;
+        }
+        let can_relay = self.generator.is_some() && self.auth_handler.is_some();
         match (m.typ.class, m.typ.method) {
             (CLASS_REQUEST, METHOD_BINDING) => self.handle_binding(now, ctx, &m),
+            (
+                CLASS_REQUEST,
+                METHOD_ALLOCATE | METHOD_REFRESH | METHOD_CREATE_PERMISSION | METHOD_CHANNEL_BIND,
+            ) if !can_relay => {
+                // A STUN-only server has no relays to offer.
+                self.reply_error(now, ctx, &m, CODE_BAD_REQUEST, Vec::new(), None);
+            }
             (CLASS_REQUEST, METHOD_ALLOCATE) => self.handle_allocate(now, ctx, m),
             (CLASS_REQUEST, METHOD_REFRESH) => self.handle_refresh(now, ctx, &mut m),
             (CLASS_REQUEST, METHOD_CREATE_PERMISSION) => {
@@ -349,9 +366,6 @@ impl Server {
             // follows when the application binds it.
             return;
         }
-        if self.reject_unknown_attributes(now, ctx, m, &auth) {
-            return;
-        }
 
         let mut transport = RequestedTransport::default();
         if transport.get_from(m).is_err() {
@@ -382,34 +396,21 @@ impl Server {
             return;
         }
         let even = m.contains(ATTR_EVEN_PORT);
-        if m.contains(ATTR_RESERVATION_TOKEN) {
-            // Reservation tokens are never issued, so none can be valid.
-            let code = if even {
-                CODE_BAD_REQUEST
-            } else {
-                CODE_INSUFFICIENT_CAPACITY
-            };
-            self.reply_error(now, ctx, m, code, Vec::new(), Some(&auth.key));
+        let has_token = m.contains(ATTR_RESERVATION_TOKEN);
+        // A token names a port already chosen, so neither an even port nor a family (which the
+        // token's port settles) may be asked for beside it.
+        if has_token && (even || m.contains(ATTR_REQUESTED_ADDRESS_FAMILY)) {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
             return;
         }
+        let mut reserve = false;
         if even {
             let mut even_port = EvenPort::default();
             if even_port.get_from(m).is_err() {
                 self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
                 return;
             }
-            if even_port.reserve_port() {
-                // Holding the next port for a later request is not supported.
-                self.reply_error(
-                    now,
-                    ctx,
-                    m,
-                    CODE_INSUFFICIENT_CAPACITY,
-                    Vec::new(),
-                    Some(&auth.key),
-                );
-                return;
-            }
+            reserve = even_port.reserve_port();
         }
         let family = if m.contains(ATTR_REQUESTED_ADDRESS_FAMILY) {
             // A malformed attribute is a Bad Request; a well-formed one naming a family this
@@ -437,7 +438,7 @@ impl Server {
                 }
             }
         } else {
-            RelayFamily::V4
+            self.default_family(ctx)
         };
         let requested_lifetime = if m.contains(ATTR_LIFETIME) {
             let mut lifetime = Lifetime::default();
@@ -463,11 +464,20 @@ impl Server {
             );
             return;
         }
+        let lifetime = self.grant_lifetime(requested_lifetime);
 
+        if has_token {
+            self.claim_reservation(now, ctx, m, five, auth, lifetime);
+            return;
+        }
+
+        let Some(generator) = self.generator.as_mut() else {
+            return;
+        };
         let plan = if even {
-            self.generator.plan_even(family)
+            generator.plan_even(family)
         } else {
-            self.generator.plan(family, 0)
+            generator.plan(family, 0)
         };
         let plan = match plan {
             Ok(plan) => plan,
@@ -485,7 +495,6 @@ impl Server {
 
         let id = RelayId(self.next_relay_id);
         self.next_relay_id += 1;
-        let lifetime = self.grant_lifetime(requested_lifetime);
         let timer = self.schedule(now + self.relay_bind_timeout, Timer::PendingRelay(id));
         self.pending.insert(
             id,
@@ -499,10 +508,90 @@ impl Server {
                 request: std::mem::take(m),
                 reply_to: *ctx,
                 timer,
+                even,
+                reserve,
+                attempts: 0,
+                stage: Stage::Relay,
             },
         );
         self.pending_by_tuple.insert(five, id);
         self.events.push_back(ServerEvent::BindRelay { id, plan });
+    }
+
+    /// The family of relay an Allocate that names none gets: IPv4 under [RFC 6156]'s rule, or
+    /// else the family of the address the request arrived on (the client's own, when the server
+    /// listens on a wildcard).
+    ///
+    /// [RFC 6156]: https://www.rfc-editor.org/rfc/rfc6156
+    fn default_family(&self, ctx: &TransportContext) -> RelayFamily {
+        if self.strict_address_family {
+            return RelayFamily::V4;
+        }
+        let mut ip = ctx.local_addr.ip();
+        if ip.is_unspecified() {
+            ip = ctx.peer_addr.ip();
+        }
+        match ip {
+            IpAddr::V6(v6) if v6.to_ipv4_mapped().is_none() => RelayFamily::V6,
+            _ => RelayFamily::V4,
+        }
+    }
+
+    /// An Allocate quoting a `RESERVATION-TOKEN`: the port held under it becomes the relay.
+    fn claim_reservation(
+        &mut self,
+        now: Instant,
+        ctx: &TransportContext,
+        m: &Message,
+        five: FiveTuple,
+        auth: Authed,
+        lifetime: Duration,
+    ) {
+        let token: Option<[u8; 8]> = m
+            .get_value(ATTR_RESERVATION_TOKEN)
+            .ok()
+            .and_then(|v| v.try_into().ok());
+        let reservation = token
+            .filter(|t| self.reservations.get(t).is_some_and(|r| r.expires > now))
+            .and_then(|t| self.reservations.remove(&t));
+        let Some(reservation) = reservation else {
+            // Unknown, spent or lapsed: nothing is held under it.
+            self.reply_error(
+                now,
+                ctx,
+                m,
+                CODE_INSUFFICIENT_CAPACITY,
+                Vec::new(),
+                Some(&auth.key),
+            );
+            return;
+        };
+        self.held.remove(&reservation.relay);
+        let advertised = SocketAddr::new(reservation.advertised_ip, reservation.relay.port());
+        let expires = now + lifetime;
+        self.allocations.insert(
+            five,
+            Allocation {
+                user_id: auth.user_id.clone(),
+                relay: reservation.relay,
+                advertised,
+                family: reservation.family,
+                allocate_tid: m.transaction_id,
+                reservation_token: None,
+                expires,
+                permissions: Default::default(),
+                channels: Default::default(),
+                peer_channels: Default::default(),
+            },
+        );
+        self.by_relay.insert(reservation.relay, five);
+        self.schedule(expires, Timer::Allocation(five));
+        self.events.push_back(ServerEvent::AllocationCreated {
+            five_tuple: five,
+            user_id: auth.user_id,
+            relayed_addr: advertised,
+        });
+        self.reply_allocate_success(now, ctx, m, &five, &auth.key);
     }
 
     /// The `200` to an Allocate: the relayed address, the time left, and how the client looks
@@ -519,7 +608,7 @@ impl Server {
             return;
         };
         let remaining = allocation.expires.saturating_duration_since(now);
-        let attrs: Setters = vec![
+        let mut attrs: Setters = vec![
             Box::new(RelayedAddress {
                 ip: allocation.advertised.ip(),
                 port: allocation.advertised.port(),
@@ -530,6 +619,9 @@ impl Server {
                 port: five.client.port(),
             }),
         ];
+        if let Some(token) = allocation.reservation_token {
+            attrs.push(Box::new(ReservationToken(token.to_vec())));
+        }
         self.reply_success(now, ctx, req, attrs, Some(key));
     }
 
@@ -573,12 +665,34 @@ impl Server {
         let Some(auth) = self.authenticate(now, ctx, m) else {
             return;
         };
-        if self.reject_unknown_attributes(now, ctx, m, &auth) {
-            return;
-        }
         let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
             return;
         };
+        // A Refresh may not change the family of a relay ([RFC 6156 §4.2.2]); one that names a
+        // family other than the allocation's is a mismatch.
+        //
+        // [RFC 6156 §4.2.2]: https://www.rfc-editor.org/rfc/rfc6156#section-4.2.2
+        if m.contains(ATTR_REQUESTED_ADDRESS_FAMILY) {
+            let value = m
+                .get_value(ATTR_REQUESTED_ADDRESS_FAMILY)
+                .unwrap_or_default();
+            let family = match value {
+                [0x01, ..] if value.len() == 4 => Some(RelayFamily::V4),
+                [0x02, ..] if value.len() == 4 => Some(RelayFamily::V6),
+                _ => None,
+            };
+            let code = if value.len() != 4 {
+                Some(CODE_BAD_REQUEST)
+            } else if family != Some(self.allocations[&five].family) {
+                Some(CODE_PEER_ADDR_FAMILY_MISMATCH)
+            } else {
+                None
+            };
+            if let Some(code) = code {
+                self.reply_error(now, ctx, m, code, Vec::new(), Some(&auth.key));
+                return;
+            }
+        }
         let requested = if m.contains(ATTR_LIFETIME) {
             let mut lifetime = Lifetime::default();
             if lifetime.get_from(m).is_err() {
@@ -638,9 +752,6 @@ impl Server {
         let Some(auth) = self.authenticate(now, ctx, m) else {
             return;
         };
-        if self.reject_unknown_attributes(now, ctx, m, &auth) {
-            return;
-        }
         let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
             return;
         };
@@ -687,9 +798,6 @@ impl Server {
         let Some(auth) = self.authenticate(now, ctx, m) else {
             return;
         };
-        if self.reject_unknown_attributes(now, ctx, m, &auth) {
-            return;
-        }
         let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
             return;
         };

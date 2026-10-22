@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use crypto::RTCCryptoProvider;
+use rand::RngExt;
 use shared::error::{Error, Result};
 use shared::{TaggedBytesMut, TransportContext};
 use stun::message::{Message, TransactionId, is_stun_message};
@@ -85,16 +86,26 @@ pub const MAX_ALLOCATION_LIFETIME: Duration = Duration::from_secs(60 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelayId(pub u64);
 
+/// How long a reserved port waits to be claimed by a later Allocate ([RFC 8656 §7.2]).
+///
+/// [RFC 8656 §7.2]: https://www.rfc-editor.org/rfc/rfc8656#section-7.2
+pub const RESERVATION_LIFETIME: Duration = Duration::from_secs(30);
+
+/// How many times a relay on an even port is replanned when the application cannot bind the
+/// port it was given (the port was taken).
+const MAX_EVEN_PORT_ATTEMPTS: u8 = 8;
+
 /// How the server is set up.
 pub struct ServerConfig {
     /// The authentication realm clients are told to use.
     pub realm: String,
     /// Sent as `SOFTWARE` in responses when non-empty.
     pub software: String,
-    /// Looks up the long-term credential of a user.
-    pub auth_handler: Arc<dyn AuthHandler>,
-    /// Decides where relays live.
-    pub relay_address_generator: Box<dyn RelayAddressGenerator>,
+    /// Looks up the long-term credential of a user. Without one the server is STUN-only: it
+    /// answers Binding requests and refuses everything else with `400 Bad Request`.
+    pub auth_handler: Option<Arc<dyn AuthHandler>>,
+    /// Decides where relays live. Without one the server is STUN-only (see `auth_handler`).
+    pub relay_address_generator: Option<Box<dyn RelayAddressGenerator>>,
     /// Limits how many allocations a user may hold; unlimited when `None`.
     pub quota_handler: Option<Arc<dyn QuotaHandler>>,
     /// Decides which peer addresses a client may reach; every peer is allowed when `None`.
@@ -112,6 +123,14 @@ pub struct ServerConfig {
     /// How long to wait for the application to bind a relay before answering the client with
     /// `508 Insufficient Capacity`. Defaults to five seconds.
     pub relay_bind_timeout: Duration,
+    /// How long a reserved port waits to be claimed. Defaults to thirty seconds.
+    pub reservation_lifetime: Duration,
+    /// Keep [RFC 6156]'s rule that an Allocate without `REQUESTED-ADDRESS-FAMILY` gets an IPv4
+    /// relay. By default such a request gets the family of the address it arrived on, which is
+    /// what browsers expect of a server listening on IPv6.
+    ///
+    /// [RFC 6156]: https://www.rfc-editor.org/rfc/rfc6156
+    pub strict_address_family: bool,
 }
 
 impl ServerConfig {
@@ -123,10 +142,22 @@ impl ServerConfig {
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Self {
         Self {
+            auth_handler: Some(auth_handler),
+            relay_address_generator: Some(relay_address_generator),
+            ..Self::stun_only(realm, crypto_provider)
+        }
+    }
+
+    /// A configuration for a server that only answers STUN Binding requests.
+    pub fn stun_only(
+        realm: impl Into<String>,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
+    ) -> Self {
+        Self {
             realm: realm.into(),
             software: String::new(),
-            auth_handler,
-            relay_address_generator,
+            auth_handler: None,
+            relay_address_generator: None,
             quota_handler: None,
             permission_handler: None,
             crypto_provider,
@@ -135,6 +166,8 @@ impl ServerConfig {
             permission_lifetime: PERMISSION_LIFETIME,
             channel_bind_timeout: CHANNEL_BIND_LIFETIME,
             relay_bind_timeout: Duration::from_secs(5),
+            reservation_lifetime: RESERVATION_LIFETIME,
+            strict_address_family: false,
         }
     }
 }
@@ -190,6 +223,15 @@ pub enum ServerEvent {
     },
 }
 
+/// Where a pending Allocate has got to.
+enum Stage {
+    /// Waiting for the relay socket.
+    Relay,
+    /// The relay is bound and the allocation exists; waiting for the socket that holds the next
+    /// port for a `RESERVATION-TOKEN`.
+    Hold { relay: SocketAddr, token: [u8; 8] },
+}
+
 struct PendingAllocation {
     five: FiveTuple,
     /// What the Allocate request asked of the relay.
@@ -203,6 +245,22 @@ struct PendingAllocation {
     reply_to: TransportContext,
     /// The timer that gives up on the application; cancelled once it answers.
     timer: (Instant, u64),
+    /// The request asked for an even port.
+    even: bool,
+    /// The request asked for the next port up to be reserved.
+    reserve: bool,
+    /// How many plans have been tried for an even port.
+    attempts: u8,
+    stage: Stage,
+}
+
+/// A port held for a later Allocate that quotes its token.
+struct Reservation {
+    /// The bound socket holding the port.
+    relay: SocketAddr,
+    advertised_ip: IpAddr,
+    family: RelayFamily,
+    expires: Instant,
 }
 
 enum Timer {
@@ -210,6 +268,7 @@ enum Timer {
     Permission(FiveTuple, IpAddr),
     Channel(FiveTuple, u16),
     PendingRelay(RelayId),
+    Reservation([u8; 8]),
 }
 
 /// The Sans-I/O TURN server; see the [module documentation](self).
@@ -217,8 +276,8 @@ pub struct Server {
     realm: String,
     software: String,
     crypto: Arc<dyn RTCCryptoProvider>,
-    auth_handler: Arc<dyn AuthHandler>,
-    generator: Box<dyn RelayAddressGenerator>,
+    auth_handler: Option<Arc<dyn AuthHandler>>,
+    generator: Option<Box<dyn RelayAddressGenerator>>,
     quota_handler: Option<Arc<dyn QuotaHandler>>,
     permission_handler: Option<Arc<dyn PermissionHandler>>,
     default_lifetime: Duration,
@@ -226,12 +285,17 @@ pub struct Server {
     permission_lifetime: Duration,
     channel_bind_timeout: Duration,
     relay_bind_timeout: Duration,
+    reservation_lifetime: Duration,
+    strict_address_family: bool,
 
     nonces: NonceManager,
     allocations: HashMap<FiveTuple, Allocation>,
     by_relay: HashMap<SocketAddr, FiveTuple>,
     pending: HashMap<RelayId, PendingAllocation>,
     pending_by_tuple: HashMap<FiveTuple, RelayId>,
+    reservations: HashMap<[u8; 8], Reservation>,
+    /// The local address of each socket holding a reserved port -> its token.
+    held: HashMap<SocketAddr, [u8; 8]>,
     next_relay_id: u64,
     timers: BTreeMap<(Instant, u64), Timer>,
     timer_seq: u64,
@@ -247,7 +311,9 @@ impl Server {
     ///
     /// Fails if the relay address generator's configuration is invalid.
     pub fn new(config: ServerConfig, now: Instant) -> Result<Self> {
-        config.relay_address_generator.validate()?;
+        if let Some(generator) = &config.relay_address_generator {
+            generator.validate()?;
+        }
         if config.realm.is_empty() {
             return Err(Error::Other("a TURN server needs a realm".to_owned()));
         }
@@ -265,10 +331,14 @@ impl Server {
             permission_lifetime: config.permission_lifetime,
             channel_bind_timeout: config.channel_bind_timeout,
             relay_bind_timeout: config.relay_bind_timeout,
+            reservation_lifetime: config.reservation_lifetime,
+            strict_address_family: config.strict_address_family,
             allocations: HashMap::new(),
             by_relay: HashMap::new(),
             pending: HashMap::new(),
             pending_by_tuple: HashMap::new(),
+            reservations: HashMap::new(),
+            held: HashMap::new(),
             next_relay_id: 1,
             timers: BTreeMap::new(),
             timer_seq: 0,
@@ -303,57 +373,136 @@ impl Server {
     /// `local_addr` is the socket's own address (port included): later datagrams from it carry
     /// it as `transport.local_addr`. The pending Allocate is answered now.
     pub fn relay_bound(&mut self, id: RelayId, local_addr: SocketAddr, now: Instant) {
-        let Some(pending) = self.pending.remove(&id) else {
+        let Some(mut pending) = self.pending.remove(&id) else {
             // The request timed out or its client went away: the socket is not wanted.
             self.events.push_back(ServerEvent::ReleaseRelay(local_addr));
             return;
         };
-        self.pending_by_tuple.remove(&pending.five);
         self.timers.remove(&pending.timer);
-        let advertised = SocketAddr::new(pending.plan.advertised_ip, local_addr.port());
-        let allocation = Allocation {
-            user_id: pending.user_id.clone(),
-            relay: local_addr,
-            advertised,
-            family: pending.family,
-            allocate_tid: pending.request.transaction_id,
-            expires: now + pending.lifetime,
-            permissions: HashMap::new(),
-            channels: HashMap::new(),
-            peer_channels: HashMap::new(),
-        };
-        self.schedule(allocation.expires, Timer::Allocation(pending.five));
-        self.by_relay.insert(local_addr, pending.five);
-        self.allocations.insert(pending.five, allocation);
-        self.events.push_back(ServerEvent::AllocationCreated {
-            five_tuple: pending.five,
-            user_id: pending.user_id,
-            relayed_addr: advertised,
-        });
-        self.reply_allocate_success(
-            now,
-            &pending.reply_to,
-            &pending.request,
-            &pending.five,
-            &pending.key,
-        );
+        match pending.stage {
+            Stage::Relay => {
+                let advertised = SocketAddr::new(pending.plan.advertised_ip, local_addr.port());
+                let allocation = Allocation {
+                    user_id: pending.user_id.clone(),
+                    relay: local_addr,
+                    advertised,
+                    family: pending.family,
+                    allocate_tid: pending.request.transaction_id,
+                    reservation_token: None,
+                    expires: now + pending.lifetime,
+                    permissions: HashMap::new(),
+                    channels: HashMap::new(),
+                    peer_channels: HashMap::new(),
+                };
+                self.schedule(allocation.expires, Timer::Allocation(pending.five));
+                self.by_relay.insert(local_addr, pending.five);
+                self.allocations.insert(pending.five, allocation);
+                self.events.push_back(ServerEvent::AllocationCreated {
+                    five_tuple: pending.five,
+                    user_id: pending.user_id.clone(),
+                    relayed_addr: advertised,
+                });
+                if pending.reserve {
+                    // The next port up is held by a second socket, bound before the client is
+                    // told the token, so that no one else can take it in the meantime.
+                    let Some(next) = local_addr.port().checked_add(1) else {
+                        self.fail_pending(now, pending, true);
+                        return;
+                    };
+                    let mut token = [0u8; 8];
+                    rand::rng().fill(&mut token);
+                    pending.plan.bind.set_port(next);
+                    pending.stage = Stage::Hold {
+                        relay: local_addr,
+                        token,
+                    };
+                    pending.timer =
+                        self.schedule(now + self.relay_bind_timeout, Timer::PendingRelay(id));
+                    self.events.push_back(ServerEvent::BindRelay {
+                        id,
+                        plan: pending.plan,
+                    });
+                    self.pending.insert(id, pending);
+                } else {
+                    self.pending_by_tuple.remove(&pending.five);
+                    self.reply_allocate_success(
+                        now,
+                        &pending.reply_to,
+                        &pending.request,
+                        &pending.five,
+                        &pending.key,
+                    );
+                }
+            }
+            Stage::Hold { relay: _, token } => {
+                self.pending_by_tuple.remove(&pending.five);
+                let expires = now + self.reservation_lifetime;
+                self.schedule(expires, Timer::Reservation(token));
+                self.held.insert(local_addr, token);
+                self.reservations.insert(
+                    token,
+                    Reservation {
+                        relay: local_addr,
+                        advertised_ip: pending.plan.advertised_ip,
+                        family: pending.family,
+                        expires,
+                    },
+                );
+                if let Some(allocation) = self.allocations.get_mut(&pending.five) {
+                    allocation.reservation_token = Some(token);
+                }
+                self.reply_allocate_success(
+                    now,
+                    &pending.reply_to,
+                    &pending.request,
+                    &pending.five,
+                    &pending.key,
+                );
+            }
+        }
     }
 
     /// Reports that the application could not bind the socket asked for by `id`; the client gets
     /// `508 Insufficient Capacity`.
+    ///
+    /// A relay on an even port is first planned again, on another port, a few times: the port
+    /// the generator picked at random may simply have been taken.
     pub fn relay_bind_failed(&mut self, id: RelayId, now: Instant) {
-        if let Some(pending) = self.pending.remove(&id) {
-            self.pending_by_tuple.remove(&pending.five);
-            self.timers.remove(&pending.timer);
-            self.reply_error(
-                now,
-                &pending.reply_to,
-                &pending.request,
-                stun::error_code::CODE_INSUFFICIENT_CAPACITY,
-                Vec::new(),
-                Some(&pending.key),
-            );
+        let Some(mut pending) = self.pending.remove(&id) else {
+            return;
+        };
+        self.timers.remove(&pending.timer);
+        if matches!(pending.stage, Stage::Relay)
+            && pending.even
+            && pending.attempts < MAX_EVEN_PORT_ATTEMPTS
+            && let Some(generator) = self.generator.as_mut()
+            && let Ok(plan) = generator.plan_even(pending.family)
+        {
+            pending.attempts += 1;
+            pending.plan = plan;
+            pending.timer = self.schedule(now + self.relay_bind_timeout, Timer::PendingRelay(id));
+            self.events.push_back(ServerEvent::BindRelay { id, plan });
+            self.pending.insert(id, pending);
+            return;
         }
+        self.fail_pending(now, pending, false);
+    }
+
+    /// Gives up on a pending Allocate: answers `508`, and ends the allocation it had made if it
+    /// got as far as creating one.
+    fn fail_pending(&mut self, now: Instant, pending: PendingAllocation, forget_relay: bool) {
+        self.pending_by_tuple.remove(&pending.five);
+        if matches!(pending.stage, Stage::Hold { .. }) || forget_relay {
+            self.remove_allocation(&pending.five, AllocationEnd::Deleted);
+        }
+        self.reply_error(
+            now,
+            &pending.reply_to,
+            &pending.request,
+            stun::error_code::CODE_INSUFFICIENT_CAPACITY,
+            Vec::new(),
+            Some(&pending.key),
+        );
     }
 
     fn schedule(&mut self, at: Instant, timer: Timer) -> (Instant, u64) {
@@ -484,6 +633,8 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Server {
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
         if self.by_relay.contains_key(&msg.transport.local_addr) {
             self.handle_peer_datagram(msg);
+        } else if self.held.contains_key(&msg.transport.local_addr) {
+            // A reserved port belongs to no allocation yet: nothing may arrive on it.
         } else {
             self.handle_client_datagram(msg);
         }
@@ -543,7 +694,24 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Server {
                         }
                     }
                 }
-                Timer::PendingRelay(id) => self.relay_bind_failed(id, now),
+                Timer::PendingRelay(id) => {
+                    // The application never answered: no retry, whatever was asked for.
+                    if let Some(pending) = self.pending.remove(&id) {
+                        self.fail_pending(now, pending, false);
+                    }
+                }
+                Timer::Reservation(token) => {
+                    if self
+                        .reservations
+                        .get(&token)
+                        .is_some_and(|r| r.expires <= now)
+                        && let Some(reservation) = self.reservations.remove(&token)
+                    {
+                        self.held.remove(&reservation.relay);
+                        self.events
+                            .push_back(ServerEvent::ReleaseRelay(reservation.relay));
+                    }
+                }
             }
         }
         Ok(())
@@ -558,6 +726,11 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Server {
         for five in fives {
             self.remove_allocation(&five, AllocationEnd::Closed);
         }
+        for (_, reservation) in self.reservations.drain() {
+            self.events
+                .push_back(ServerEvent::ReleaseRelay(reservation.relay));
+        }
+        self.held.clear();
         self.pending.clear();
         self.pending_by_tuple.clear();
         self.timers.clear();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::client::{Client, ClientConfig, Event};
+use crate::client::{AllocateOptions, Client, ClientConfig, Event};
 use crate::proto::channum::ChannelNumber;
 use crate::proto::data::Data;
 use crate::proto::evenport::EvenPort;
@@ -81,6 +81,12 @@ struct Net {
     base: Instant,
     now: Instant,
     binding: Binding,
+    /// The next this many `BindRelay`s fail, whatever `binding` says.
+    fail_next: usize,
+    /// Every plan the server asked to bind, in order.
+    plans: Vec<RelayPlan>,
+    /// Who the pretend client is, for `exchange`.
+    who: SocketAddr,
     next_port: u16,
     events: Vec<ServerEvent>,
     /// What the server sent out of a relay socket: (relay, peer, payload).
@@ -104,6 +110,9 @@ impl Net {
             base,
             now: base,
             binding: Binding::Succeed,
+            fail_next: 0,
+            plans: Vec::new(),
+            who: client_addr(),
             next_port: 50000,
             events: Vec::new(),
             to_peers: Vec::new(),
@@ -138,10 +147,22 @@ impl Net {
     fn settle(&mut self) {
         while let Some(event) = self.server.poll_event() {
             if let ServerEvent::BindRelay { id, plan } = &event {
+                self.plans.push(*plan);
+                if self.fail_next > 0 && self.binding == Binding::Succeed {
+                    self.fail_next -= 1;
+                    self.server.relay_bind_failed(*id, self.now);
+                    self.events.push(event);
+                    continue;
+                }
                 match self.binding {
                     Binding::Succeed => {
-                        let port = self.next_port;
-                        self.next_port += 1;
+                        // The port asked for, or the next free one.
+                        let port = if plan.bind.port() != 0 {
+                            plan.bind.port()
+                        } else {
+                            self.next_port += 1;
+                            self.next_port - 1
+                        };
                         let local = SocketAddr::new(plan.bind.ip(), port);
                         self.server.relay_bound(*id, local, self.now);
                     }
@@ -153,7 +174,7 @@ impl Net {
         }
         while let Some(out) = self.server.poll_write() {
             if out.transport.local_addr == server_addr() {
-                assert_eq!(out.transport.peer_addr, client_addr());
+                assert_eq!(out.transport.peer_addr, self.who);
                 self.to_client.push(out.message.to_vec());
             } else {
                 self.to_peers.push((
@@ -199,7 +220,7 @@ impl Net {
 
     /// Sends `request` from the client and returns the server's answer.
     fn exchange(&mut self, request: &Message) -> Message {
-        self.deliver(client_addr(), &request.raw);
+        self.deliver(self.who, &request.raw);
         self.take_client_message()
     }
 
@@ -708,12 +729,12 @@ fn reservation_tokens_are_never_valid() {
 #[test]
 fn even_port_is_honoured_by_a_generator_that_can_choose() {
     let mut net = Net::with(|config| {
-        config.relay_address_generator = Box::new(RelayAddressGeneratorPortRange {
+        config.relay_address_generator = Some(Box::new(RelayAddressGeneratorPortRange {
             relay_address: relay_ip(),
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             min_port: 50000,
             max_port: 50100,
-        });
+        }));
     });
     net.binding = Binding::Ignore;
     let req = net.signed(
@@ -733,30 +754,6 @@ fn even_port_is_honoured_by_a_generator_that_can_choose() {
         .unwrap();
     assert_eq!(plan.bind.port() % 2, 0);
     assert!((50000..=50100).contains(&plan.bind.port()));
-}
-
-#[test]
-fn reserving_the_next_port_is_refused_not_ignored() {
-    let mut net = Net::new();
-    let req = net.signed(
-        "user",
-        "pass",
-        METHOD_ALLOCATE,
-        vec![Box::new(udp()), Box::new(EvenPort::new(true))],
-    );
-    assert_eq!(error_code(&net.exchange(&req)), 508);
-}
-
-#[test]
-fn a_generator_that_cannot_pick_even_ports_means_insufficient_capacity() {
-    let mut net = Net::new();
-    let req = net.signed(
-        "user",
-        "pass",
-        METHOD_ALLOCATE,
-        vec![Box::new(udp()), Box::new(EvenPort::new(false))],
-    );
-    assert_eq!(error_code(&net.exchange(&req)), 508);
 }
 
 #[test]
@@ -782,7 +779,7 @@ fn an_ipv6_relay_is_refused_when_only_ipv4_is_offered() {
 fn an_ipv6_relay_is_planned_when_offered() {
     let v6: IpAddr = "2001:db8::50".parse().unwrap();
     let mut net = Net::with(|config| {
-        config.relay_address_generator = Box::new(RelayAddressGeneratorNone { address: v6 });
+        config.relay_address_generator = Some(Box::new(RelayAddressGeneratorNone { address: v6 }));
     });
     net.binding = Binding::Ignore;
     let req = net.signed(
@@ -869,6 +866,338 @@ fn a_relay_that_is_never_bound_times_out_and_a_late_bind_is_released() {
     net.settle();
     assert!(net.events.contains(&ServerEvent::ReleaseRelay(late)));
     assert_eq!(net.server.allocation_count(), 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reservations, even ports, address families, STUN-only
+
+fn even_port_request(reserve: bool) -> Vec<Box<dyn Setter>> {
+    vec![Box::new(udp()), Box::new(EvenPort::new(reserve))]
+}
+
+fn reservation_token_of(reply: &Message) -> Vec<u8> {
+    let mut token = ReservationToken::default();
+    token.get_from(reply).unwrap();
+    token.0
+}
+
+#[test]
+fn an_even_port_is_planned_and_replanned_when_taken() {
+    let mut net = Net::new();
+    net.fail_next = 3;
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(false));
+    let reply = net.exchange(&req);
+    assert_eq!(reply.typ.class, CLASS_SUCCESS_RESPONSE);
+    assert_eq!(net.plans.len(), 4, "three taken ports, then one that works");
+    assert!(net.plans.iter().all(|p| p.bind.port() % 2 == 0));
+    assert_eq!(Net::relayed_addr_of(&reply).port() % 2, 0);
+}
+
+#[test]
+fn giving_up_on_even_ports_is_insufficient_capacity() {
+    let mut net = Net::new();
+    net.fail_next = 100;
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(false));
+    assert_eq!(error_code(&net.exchange(&req)), 508);
+    assert_eq!(net.plans.len(), 1 + 8, "the first plan and eight more");
+    assert_eq!(net.server.allocation_count(), 0);
+}
+
+#[test]
+fn a_reserved_port_is_held_and_claimed_by_its_token() {
+    let mut net = Net::new();
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(true));
+    let reply = net.exchange(&req);
+    assert_eq!(reply.typ.class, CLASS_SUCCESS_RESPONSE);
+    let first = Net::relayed_addr_of(&reply);
+    assert_eq!(first.port() % 2, 0);
+    let token = reservation_token_of(&reply);
+    assert_eq!(token.len(), 8);
+    // Two sockets were bound: the relay, and the one holding the next port up.
+    assert_eq!(net.plans.len(), 2);
+    assert_eq!(net.plans[1].bind.port(), first.port() + 1);
+
+    // Another client claims it.
+    net.who = "198.51.100.8:41000".parse().unwrap();
+    let claim = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![Box::new(udp()), Box::new(ReservationToken(token.clone()))],
+    );
+    let reply = net.exchange(&claim);
+    assert_eq!(reply.typ.class, CLASS_SUCCESS_RESPONSE);
+    assert_eq!(Net::relayed_addr_of(&reply).port(), first.port() + 1);
+    assert_eq!(net.plans.len(), 2, "claiming binds nothing new");
+    assert_eq!(net.server.allocation_count(), 2);
+
+    // A token is good once.
+    net.who = "198.51.100.9:42000".parse().unwrap();
+    let again = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![Box::new(udp()), Box::new(ReservationToken(token))],
+    );
+    assert_eq!(error_code(&net.exchange(&again)), 508);
+}
+
+#[test]
+fn nothing_arrives_on_a_held_port() {
+    let mut net = Net::new();
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(true));
+    let reply = net.exchange(&req);
+    let held = SocketAddr::new(
+        net.plans[1].bind.ip(),
+        Net::relayed_addr_of(&reply).port() + 1,
+    );
+    // Whatever reaches it is dropped: it is not mistaken for a client's request.
+    net.deliver_to(held, peer_addr(), &request(METHOD_BINDING, vec![]).raw);
+    net.deliver_to(held, peer_addr(), b"stray");
+    net.assert_silent();
+}
+
+#[test]
+fn an_unclaimed_reservation_is_released_after_its_lifetime() {
+    let mut net = Net::new();
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(true));
+    let reply = net.exchange(&req);
+    let token = reservation_token_of(&reply);
+    let held = SocketAddr::new(
+        net.plans[1].bind.ip(),
+        Net::relayed_addr_of(&reply).port() + 1,
+    );
+    net.advance(RESERVATION_LIFETIME + Duration::from_secs(1));
+    assert!(net.events.contains(&ServerEvent::ReleaseRelay(held)));
+    net.who = "198.51.100.8:41000".parse().unwrap();
+    let claim = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![Box::new(udp()), Box::new(ReservationToken(token))],
+    );
+    assert_eq!(error_code(&net.exchange(&claim)), 508);
+}
+
+#[test]
+fn a_reservation_that_cannot_be_held_fails_the_whole_allocate() {
+    let mut net = Net::new();
+    // The relay binds; the next port up (held by the second bind) does not.
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(true));
+    net.binding = Binding::Ignore;
+    net.deliver(client_addr(), &req.raw);
+    let (id, plan) = net
+        .events
+        .iter()
+        .find_map(|e| match e {
+            ServerEvent::BindRelay { id, plan } => Some((*id, *plan)),
+            _ => None,
+        })
+        .unwrap();
+    net.server
+        .relay_bound(id, SocketAddr::new(plan.bind.ip(), 51000), net.now);
+    net.settle();
+    net.server.relay_bind_failed(id, net.now);
+    net.settle();
+    assert_eq!(error_code(&net.take_client_message()), 508);
+    assert_eq!(
+        net.server.allocation_count(),
+        0,
+        "the relay it did bind is let go"
+    );
+    assert!(
+        net.events
+            .contains(&ServerEvent::ReleaseRelay(SocketAddr::new(
+                plan.bind.ip(),
+                51000
+            )))
+    );
+}
+
+#[test]
+fn a_token_excludes_a_family_and_an_even_port() {
+    let mut net = Net::new();
+    let token = || -> Box<dyn Setter> { Box::new(ReservationToken(vec![1; 8])) };
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![Box::new(udp()), token(), Box::new(REQUESTED_FAMILY_IPV6)],
+    );
+    assert_eq!(error_code(&net.exchange(&req)), 400);
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![Box::new(udp()), token(), Box::new(EvenPort::new(false))],
+    );
+    assert_eq!(error_code(&net.exchange(&req)), 400);
+    // And a token of the wrong length names nothing.
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_ALLOCATE,
+        vec![
+            Box::new(udp()),
+            Box::new(RawAttr(ATTR_RESERVATION_TOKEN, vec![1; 3])),
+        ],
+    );
+    assert_eq!(error_code(&net.exchange(&req)), 508);
+}
+
+#[test]
+fn a_retransmitted_allocate_repeats_the_reservation_token() {
+    let mut net = Net::new();
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, even_port_request(true));
+    let first = net.exchange(&req);
+    let again = net.exchange(&req);
+    assert_eq!(reservation_token_of(&first), reservation_token_of(&again));
+}
+
+#[test]
+fn an_unmentioned_family_follows_the_listener() {
+    let v6_server: SocketAddr = "[2001:db8::1]:3478".parse().unwrap();
+    let mut net = Net::with(|config| {
+        config.relay_address_generator = Some(Box::new(RelayAddressGeneratorNone {
+            address: "2001:db8::50".parse().unwrap(),
+        }));
+    });
+    net.binding = Binding::Ignore;
+    let req = net.signed("user", "pass", METHOD_ALLOCATE, vec![Box::new(udp())]);
+    // Arriving on an IPv6 listener, the request gets an IPv6 relay.
+    let mut ctx = net.ctx(v6_server, "[2001:db8::7]:4000".parse().unwrap());
+    ctx.transport_protocol = TransportProtocol::UDP;
+    net.server
+        .handle_read(TaggedBytesMut {
+            now: net.now,
+            transport: ctx,
+            message: BytesMut::from(&req.raw[..]),
+        })
+        .unwrap();
+    net.settle();
+    assert_eq!(net.plans.len(), 1);
+    assert!(net.plans[0].advertised_ip.is_ipv6());
+}
+
+#[test]
+fn a_wildcard_listener_follows_the_client_and_strict_mode_is_ipv4() {
+    let wildcard: SocketAddr = "[::]:3478".parse().unwrap();
+    for (strict, client, expect_v6) in [
+        (false, "[2001:db8::7]:4000", true),
+        (false, "198.51.100.7:4000", false),
+        (true, "[2001:db8::7]:4000", false),
+    ] {
+        let mut net = Net::with(|config| {
+            config.strict_address_family = strict;
+            config.relay_address_generator = Some(Box::new(DualStack));
+        });
+        net.binding = Binding::Ignore;
+        let req = net.signed("user", "pass", METHOD_ALLOCATE, vec![Box::new(udp())]);
+        let ctx = net.ctx(wildcard, client.parse().unwrap());
+        net.server
+            .handle_read(TaggedBytesMut {
+                now: net.now,
+                transport: ctx,
+                message: BytesMut::from(&req.raw[..]),
+            })
+            .unwrap();
+        net.settle();
+        assert_eq!(net.plans.len(), 1, "{client} strict={strict}");
+        assert_eq!(
+            net.plans[0].advertised_ip.is_ipv6(),
+            expect_v6,
+            "{client} strict={strict}"
+        );
+    }
+}
+
+/// A generator offering both families.
+struct DualStack;
+
+impl RelayAddressGenerator for DualStack {
+    fn validate(&self) -> shared::error::Result<()> {
+        Ok(())
+    }
+
+    fn plan(&mut self, family: RelayFamily, port: u16) -> shared::error::Result<RelayPlan> {
+        let ip: IpAddr = match family {
+            RelayFamily::V4 => "192.0.2.50".parse().unwrap(),
+            RelayFamily::V6 => "2001:db8::50".parse().unwrap(),
+        };
+        Ok(RelayPlan {
+            bind: SocketAddr::new(ip, port),
+            advertised_ip: ip,
+        })
+    }
+}
+
+#[test]
+fn refresh_may_not_change_the_family() {
+    let mut net = Net::new();
+    net.allocate_raw();
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_REFRESH,
+        vec![Box::new(REQUESTED_FAMILY_IPV6)],
+    );
+    assert_eq!(error_code(&net.exchange(&req)), 443);
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_REFRESH,
+        vec![Box::new(crate::proto::reqfamily::REQUESTED_FAMILY_IPV4)],
+    );
+    assert_eq!(net.exchange(&req).typ.class, CLASS_SUCCESS_RESPONSE);
+    let req = net.signed(
+        "user",
+        "pass",
+        METHOD_REFRESH,
+        vec![Box::new(RawAttr(ATTR_REQUESTED_ADDRESS_FAMILY, vec![1]))],
+    );
+    assert_eq!(error_code(&net.exchange(&req)), 400);
+}
+
+#[test]
+fn a_stun_only_server_answers_binding_and_refuses_the_rest() {
+    let mut net = Net::new();
+    net.server = Server::new(ServerConfig::stun_only(REALM, crypto_provider()), net.base).unwrap();
+    assert_eq!(
+        net.exchange(&request(METHOD_BINDING, vec![])).typ,
+        BINDING_SUCCESS
+    );
+    let reply = net.exchange(&request(METHOD_ALLOCATE, vec![Box::new(udp())]));
+    assert_eq!(error_code(&reply), 400);
+    assert!(
+        !reply.contains(ATTR_REALM),
+        "there is nothing to authenticate against"
+    );
+    for method in [
+        METHOD_REFRESH,
+        METHOD_CREATE_PERMISSION,
+        METHOD_CHANNEL_BIND,
+    ] {
+        assert_eq!(error_code(&net.exchange(&request(method, vec![]))), 400);
+    }
+}
+
+#[test]
+fn unknown_comprehension_required_attributes_are_refused_even_in_binding() {
+    let mut net = Net::new();
+    let req = request(
+        METHOD_BINDING,
+        vec![
+            Box::new(RawAttr(AttrType(0x07ad), vec![0xba, 0xad])),
+            Box::new(RawAttr(ATTR_CHANNEL_NUMBER, vec![0xba, 0xad])),
+            Box::new(RawAttr(AttrType(0x7fff), vec![0xba, 0xad])),
+            Box::new(RawAttr(AttrType(0x8000), vec![0xba, 0xad])),
+        ],
+    );
+    let reply = net.exchange(&req);
+    assert_eq!(error_code(&reply), 420);
+    let mut unknown = UnknownAttributes(vec![]);
+    unknown.get_from(&reply).unwrap();
+    assert_eq!(unknown.0, vec![AttrType(0x07ad), AttrType(0x7fff)]);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1465,7 +1794,9 @@ fn relay_generators_plan_what_they_promise() {
     assert_eq!(plan.advertised_ip, v4);
     assert_eq!(plan.bind.port(), 0);
     assert!(fixed.plan(RelayFamily::V6, 0).is_err());
-    assert!(fixed.plan_even(RelayFamily::V4).is_err());
+    // The system picks the port, so an even one is proposed.
+    assert_eq!(fixed.plan_even(RelayFamily::V4).unwrap().bind.port() % 2, 0);
+    assert!(fixed.plan_even(RelayFamily::V6).is_err());
 
     let mut ranged = RelayAddressGeneratorPortRange {
         relay_address: v4,
@@ -1500,15 +1831,20 @@ fn relay_generators_plan_what_they_promise() {
 
 struct ClientSide {
     client: Client,
+    addr: SocketAddr,
 }
 
 impl ClientSide {
     fn new(user: &str, pass: &str) -> Self {
+        Self::at(client_addr(), user, pass)
+    }
+
+    fn at(addr: SocketAddr, user: &str, pass: &str) -> Self {
         let client = Client::new(
             ClientConfig {
                 stun_serv_addr: String::new(),
                 turn_serv_addr: server_addr().to_string(),
-                local_addr: client_addr(),
+                local_addr: addr,
                 transport_protocol: TransportProtocol::UDP,
                 username: user.to_owned(),
                 password: pass.to_owned(),
@@ -1520,18 +1856,19 @@ impl ClientSide {
             crypto_provider(),
         )
         .unwrap();
-        Self { client }
+        Self { client, addr }
     }
 
     /// Runs client and server against each other until neither has anything to say; returns the
     /// client's events.
     fn pump(&mut self, net: &mut Net) -> Vec<Event> {
         let mut events = Vec::new();
+        net.who = self.addr;
         for _ in 0..40 {
             let mut moved = false;
             while let Some(out) = self.client.poll_write() {
                 moved = true;
-                net.deliver(client_addr(), &out.message);
+                net.deliver(self.addr, &out.message);
             }
             let inbox: Vec<Vec<u8>> = net.to_client.drain(..).collect();
             for raw in inbox {
@@ -1539,7 +1876,7 @@ impl ClientSide {
                 self.client
                     .handle_read(TaggedBytesMut {
                         now: net.now,
-                        transport: net.ctx(client_addr(), server_addr()),
+                        transport: net.ctx(self.addr, server_addr()),
                         message: BytesMut::from(&raw[..]),
                     })
                     .unwrap();
@@ -1672,4 +2009,109 @@ fn closing_the_rust_clients_relay_ends_the_allocation() {
     side.client.relay(relayed).unwrap().close(net.now).unwrap();
     side.pump(&mut net);
     assert_eq!(net.server.allocation_count(), 0);
+}
+
+#[test]
+fn the_rust_client_reserves_a_port_and_a_second_client_claims_it() {
+    let mut net = Net::new();
+    let mut first = ClientSide::new("user", "pass");
+    first
+        .client
+        .allocate_with(
+            net.now,
+            AllocateOptions {
+                even_port: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let events = first.pump(&mut net);
+    let token = events
+        .iter()
+        .find_map(|e| match e {
+            Event::ReservationToken(_, token) => Some(token.clone()),
+            _ => None,
+        })
+        .expect("the server reserved the next port");
+    let relayed = events
+        .iter()
+        .find_map(|e| match e {
+            Event::AllocateResponse(_, addr) => Some(*addr),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(relayed.port() % 2, 0);
+
+    let mut second = ClientSide::at("198.51.100.8:41000".parse().unwrap(), "user", "pass");
+    second
+        .client
+        .allocate_with(
+            net.now,
+            AllocateOptions {
+                reservation_token: Some(token),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let claimed = second
+        .pump(&mut net)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::AllocateResponse(_, addr) => Some(addr),
+            _ => None,
+        })
+        .expect("the reservation is claimed");
+    assert_eq!(claimed.port(), relayed.port() + 1);
+}
+
+#[test]
+fn the_rust_client_options_exclude_each_other() {
+    let mut side = ClientSide::new("user", "pass");
+    let now = Instant::now();
+    assert!(
+        side.client
+            .allocate_with(
+                now,
+                AllocateOptions {
+                    even_port: Some(false),
+                    reservation_token: Some(vec![0; 8]),
+                    ..Default::default()
+                },
+            )
+            .is_err()
+    );
+    assert!(
+        side.client
+            .allocate_with(
+                now,
+                AllocateOptions {
+                    address_family: Some(RelayFamily::V6),
+                    reservation_token: Some(vec![0; 8]),
+                    ..Default::default()
+                },
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn the_rust_client_asks_for_an_address_family() {
+    let mut net = Net::new();
+    let mut side = ClientSide::new("user", "pass");
+    side.client
+        .allocate_with(
+            net.now,
+            AllocateOptions {
+                address_family: Some(RelayFamily::V6),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let events = side.pump(&mut net);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AllocateError(_, err) if err.to_string().contains("440"))),
+        "an IPv4-only server refuses with 440: {events:?}"
+    );
 }

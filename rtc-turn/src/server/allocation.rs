@@ -40,6 +40,9 @@ pub(crate) struct Allocation {
     /// Transaction id of the Allocate that created this, so a retransmission of it is answered
     /// with the same success response rather than `437 Allocation Mismatch`.
     pub(crate) allocate_tid: TransactionId,
+    /// The token for the port reserved beside this relay, if one was asked for; repeated in the
+    /// answer to a retransmitted Allocate.
+    pub(crate) reservation_token: Option<[u8; 8]>,
     pub(crate) expires: Instant,
     /// Peer IP address -> when its permission lapses. Permissions are per IP, not per port.
     pub(crate) permissions: HashMap<IpAddr, Instant>,

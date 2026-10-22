@@ -58,6 +58,13 @@ pub trait RelayAddressGenerator: Send {
     }
 }
 
+/// A random even port in the dynamic range (49152–65534), for generators that leave the choice of
+/// port to the operating system: it cannot be asked for an even one, so one is proposed and the
+/// server plans again if the application finds it taken.
+fn random_even_dynamic_port() -> u16 {
+    rand::rng().random_range(49152u16..=65534) & !1
+}
+
 /// Binds every relay to `address` on a port the operating system picks, and advertises
 /// `relay_address`.
 pub struct RelayAddressGeneratorStatic {
@@ -87,6 +94,10 @@ impl RelayAddressGenerator for RelayAddressGeneratorStatic {
             bind: SocketAddr::new(self.address, port),
             advertised_ip: self.relay_address,
         })
+    }
+
+    fn plan_even(&mut self, family: RelayFamily) -> Result<RelayPlan> {
+        self.plan(family, random_even_dynamic_port())
     }
 }
 
@@ -183,5 +194,9 @@ impl RelayAddressGenerator for RelayAddressGeneratorNone {
             bind: SocketAddr::new(self.address, port),
             advertised_ip: self.address,
         })
+    }
+
+    fn plan_even(&mut self, family: RelayFamily) -> Result<RelayPlan> {
+        self.plan(family, random_even_dynamic_port())
     }
 }

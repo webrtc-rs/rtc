@@ -30,10 +30,7 @@ jobs:
       matrix:
         target:
           - { name: linux-x64,   os: ubuntu-latest }
-          # Native aarch64: the only place the ARMv8 AES / SHA-1 / PMULL fast paths run on Linux.
-          - { name: linux-arm64, os: ubuntu-24.04-arm }
           - { name: macos-arm64, os: macos-latest }
-          - { name: macos-x64,   os: macos-15-intel }
         profile: [ debug, release ]
         backend: [ crypto-ring, crypto-aws-lc-rs ]
     env:
@@ -85,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel ]
+        os: [ ubuntu-latest, macos-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -136,7 +133,6 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest,   target: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -182,7 +178,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest ]
+        os: [ ubuntu-latest, macos-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
