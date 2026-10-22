@@ -3,6 +3,7 @@ name = "rtc-sctp"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC SCTP in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-sctp"
@@ -29,6 +30,7 @@ crc32c.workspace = true
 rustc-hash.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 assert_matches.workspace = true
 lazy_static.workspace = true
 

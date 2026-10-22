@@ -1,3 +1,4 @@
+use crate::data_channel::OutstandingBytes;
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
@@ -39,7 +40,7 @@ pub(crate) struct RTCDataChannelInternal {
     /// for bytes still in the app→core→SCTP send pipeline — not just the SCTP
     /// stream's own `buffered_amount`, which counts only post-packetization. Used
     /// for synchronous send back-pressure.
-    pub(crate) outstanding_bytes: usize,
+    pub(crate) outstanding_bytes: OutstandingBytes,
 
     /// Deadline by which an in-band channel's DCEP handshake must complete.
     /// Set when the channel is dialed; cleared on handshake completion or close.
@@ -66,7 +67,7 @@ impl Default for RTCDataChannelInternal {
             ready_state: RTCDataChannelState::default(),
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
-            outstanding_bytes: 0,
+            outstanding_bytes: OutstandingBytes::default(),
             handshake_deadline: None,
             close_emitted: false,
             data_channel: None,
@@ -96,7 +97,7 @@ impl RTCDataChannelInternal {
             ready_state: RTCDataChannelState::Connecting,
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
-            outstanding_bytes: 0,
+            outstanding_bytes: OutstandingBytes::default(),
             handshake_deadline: None,
             close_emitted: false,
             data_channel: None,

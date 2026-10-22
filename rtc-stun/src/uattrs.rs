@@ -47,7 +47,7 @@ impl Setter for UnknownAttributes {
 impl Getter for UnknownAttributes {
     // GetFrom parses UNKNOWN-ATTRIBUTES from message.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let v = m.get(ATTR_UNKNOWN_ATTRIBUTES)?;
+        let v = m.get_value(ATTR_UNKNOWN_ATTRIBUTES)?;
         if v.len() % ATTR_TYPE_SIZE != 0 {
             return Err(Error::ErrBadUnknownAttrsSize);
         }

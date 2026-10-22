@@ -10,10 +10,10 @@ pub(crate) mod param_random;
 pub(crate) mod param_reconfig_response;
 pub(crate) mod param_requested_hmac_algorithm;
 pub(crate) mod param_state_cookie;
-pub(crate) mod param_zero_checksum_acceptable;
 pub(crate) mod param_supported_extensions;
 pub(crate) mod param_type;
 pub(crate) mod param_uknown;
+pub(crate) mod param_zero_checksum_acceptable;
 
 use crate::param::{
     param_chunk_list::ParamChunkList, param_forward_tsn_supported::ParamForwardTsnSupported,
@@ -25,9 +25,9 @@ use crate::param::{
     param_uknown::ParamUnknown,
 };
 
-pub(crate) use param_zero_checksum_acceptable::DTLS_ERROR_DETECTION_METHOD;
 use param_header::*;
 use param_type::*;
+pub(crate) use param_zero_checksum_acceptable::DTLS_ERROR_DETECTION_METHOD;
 use shared::error::{Error, Result};
 
 use bytes::{Buf, Bytes, BytesMut};

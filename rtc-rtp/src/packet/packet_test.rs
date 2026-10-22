@@ -904,7 +904,8 @@ fn test_rfc8285_one_byte_extension_terminate_processing_when_reserved_id_encount
         "Extension should be empty for invalid ID"
     );
 
-    let payload = reserved_id_pkt.slice(17..);
+    // The payload starts after the whole extension block, however early parsing stopped.
+    let payload = reserved_id_pkt.slice(20..);
     assert_eq!(p.payload, payload, "p.payload must be same as payload");
 
     Ok(())
@@ -1261,4 +1262,60 @@ fn test_round_trip() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn test_unmarshal_reuse_matches_unmarshal_and_keeps_allocations() {
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(0x7e57);
+    let mut reused = Packet::default();
+    let mut capacity_seen = 0;
+    for round in 0..5_000 {
+        let mut header = Header {
+            version: 2,
+            marker: rng.random(),
+            payload_type: rng.random_range(0..128),
+            sequence_number: rng.random(),
+            timestamp: rng.random(),
+            ssrc: rng.random(),
+            csrc: (0..rng.random_range(0..3)).map(|_| rng.random()).collect(),
+            ..Default::default()
+        };
+        if rng.random_bool(0.6) {
+            header.extension = true;
+            header.extension_profile = EXTENSION_PROFILE_ONE_BYTE;
+            for id in 1..=rng.random_range(1..4u8) {
+                let _ = header.set_extension(id, Bytes::from(vec![id; rng.random_range(1..=4)]));
+            }
+        }
+        let packet = Packet {
+            header,
+            payload: Bytes::from(
+                (0..rng.random_range(0..40))
+                    .map(|i| i as u8)
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        let mut raw = packet.marshal().unwrap().to_vec();
+        // Now and then corrupt it, so the error paths agree too.
+        if rng.random_bool(0.2) && !raw.is_empty() {
+            let i = rng.random_range(0..raw.len());
+            raw[i] = rng.random();
+        }
+        let raw = Bytes::from(raw);
+
+        let fresh = Packet::unmarshal(&mut raw.clone());
+        let status = reused.unmarshal_reuse(&raw);
+        match (fresh, status) {
+            (Ok(expected), Ok(())) => {
+                assert_eq!(reused, expected, "round {round}: {raw:02x?}");
+                capacity_seen = capacity_seen.max(reused.header.extensions.capacity());
+            }
+            (Err(expected), Err(got)) => assert_eq!(got, expected, "round {round}: {raw:02x?}"),
+            (a, b) => panic!("round {round}: unmarshal {a:?} but unmarshal_reuse {b:?}"),
+        }
+    }
+    // The extension table was reused, not rebuilt: it only ever grows.
+    assert!(reused.header.extensions.capacity() >= capacity_seen);
 }

@@ -30,8 +30,19 @@ pub trait Marshal: MarshalSize {
     ///
     /// Propagates any failure from [`Self::marshal_to`].
     fn marshal(&self) -> Result<BytesMut> {
+        self.marshal_with_spare(0)
+    }
+
+    /// Like [`marshal`](Self::marshal), but reserves `spare` extra bytes of capacity after the
+    /// message, so a caller that is about to append a trailer (an authentication tag, say) can do
+    /// so without reallocating.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure from [`Self::marshal_to`].
+    fn marshal_with_spare(&self, spare: usize) -> Result<BytesMut> {
         let l = self.marshal_size();
-        let mut buf = BytesMut::with_capacity(l);
+        let mut buf = BytesMut::with_capacity(l + spare);
         buf.resize(l, 0);
         let n = self.marshal_to(&mut buf)?;
         if n != l {

@@ -12,3 +12,6 @@ Cargo.lock
 **/*.DS_Store
 /.claude/
 **/__pycache__
+
+# Micro-benchmark harness build output
+/benchmarks/*/target/

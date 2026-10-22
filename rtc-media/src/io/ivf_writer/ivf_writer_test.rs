@@ -25,6 +25,7 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_valid_pkt.slice(20..),
     };
@@ -53,6 +54,7 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
             padding: !raw_mid_part_pkt.len().is_multiple_of(4),
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_mid_part_pkt.slice(20..),
     };
@@ -81,6 +83,7 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
             padding: !raw_keyframe_pkt.len().is_multiple_of(4),
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_keyframe_pkt.slice(20..),
     };

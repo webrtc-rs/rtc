@@ -24,6 +24,7 @@ fn test_ogg_writer_add_packet_and_close() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_pkt.slice(20..),
     };
@@ -74,6 +75,7 @@ fn test_ogg_writer_add_packet() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_pkt,
     };
@@ -115,6 +117,7 @@ fn test_ogg_writer_add_packet_of_255() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_pkt,
     };
@@ -156,6 +159,7 @@ fn test_ogg_writer_add_large_packet() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_pkt,
     };
@@ -197,6 +201,7 @@ fn test_ogg_writer_add_large_packet_with_multiple_of_255() -> Result<()> {
             padding: false,
             extensions: vec![],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: raw_pkt,
     };

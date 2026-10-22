@@ -431,7 +431,7 @@ impl Client {
     /// a response is.
     ///
     /// Such a host calls this to route a response, rather than guessing from the peer address and
-    /// handing it to a client that will silently discard it — [`handle_read`](Self::handle_read)
+    /// handing it to a client that will silently discard it — `handle_read`
     /// drops a response with no matching transaction, as it must.
     ///
     /// Applies to responses only. TURN ChannelData carries no transaction ID at all, and

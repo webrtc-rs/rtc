@@ -365,13 +365,17 @@ impl Message {
             .0
             .copy_from_slice(&buf[8..MESSAGE_HEADER_SIZE]);
 
-        self.attributes.0.clear();
+        // Attribute slots (and the value buffers inside them) from a previous decode are reused,
+        // so decoding into one long-lived message allocates nothing in steady state.
+        let mut kept = 0;
         let mut offset = 0;
         let mut b = &buf[MESSAGE_HEADER_SIZE..full_size];
+        let (mut seen_mi, mut seen_mi256) = (false, false);
 
         while offset < size {
             // checking that we have enough bytes to read header
             if b.len() < ATTRIBUTE_HEADER_SIZE {
+                self.attributes.0.truncate(kept);
                 return Err(Error::Other(format!(
                     "buffer length {} is less than {} (expected header size)",
                     b.len(),
@@ -379,32 +383,53 @@ impl Message {
                 )));
             }
 
-            let mut a = RawAttribute {
-                typ: compat_attr_type(u16::from_be_bytes([b[0], b[1]])), // first 2 bytes
-                length: u16::from_be_bytes([b[2], b[3]]),                // second 2 bytes
-                ..Default::default()
-            };
-            let a_l = a.length as usize; // attribute length
+            let typ = compat_attr_type(u16::from_be_bytes([b[0], b[1]])); // first 2 bytes
+            let length = u16::from_be_bytes([b[2], b[3]]); // second 2 bytes
+            let a_l = length as usize; // attribute length
             let a_buff_l = nearest_padded_value_length(a_l); // expected buffer length (with padding)
 
             b = &b[ATTRIBUTE_HEADER_SIZE..]; // slicing again to simplify value read
             offset += ATTRIBUTE_HEADER_SIZE;
             if b.len() < a_buff_l {
                 // checking size
+                self.attributes.0.truncate(kept);
                 return Err(Error::Other(format!(
                     "buffer length {} is less than {} (expected value size for {})",
                     b.len(),
                     a_buff_l,
-                    a.typ
+                    typ
                 )));
             }
-            a.value = b[..a_l].to_vec();
+            let value = &b[..a_l];
             offset += a_buff_l;
             b = &b[a_buff_l..];
 
-            self.attributes.0.push(a);
+            // RFC 8489 §14.5: after MESSAGE-INTEGRITY only MESSAGE-INTEGRITY-SHA256 and
+            // FINGERPRINT may follow; after MESSAGE-INTEGRITY-SHA256 (with no MESSAGE-INTEGRITY)
+            // only FINGERPRINT. Anything else is not covered by the integrity check and is dropped.
+            let is_mi = typ == ATTR_MESSAGE_INTEGRITY;
+            let is_mi256 = typ == ATTR_MESSAGE_INTEGRITY_SHA256;
+            let is_fingerprint = typ == ATTR_FINGERPRINT;
+            let after_mi = seen_mi && !is_mi256 && !is_fingerprint;
+            let after_mi256_only = !seen_mi && seen_mi256 && !is_fingerprint;
+            if after_mi || after_mi256_only {
+                continue;
+            }
+            seen_mi |= is_mi;
+            seen_mi256 |= is_mi256;
+
+            if kept == self.attributes.0.len() {
+                self.attributes.0.push(RawAttribute::default());
+            }
+            let slot = &mut self.attributes.0[kept];
+            slot.typ = typ;
+            slot.length = length;
+            slot.value.clear();
+            slot.value.extend_from_slice(value);
+            kept += 1;
         }
 
+        self.attributes.0.truncate(kept);
         Ok(())
     }
 
@@ -467,6 +492,17 @@ impl Message {
         }
     }
 
+    /// The value of the first attribute of type `t`, borrowed from the message.
+    ///
+    /// What the attribute getters use: [`get`](Self::get) returns an owned copy, which costs an
+    /// allocation per lookup.
+    pub fn get_value(&self, t: AttrType) -> Result<&[u8]> {
+        self.attributes
+            .find(t)
+            .map(|attribute| attribute.value.as_slice())
+            .ok_or(Error::ErrAttributeNotFound)
+    }
+
     /// Resets the message and applies `setters` to it in order, returning on the first
     /// error.
     ///
@@ -494,6 +530,26 @@ impl Message {
     /// # }
     /// ```
     pub fn build(&mut self, setters: &[Box<dyn Setter + '_>]) -> Result<()> {
+        self.reset();
+        self.write_header();
+        for s in setters {
+            s.add_to(self)?;
+        }
+        Ok(())
+    }
+
+    /// [`build`](Self::build) for setters the caller already holds, which need no boxing:
+    ///
+    /// ```
+    /// use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut m = Message::new();
+    /// m.build_with(&[&BINDING_REQUEST, &TransactionId::new()])?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn build_with(&mut self, setters: &[&dyn Setter]) -> Result<()> {
         self.reset();
         self.write_header();
         for s in setters {

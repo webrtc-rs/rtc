@@ -1036,7 +1036,6 @@ mod tests {
         Ok(())
     }
 
-
     /// The key logger must receive one NSS-format `CLIENT_RANDOM` line per completed handshake,
     /// and — the property that makes the log actually useful — both ends of the same
     /// association must write the identical line, because they derive the same master secret
@@ -1067,8 +1066,11 @@ mod tests {
                 provider.crypto(),
             )?])
             .build(false, None)?;
-        let mut server =
-            Endpoint::new(server_addr(), TransportProtocol::UDP, Some(Arc::new(server_config)));
+        let mut server = Endpoint::new(
+            server_addr(),
+            TransportProtocol::UDP,
+            Some(Arc::new(server_config)),
+        );
 
         let client_config = ConfigBuilder::default()
             .with_crypto_provider(provider.clone())

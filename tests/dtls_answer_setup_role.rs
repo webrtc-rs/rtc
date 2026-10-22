@@ -55,7 +55,7 @@ fn setup_attr(desc: &RTCSessionDescription) -> Result<String> {
         .iter()
         .flat_map(|m| m.attributes.iter())
         .find(|a| a.key == "setup")
-        .and_then(|a| a.value.clone())
+        .and_then(|a| a.value.as_ref().map(|v| v.to_string()))
         .unwrap_or_default())
 }
 

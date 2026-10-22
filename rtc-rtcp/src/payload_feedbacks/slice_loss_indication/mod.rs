@@ -54,7 +54,7 @@ impl Packet for SliceLossIndication {
         Header {
             padding: get_padding_size(self.raw_size()) != 0,
             count: FORMAT_SLI,
-            packet_type: PacketType::TransportSpecificFeedback,
+            packet_type: PacketType::PayloadSpecificFeedback,
             length: ((self.marshal_size() / 4) - 1) as u16,
         }
     }
@@ -140,7 +140,7 @@ impl Unmarshal for SliceLossIndication {
             return Err(Error::PacketTooShort);
         }
 
-        if h.packet_type != PacketType::TransportSpecificFeedback || h.count != FORMAT_SLI {
+        if h.packet_type != PacketType::PayloadSpecificFeedback || h.count != FORMAT_SLI {
             return Err(Error::WrongType);
         }
 

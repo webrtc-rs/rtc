@@ -58,6 +58,8 @@
 //! # }
 //! ```
 
+/// The APP packet (PT 204), carrying application-defined data under a four-character name.
+pub mod application_defined;
 /// Compound RTCP packets — the several reports that share one datagram.
 pub mod compound_packet;
 /// Extended reports (XR, [RFC 3611]): loss/discard run lengths, receipt times and per-block

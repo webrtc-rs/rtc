@@ -39,6 +39,11 @@ impl Attributes {
 
         (RawAttribute::default(), false)
     }
+
+    /// The first attribute of type `t`, borrowed. Unlike [`get`](Self::get) this copies nothing.
+    pub fn find(&self, t: AttrType) -> Option<&RawAttribute> {
+        self.0.iter().find(|candidate| candidate.typ == t)
+    }
 }
 
 /// AttrType is attribute type.

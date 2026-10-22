@@ -1,0 +1,78 @@
+package sctp
+
+import (
+	"encoding/hex"
+	"os"
+	"sync"
+)
+
+var oraclePktMu sync.Mutex
+
+func oraclePacketSeed(b []byte) {
+	path := os.Getenv("ORACLE_PKT_OUT")
+	if path == "" {
+		return
+	}
+	oraclePktMu.Lock()
+	defer oraclePktMu.Unlock()
+	if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		f.WriteString(hex.EncodeToString(b) + "\n")
+		f.Close()
+	}
+}
+
+// OracleRun parses raw as an SCTP packet with checksum verification and, on success, reports
+// the chunk types and the bytes pion marshals the packet back to.
+func OracleRun(raw []byte) (chunks []string, out []byte, err error) {
+	p := &packet{}
+	if err = p.unmarshal(true, raw); err != nil {
+		return nil, nil, err
+	}
+	for _, c := range p.chunks {
+		switch c.(type) {
+		case *chunkInit:
+			chunks = append(chunks, "init")
+		case *chunkInitAck:
+			chunks = append(chunks, "init-ack")
+		default:
+			chunks = append(chunks, typeName(c))
+		}
+	}
+	out, err = p.marshal(true)
+	return chunks, out, err
+}
+
+func typeName(c chunk) string {
+	switch c.(type) {
+	case *chunkAbort:
+		return "abort"
+	case *chunkCookieEcho:
+		return "cookie-echo"
+	case *chunkCookieAck:
+		return "cookie-ack"
+	case *chunkHeartbeat:
+		return "heartbeat"
+	case *chunkPayloadData:
+		if c.(*chunkPayloadData).typ == ctIData {
+			return "i-data"
+		}
+		return "data"
+	case *chunkSelectiveAck:
+		return "sack"
+	case *chunkReconfig:
+		return "reconfig"
+	case *chunkForwardTSN:
+		return "forward-tsn"
+	case *chunkIForwardTSN:
+		return "i-forward-tsn"
+	case *chunkError:
+		return "error"
+	case *chunkShutdown:
+		return "shutdown"
+	case *chunkShutdownAck:
+		return "shutdown-ack"
+	case *chunkShutdownComplete:
+		return "shutdown-complete"
+	}
+	return "other"
+}

@@ -34,6 +34,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId, SSRC};
 use crate::statistics::StatsSelector;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use ice::CandidatePairStats;
+use rustc_hash::FxHashMap;
 use sctp::StreamId;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -78,7 +79,7 @@ pub(crate) struct RTCStatsAccumulator {
     pub(crate) codecs: HashMap<String, CodecStatsAccumulator>,
 
     /// Data channel stats keyed by channel ID.
-    pub(crate) data_channels: HashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
+    pub(crate) data_channels: FxHashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
 
     /// Inbound RTP stream accumulators keyed by SSRC.
     pub(crate) inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,

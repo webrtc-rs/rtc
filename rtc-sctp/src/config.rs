@@ -70,6 +70,10 @@ pub struct TransportConfig {
     /// capability to the peer. Outgoing packets go zero-checksum once the *peer*
     /// advertised the capability — see the association's `send_zero_checksum`.
     enable_zero_checksum: bool,
+    /// Whether RACK-TLP loss detection ([RFC 8985]) is used. On by default.
+    ///
+    /// [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+    enable_rack: bool,
 }
 
 impl Default for TransportConfig {
@@ -82,6 +86,7 @@ impl Default for TransportConfig {
             max_num_inbound_streams: u16::MAX,
             timer_config: TimerConfig::default(),
             enable_zero_checksum: false,
+            enable_rack: true,
         }
     }
 }
@@ -105,6 +110,25 @@ impl TransportConfig {
     pub fn with_enable_zero_checksum(mut self, value: bool) -> Self {
         self.enable_zero_checksum = value;
         self
+    }
+
+    /// Turns RACK-TLP loss detection ([RFC 8985]) on or off. It is on by default.
+    ///
+    /// RACK declares a chunk lost once a later-sent chunk has been delivered and a round trip
+    /// plus a small reordering allowance has passed, and a tail-loss probe fires after about two
+    /// round trips of silence — so a lost tail costs milliseconds instead of a one-second
+    /// retransmission timeout. Disabling it leaves only the classic fast retransmit (three gap
+    /// reports) and the T3-rtx timer.
+    ///
+    /// [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+    pub fn with_enable_rack(mut self, value: bool) -> Self {
+        self.enable_rack = value;
+        self
+    }
+
+    /// Whether RACK-TLP loss detection is enabled.
+    pub fn enable_rack(&self) -> bool {
+        self.enable_rack
     }
 
     /// Whether this configuration accepts zero-checksum packets ([RFC 9653]).

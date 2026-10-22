@@ -200,8 +200,10 @@ impl PartialDecode {
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
-            let chunk_value_padding = get_padding_size(c.value_length());
-            offset += CHUNK_HEADER_SIZE + c.value_length() + chunk_value_padding;
+            // Step by the length the chunk header declared, not by what the parser kept of it:
+            // a chunk with more bytes than its type uses must not leave them to be read as
+            // the next chunk.
+            offset += chunk_buf.len() + get_padding_size(chunk_buf.len());
             chunks.push(c);
         }
 
@@ -297,8 +299,10 @@ impl Packet {
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
-            let chunk_value_padding = get_padding_size(c.value_length());
-            offset += CHUNK_HEADER_SIZE + c.value_length() + chunk_value_padding;
+            // Step by the length the chunk header declared, not by what the parser kept of it:
+            // a chunk with more bytes than its type uses must not leave them to be read as
+            // the next chunk.
+            offset += chunk_buf.len() + get_padding_size(chunk_buf.len());
             chunks.push(c);
         }
 

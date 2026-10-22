@@ -55,3 +55,16 @@ impl BytesMutExt for BytesMut {
         }
     }
 }
+
+/// Reads an unsigned LEB128 value of at most 8 bytes (the AV1 limit) from the front of `bytes`,
+/// returning the value and how many bytes it took, or `None` if it is truncated or too long.
+pub fn read_leb128_checked(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut value: u64 = 0;
+    for (i, b) in bytes.iter().take(8).enumerate() {
+        value |= u64::from(b & 0x7f) << (7 * i);
+        if b & 0x80 == 0 {
+            return usize::try_from(value).ok().map(|v| (v, i + 1));
+        }
+    }
+    None
+}

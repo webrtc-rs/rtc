@@ -1,0 +1,51 @@
+# cargo-deny configuration: `cargo deny check`.
+#
+# Run in CI by the `supply-chain` job of .github/workflows/platform.yml.
+
+[graph]
+# Judge the dependency graph a user can actually build, not only the default features: both
+# built-in crypto providers.
+all-features = true
+# Dev-dependencies are test scaffolding that never ships (interop tests against the old
+# `webrtc` 0.14, example signalling helpers); a finding there is tracked but cannot reach a
+# user of the library.
+exclude-dev = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# Add an advisory id here only with a comment saying why it does not apply to us and when to
+# revisit it.
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# The allow-list is deliberately a little wider than today's tree: Cargo.lock is not committed,
+# so CI resolves fresh dependency versions and a permissive licence we already accept in
+# principle should not turn a routine update red.
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CC0-1.0",
+    "OpenSSL",
+]
+
+[bans]
+# Two versions of a crate are a build-time cost, not a defect; surfaced, not fatal.
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = [ "https://github.com/rust-lang/crates.io-index" ]

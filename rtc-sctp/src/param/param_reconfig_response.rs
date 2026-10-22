@@ -3,18 +3,38 @@ use super::{param_header::*, param_type::*, *};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::fmt;
 
-#[derive(Default, Debug, Copy, Clone, PartialEq)]
-#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum ReconfigResult {
-    SuccessNop = 0,
-    SuccessPerformed = 1,
-    Denied = 2,
-    ErrorWrongSsn = 3,
-    ErrorRequestAlreadyInProgress = 4,
-    ErrorBadSequenceNumber = 5,
-    InProgress = 6,
-    #[default]
-    Unknown,
+    SuccessNop,
+    SuccessPerformed,
+    Denied,
+    ErrorWrongSsn,
+    ErrorRequestAlreadyInProgress,
+    ErrorBadSequenceNumber,
+    InProgress,
+    /// A result code the RFC does not define; kept so it is written back unchanged.
+    Unknown(u32),
+}
+
+impl Default for ReconfigResult {
+    fn default() -> Self {
+        ReconfigResult::Unknown(u32::MAX)
+    }
+}
+
+impl ReconfigResult {
+    pub(crate) fn code(self) -> u32 {
+        match self {
+            ReconfigResult::SuccessNop => 0,
+            ReconfigResult::SuccessPerformed => 1,
+            ReconfigResult::Denied => 2,
+            ReconfigResult::ErrorWrongSsn => 3,
+            ReconfigResult::ErrorRequestAlreadyInProgress => 4,
+            ReconfigResult::ErrorBadSequenceNumber => 5,
+            ReconfigResult::InProgress => 6,
+            ReconfigResult::Unknown(v) => v,
+        }
+    }
 }
 
 impl fmt::Display for ReconfigResult {
@@ -45,7 +65,7 @@ impl From<u32> for ReconfigResult {
             4 => ReconfigResult::ErrorRequestAlreadyInProgress,
             5 => ReconfigResult::ErrorBadSequenceNumber,
             6 => ReconfigResult::InProgress,
-            _ => ReconfigResult::Unknown,
+            v => ReconfigResult::Unknown(v),
         }
     }
 }
@@ -130,7 +150,7 @@ impl Param for ParamReconfigResponse {
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
         buf.put_u32(self.reconfig_response_sequence_number);
-        buf.put_u32(self.result as u32);
+        buf.put_u32(self.result.code());
         Ok(buf.len())
     }
 

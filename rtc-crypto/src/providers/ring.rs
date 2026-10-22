@@ -573,7 +573,7 @@ impl RustCryptoHmacSha1 {
     pub(crate) fn new(key: &[u8]) -> Self {
         Self {
             // HMAC accepts any key length: it hashes longer keys and zero-pads shorter ones.
-            keyed: <HmacSha1 as RustCryptoMac>::new_from_slice(key)
+            keyed: <HmacSha1 as ::hmac::KeyInit>::new_from_slice(key)
                 .expect("HMAC accepts keys of any length"),
         }
     }

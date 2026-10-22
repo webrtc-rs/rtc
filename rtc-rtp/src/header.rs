@@ -105,6 +105,11 @@ pub struct Header {
     pub extensions: Vec<Extension>,
     /// Padding bytes appended to the extension block so it ends on a 32-bit boundary.
     pub extensions_padding: usize,
+    /// The number of padding octets that follow the payload, the last of which holds this count.
+    ///
+    /// Set when a packet is parsed so it marshals back to the same size. Zero means "pad to a
+    /// 32-bit boundary" when [`Header::padding`] is set.
+    pub padding_size: u8,
 }
 
 impl Unmarshal for Header {
@@ -114,159 +119,277 @@ impl Unmarshal for Header {
         Self: Sized,
         B: Buf,
     {
-        let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < HEADER_LENGTH {
+        // The header is parsed in place from the buffer's first chunk, so extension payloads can
+        // share the caller's allocation instead of being copied out.
+        let header_bytes = {
+            let chunk = raw_packet.chunk();
+            let end = Self::wire_len(chunk)?;
+            raw_packet.copy_to_bytes(end)
+        };
+        Self::parse(&header_bytes)
+    }
+}
+
+impl Header {
+    /// The number of bytes the header occupies at the front of `buf`, extension block included.
+    ///
+    /// This is the true size on the wire, which can exceed [`MarshalSize::marshal_size`] when a
+    /// sender padded the extension block; anything that treats the header as a unit (SRTP
+    /// encryption starts after it and authenticates it) must use this, not the re-computed size.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `buf` is too short for the header it announces.
+    pub fn wire_len(buf: &[u8]) -> Result<usize> {
+        if buf.len() < HEADER_LENGTH {
             return Err(Error::ErrHeaderSizeInsufficient);
         }
-        /*
-         *  0                   1                   2                   3
-         *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-         * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-         * |V=2|P|X|  CC   |M|     PT      |       sequence number         |
-         * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-         * |                           timestamp                           |
-         * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-         * |           synchronization source (SSRC) identifier            |
-         * +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
-         * |            contributing source (CSRC) identifiers             |
-         * |                             ....                              |
-         * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-         */
-        let b0 = raw_packet.get_u8();
-        let version = b0 >> VERSION_SHIFT & VERSION_MASK;
-        let padding = (b0 >> PADDING_SHIFT & PADDING_MASK) > 0;
-        let extension = (b0 >> EXTENSION_SHIFT & EXTENSION_MASK) > 0;
+        let cc = (buf[0] & CC_MASK) as usize;
+        let mut n = CSRC_OFFSET + cc * CSRC_LENGTH;
+        if buf.len() < n {
+            return Err(Error::ErrHeaderSizeInsufficient);
+        }
+        if (buf[0] >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
+            if buf.len() < n + 4 {
+                return Err(Error::ErrHeaderSizeInsufficientForExtension);
+            }
+            let extension_length = u16::from_be_bytes([buf[n + 2], buf[n + 3]]) as usize * 4;
+            n += 4 + extension_length;
+            if buf.len() < n {
+                return Err(Error::ErrHeaderSizeInsufficientForExtension);
+            }
+        }
+        Ok(n)
+    }
+
+    /// Parses a header from `data`, whose first [`Header::wire_len`] bytes are the header.
+    fn parse(data: &Bytes) -> Result<Header> {
+        let mut header = Header::default();
+        header.parse_into(data)?;
+        Ok(header)
+    }
+
+    /// Parses the header at the front of `data` into `self`, reusing the allocations its CSRC list
+    /// and extension table already hold.
+    ///
+    /// Extension payloads share `data`'s buffer rather than copying out of it.
+    pub(crate) fn parse_into(&mut self, data: &Bytes) -> Result<()> {
+        let buf: &[u8] = data;
+        // One bounds check for the twelve fixed bytes; the reads below are then constant-offset.
+        let fixed: &[u8; CSRC_OFFSET] =
+            buf.first_chunk().ok_or(Error::ErrHeaderSizeInsufficient)?;
+        let b0 = fixed[0];
         let cc = (b0 & CC_MASK) as usize;
 
-        let mut curr_offset = CSRC_OFFSET + (cc * CSRC_LENGTH);
-        if raw_packet_len < curr_offset {
-            return Err(Error::ErrHeaderSizeInsufficient);
-        }
+        self.csrc.clear();
+        self.extensions.clear();
 
-        let b1 = raw_packet.get_u8();
-        let marker = (b1 >> MARKER_SHIFT & MARKER_MASK) > 0;
-        let payload_type = b1 & PT_MASK;
-
-        let sequence_number = raw_packet.get_u16();
-        let timestamp = raw_packet.get_u32();
-        let ssrc = raw_packet.get_u32();
-
-        let mut csrc = Vec::with_capacity(cc);
+        let mut n = CSRC_OFFSET;
+        self.csrc.reserve_exact(cc);
         for _ in 0..cc {
-            csrc.push(raw_packet.get_u32());
+            let word = buf
+                .get(n..n + CSRC_LENGTH)
+                .ok_or(Error::ErrHeaderSizeInsufficient)?;
+            self.csrc
+                .push(u32::from_be_bytes([word[0], word[1], word[2], word[3]]));
+            n += CSRC_LENGTH;
         }
+
+        let extension = (b0 >> EXTENSION_SHIFT & EXTENSION_MASK) > 0;
         let mut extensions_padding: usize = 0;
-        let (extension_profile, extensions) = if extension {
-            let expected = curr_offset + 4;
-            if raw_packet_len < expected {
-                return Err(Error::ErrHeaderSizeInsufficientForExtension);
-            }
-            let extension_profile = raw_packet.get_u16();
-            curr_offset += 2;
-            let extension_length = raw_packet.get_u16() as usize * 4;
-            curr_offset += 2;
+        let mut extension_profile = 0;
+        if extension {
+            let block = buf
+                .get(n..n + 4)
+                .ok_or(Error::ErrHeaderSizeInsufficientForExtension)?;
+            extension_profile = u16::from_be_bytes([block[0], block[1]]);
+            let extension_length = u16::from_be_bytes([block[2], block[3]]) as usize * 4;
+            n += 4;
+            let extension_end = n + extension_length;
 
-            let expected = curr_offset + extension_length;
-            if raw_packet_len < expected {
-                return Err(Error::ErrHeaderSizeInsufficientForExtension);
-            }
-
-            let mut extensions = vec![];
             match extension_profile {
-                // RFC 8285 RTP One Byte Header Extension
-                EXTENSION_PROFILE_ONE_BYTE => {
-                    let end = curr_offset + extension_length;
-                    while curr_offset < end {
-                        let b = raw_packet.get_u8();
-                        if b == 0x00 {
-                            // padding
-                            curr_offset += 1;
-                            extensions_padding += 1;
-                            continue;
-                        }
-
-                        let extid = b >> 4;
-                        let len = ((b & (0xFF ^ 0xF0)) + 1) as usize;
-                        curr_offset += 1;
-
-                        if extid == EXTENSION_ID_RESERVED {
-                            break;
-                        }
-
-                        if len > raw_packet.remaining() {
-                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
-                        }
-
-                        extensions.push(Extension {
-                            id: extid,
-                            payload: raw_packet.copy_to_bytes(len),
-                        });
-                        curr_offset += len;
+                // RFC 8285 one-byte and two-byte header extensions
+                EXTENSION_PROFILE_ONE_BYTE | EXTENSION_PROFILE_TWO_BYTE => {
+                    // A header that already owns a table has room for the next packet's elements
+                    // (the same few extensions ride on every packet of a stream), so it fills in
+                    // one pass. A fresh one counts first, so its table is a single exact
+                    // allocation.
+                    if self.extensions.capacity() == 0 {
+                        let mut count = 0;
+                        walk_extensions(buf, n, extension_end, extension_profile, |_, _, _| {
+                            count += 1;
+                        })?;
+                        self.extensions.reserve_exact(count);
                     }
-                }
-                // RFC 8285 RTP Two Byte Header Extension
-                EXTENSION_PROFILE_TWO_BYTE => {
-                    let end = curr_offset + extension_length;
-                    while curr_offset < end {
-                        let b = raw_packet.get_u8();
-                        if b == 0x00 {
-                            // padding
-                            curr_offset += 1;
-                            extensions_padding += 1;
-                            continue;
-                        }
-
-                        let extid = b;
-                        curr_offset += 1;
-
-                        if curr_offset >= end {
-                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
-                        }
-
-                        let len = raw_packet.get_u8() as usize;
-                        curr_offset += 1;
-
-                        if len > raw_packet.remaining() {
-                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
-                        }
-
-                        extensions.push(Extension {
-                            id: extid,
-                            payload: raw_packet.copy_to_bytes(len),
-                        });
-                        curr_offset += len;
-                    }
+                    let extensions = &mut self.extensions;
+                    extensions_padding = walk_extensions(
+                        buf,
+                        n,
+                        extension_end,
+                        extension_profile,
+                        |id, at, len| {
+                            extensions.push(Extension {
+                                id,
+                                payload: data.slice(at..at + len),
+                            });
+                        },
+                    )?;
                 }
                 // RFC3550 Extension
-                _ => {
-                    if raw_packet_len < curr_offset + extension_length {
-                        return Err(Error::ErrHeaderSizeInsufficientForExtension);
-                    }
-                    extensions.push(Extension {
-                        id: 0,
-                        payload: raw_packet.copy_to_bytes(extension_length),
-                    });
-                }
+                _ => self.extensions.push(Extension {
+                    id: 0,
+                    payload: data.slice(n..extension_end),
+                }),
             };
+        }
 
-            (extension_profile, extensions)
+        self.version = b0 >> VERSION_SHIFT & VERSION_MASK;
+        self.padding = (b0 >> PADDING_SHIFT & PADDING_MASK) > 0;
+        self.extension = extension;
+        self.marker = (fixed[1] >> MARKER_SHIFT & MARKER_MASK) > 0;
+        self.payload_type = fixed[1] & PT_MASK;
+        self.sequence_number = u16::from_be_bytes([fixed[2], fixed[3]]);
+        self.timestamp = u32::from_be_bytes([fixed[4], fixed[5], fixed[6], fixed[7]]);
+        self.ssrc = u32::from_be_bytes([fixed[8], fixed[9], fixed[10], fixed[11]]);
+        self.extension_profile = extension_profile;
+        self.extensions_padding = extensions_padding;
+        self.padding_size = 0;
+        Ok(())
+    }
+}
+
+/// One element of an RFC 8285 extension block: where its payload starts, how long it is, and
+/// where the next element begins.
+pub(crate) struct ExtensionElement {
+    pub(crate) id: u8,
+    pub(crate) at: usize,
+    pub(crate) len: usize,
+    pub(crate) next: usize,
+}
+
+/// Reads the element at or after `start` in an RFC 8285 one-byte or two-byte extension block that
+/// ends at `end`, skipping padding bytes (and counting them in `padding`).
+///
+/// `Ok(None)` marks the end of the block: its last byte was reached, or the reserved id (15) or an
+/// id of 0 that carries a non-zero length ended the extensions early.
+pub(crate) fn step_extension(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+    profile: u16,
+    padding: &mut usize,
+) -> Result<Option<ExtensionElement>> {
+    let mut n = start;
+    while n < end {
+        if buf[n] == 0x00 {
+            n += 1;
+            *padding += 1;
+            continue;
+        }
+
+        let (id, len);
+        if profile == EXTENSION_PROFILE_ONE_BYTE {
+            id = buf[n] >> 4;
+            len = ((buf[n] & 0x0F) + 1) as usize;
+            n += 1;
+            if id == EXTENSION_ID_RESERVED || id == 0 {
+                return Ok(None);
+            }
         } else {
-            (0, vec![])
-        };
+            id = buf[n];
+            n += 1;
+            if end <= n {
+                return Err(Error::ErrHeaderSizeInsufficientForExtension);
+            }
+            len = buf[n] as usize;
+            n += 1;
+        }
 
-        Ok(Header {
-            version,
-            padding,
-            extension,
-            marker,
-            payload_type,
-            sequence_number,
-            timestamp,
-            ssrc,
-            csrc,
-            extension_profile,
-            extensions,
-            extensions_padding,
+        if end < n + len {
+            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+        }
+
+        return Ok(Some(ExtensionElement {
+            id,
+            at: n,
+            len,
+            next: n + len,
+        }));
+    }
+    Ok(None)
+}
+
+/// Walks an RFC 8285 one-byte or two-byte extension block, calling `visit(id, offset, len)` for
+/// each element and returning how many padding bytes it skipped.
+///
+/// Both parsing and [`Header::peek`] go through this, so the two accept and reject exactly the
+/// same blocks.
+pub(crate) fn walk_extensions(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+    profile: u16,
+    mut visit: impl FnMut(u8, usize, usize),
+) -> Result<usize> {
+    let mut n = start;
+    let mut padding = 0;
+    while let Some(element) = step_extension(buf, n, end, profile, &mut padding)? {
+        visit(element.id, element.at, element.len);
+        n = element.next;
+    }
+    Ok(padding)
+}
+
+/// The fixed fields of an RTP header, read without allocating.
+///
+/// What an SRTP context, a router or a jitter buffer needs to decide what to do with a packet;
+/// see [`Header::peek`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderSummary {
+    /// The marker bit.
+    pub marker: bool,
+    /// The payload type.
+    pub payload_type: u8,
+    /// The sequence number.
+    pub sequence_number: u16,
+    /// The RTP timestamp.
+    pub timestamp: u32,
+    /// The synchronization source.
+    pub ssrc: u32,
+    /// The header's size on the wire, extension block included: the offset of the payload.
+    pub header_len: usize,
+}
+
+impl Header {
+    /// Reads and validates the header at the front of `buf` without allocating.
+    ///
+    /// Accepts and rejects exactly what [`Header::unmarshal`] does, but skips building the CSRC
+    /// list and extension table, so it costs a few loads instead of two allocations. Use it
+    /// where only the routing fields matter.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `buf` is too short for the header it announces, or if a one-byte or two-byte
+    /// extension element overruns its block.
+    pub fn peek(buf: &[u8]) -> Result<HeaderSummary> {
+        let header_len = Self::wire_len(buf)?;
+        if (buf[0] >> EXTENSION_SHIFT & EXTENSION_MASK) > 0 {
+            let at = CSRC_OFFSET + (buf[0] & CC_MASK) as usize * CSRC_LENGTH;
+            let profile = u16::from_be_bytes([buf[at], buf[at + 1]]);
+            if matches!(
+                profile,
+                EXTENSION_PROFILE_ONE_BYTE | EXTENSION_PROFILE_TWO_BYTE
+            ) {
+                walk_extensions(buf, at + 4, header_len, profile, |_, _, _| {})?;
+            }
+        }
+        Ok(HeaderSummary {
+            marker: (buf[1] >> MARKER_SHIFT & MARKER_MASK) > 0,
+            payload_type: buf[1] & PT_MASK,
+            sequence_number: u16::from_be_bytes([buf[2], buf[3]]),
+            timestamp: u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            ssrc: u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]),
+            header_len,
         })
     }
 }
@@ -279,8 +402,7 @@ impl Header {
     fn marshal_size_for(&self, extension_payload_len: usize) -> usize {
         let mut head_size = 12 + (self.csrc.len() * CSRC_LENGTH);
         if self.extension {
-            let padded = extension_payload_len + self.extensions_padding;
-            head_size += 4 + padded.div_ceil(4) * 4;
+            head_size += 4 + (extension_payload_len + self.extensions_padding).div_ceil(4) * 4;
         }
         head_size
     }
@@ -365,7 +487,8 @@ impl Marshal for Header {
                 //the payload must be in 32-bit words.
                 return Err(Error::HeaderExtensionPayloadNot32BitWords);
             }
-            let extension_payload_size = (extension_payload_len as u16).div_ceil(4);
+            let extension_payload_size =
+                ((extension_payload_len + self.extensions_padding) as u16).div_ceil(4);
             buf.put_u16(extension_payload_size);
 
             match self.extension_profile {
@@ -564,5 +687,74 @@ impl Header {
         } else {
             Err(Error::ErrHeaderExtensionsNotEnabled)
         }
+    }
+}
+
+#[cfg(test)]
+mod peek_test {
+    use super::*;
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+    fn sample(rng: &mut StdRng) -> Vec<u8> {
+        let mut header = Header {
+            version: 2,
+            marker: rng.random(),
+            payload_type: rng.random_range(0..128),
+            sequence_number: rng.random(),
+            timestamp: rng.random(),
+            ssrc: rng.random(),
+            csrc: (0..rng.random_range(0..4)).map(|_| rng.random()).collect(),
+            ..Default::default()
+        };
+        if rng.random_bool(0.7) {
+            header.extension = true;
+            header.extension_profile = if rng.random_bool(0.5) {
+                EXTENSION_PROFILE_ONE_BYTE
+            } else {
+                EXTENSION_PROFILE_TWO_BYTE
+            };
+            for id in 1..=rng.random_range(1..4u8) {
+                let len = rng.random_range(1..=8);
+                let _ = header.set_extension(id, Bytes::from((0..len).collect::<Vec<u8>>()));
+            }
+        }
+        let mut raw = header.marshal().unwrap().to_vec();
+        raw.extend_from_slice(&[0xAB; 32]);
+        raw
+    }
+
+    /// `peek` must accept and reject exactly what `unmarshal` does, and report the same fields:
+    /// SRTP relies on it in place of a full parse.
+    #[test]
+    fn peek_agrees_with_unmarshal_on_valid_and_mutated_headers() {
+        let mut rng = StdRng::seed_from_u64(0x5eed);
+        let mut disagreements = 0;
+        for _ in 0..20_000 {
+            let mut raw = sample(&mut rng);
+            // Flip a few bytes and truncate some inputs so rejects are well represented.
+            for _ in 0..rng.random_range(0..3) {
+                let i = rng.random_range(0..raw.len());
+                raw[i] = rng.random();
+            }
+            if rng.random_bool(0.2) {
+                raw.truncate(rng.random_range(0..raw.len()));
+            }
+
+            let parsed = Header::unmarshal(&mut &raw[..]);
+            let peeked = Header::peek(&raw);
+            match (&parsed, &peeked) {
+                (Ok(h), Ok(s)) => {
+                    assert_eq!(h.marker, s.marker, "{raw:02x?}");
+                    assert_eq!(h.payload_type, s.payload_type, "{raw:02x?}");
+                    assert_eq!(h.sequence_number, s.sequence_number, "{raw:02x?}");
+                    assert_eq!(h.timestamp, s.timestamp, "{raw:02x?}");
+                    assert_eq!(h.ssrc, s.ssrc, "{raw:02x?}");
+                    assert_eq!(Header::wire_len(&raw).unwrap(), s.header_len, "{raw:02x?}");
+                }
+                (Err(a), Err(b)) => assert_eq!(a, b, "{raw:02x?}"),
+                _ => disagreements += 1,
+            }
+        }
+        assert_eq!(disagreements, 0, "peek and unmarshal disagreed");
     }
 }

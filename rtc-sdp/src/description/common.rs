@@ -6,6 +6,7 @@
 //!
 //! An [`Attribute`](crate::description::common::Attribute) with no value is a flag, which is how `a=rtcp-mux` and the direction
 //! attributes are expressed.
+use smol_str::SmolStr;
 use std::fmt;
 
 use super::session::ATTR_KEY_CANDIDATE;
@@ -28,11 +29,14 @@ pub struct ConnectionInformation {
 
 impl fmt::Display for ConnectionInformation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.network_type)?;
+        f.write_str(" ")?;
+        f.write_str(&self.address_type)?;
         if let Some(address) = &self.address {
-            write!(f, "{} {} {}", self.network_type, self.address_type, address,)
-        } else {
-            write!(f, "{} {}", self.network_type, self.address_type,)
+            f.write_str(" ")?;
+            write!(f, "{address}")?;
         }
+        Ok(())
     }
 }
 
@@ -49,7 +53,7 @@ pub struct Address {
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.address)?;
+        f.write_str(&self.address)?;
         if let Some(t) = &self.ttl {
             write!(f, "/{t}")?;
         }
@@ -74,8 +78,12 @@ pub struct Bandwidth {
 
 impl fmt::Display for Bandwidth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let output = if self.experimental { "X-" } else { "" };
-        write!(f, "{}{}:{}", output, self.bandwidth_type, self.bandwidth)
+        if self.experimental {
+            f.write_str("X-")?;
+        }
+        f.write_str(&self.bandwidth_type)?;
+        f.write_str(":")?;
+        write!(f, "{}", self.bandwidth)
     }
 }
 
@@ -84,12 +92,17 @@ pub type EncryptionKey = String;
 
 /// Attribute describes the "a=" field which represents the primary means for
 /// extending SDP.
+///
+/// Keys and values are [`SmolStr`]s: text up to 23 bytes lives inside the value itself, with no
+/// allocation, which covers every attribute name and most values in a browser's offer (a parsed
+/// Chrome offer holds several hundred attributes). They dereference to `&str` and compare
+/// equal to `&str` and `String`, so most code that read a `String` reads these unchanged.
 #[derive(Debug, Default, Clone)]
 pub struct Attribute {
     /// The attribute name, the part before the `:`.
-    pub key: String,
+    pub key: SmolStr,
     /// The attribute value, or `None` for a flag attribute such as `a=rtcp-mux`.
-    pub value: Option<String>,
+    pub value: Option<SmolStr>,
 }
 
 impl fmt::Display for Attribute {
@@ -105,7 +118,18 @@ impl fmt::Display for Attribute {
 impl Attribute {
     /// new constructs a new attribute
     pub fn new(key: String, value: Option<String>) -> Self {
-        Attribute { key, value }
+        Attribute {
+            key: key.into(),
+            value: value.map(Into::into),
+        }
+    }
+
+    /// Constructs an attribute from text of any kind, without going through `String`.
+    pub fn from_parts(key: impl Into<SmolStr>, value: Option<impl Into<SmolStr>>) -> Self {
+        Attribute {
+            key: key.into(),
+            value: value.map(Into::into),
+        }
     }
 
     /// is_ice_candidate returns true if the attribute key equals "candidate".

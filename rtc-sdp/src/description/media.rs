@@ -109,7 +109,7 @@ impl MediaDescription {
                     merge_codecs(codec, &mut codecs);
                 }
             } else if attr.starts_with("rtcp-fb:")
-                && let Ok(codec) = parse_rtcp_fb(&attr)
+                && let Ok((codec, false)) = parse_rtcp_fb(&attr)
             {
                 merge_codecs(codec, &mut codecs);
             }
@@ -284,20 +284,22 @@ pub struct MediaName {
 
 impl fmt::Display for MediaName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.media, self.port)?;
+        // A browser's video section lists dozens of payload types; each goes out as two plain
+        // string writes, not a trip through the formatting machinery.
+        f.write_str(&self.media)?;
+        f.write_str(" ")?;
+        write!(f, "{}", self.port)?;
 
-        let mut first = true;
+        let mut separator = " ";
         for part in &self.protos {
-            if first {
-                first = false;
-                write!(f, " {part}")?;
-            } else {
-                write!(f, "/{part}")?;
-            }
+            f.write_str(separator)?;
+            f.write_str(part)?;
+            separator = "/";
         }
 
         for part in &self.formats {
-            write!(f, " {part}")?;
+            f.write_str(" ")?;
+            f.write_str(part)?;
         }
 
         Ok(())

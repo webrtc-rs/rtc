@@ -79,6 +79,8 @@ mod endpoint;
 pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoint};
 
 mod packet;
+#[cfg(test)]
+mod pion_golden_test;
 
 mod shared;
 pub use crate::shared::{AssociationEvent, AssociationId, EndpointEvent};

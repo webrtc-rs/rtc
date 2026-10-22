@@ -14,35 +14,50 @@ pub(crate) const PAYLOAD_DATA_HEADER_SIZE: usize = 12;
 /// PayloadProtocolIdentifier is an enum for DataChannel payload types
 /// PayloadProtocolIdentifier enums
 /// <https://www.iana.org/assignments/sctp-parameters/sctp-parameters.xhtml#sctp-parameters-25>
-#[derive(Default, Debug, Copy, Clone, PartialEq)]
-#[repr(C)]
-#[non_exhaustive]
-pub enum PayloadProtocolIdentifier {
+///
+/// Any 32-bit value is representable and survives a round trip, so the identifiers this crate
+/// has no name for (including 0, "unspecified") are carried through unchanged.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct PayloadProtocolIdentifier(pub u32);
+
+#[allow(non_upper_case_globals)]
+impl PayloadProtocolIdentifier {
     /// `WebRTC DCEP` (50): a Data Channel Establishment Protocol control message.
-    Dcep = 50,
+    pub const Dcep: Self = Self(50);
     /// `WebRTC String` (51): a non-empty UTF-8 string message.
-    String = 51,
+    pub const String: Self = Self(51);
+    /// `WebRTC Binary Partial` (52): deprecated, a partial binary message.
+    pub const BinaryPartial: Self = Self(52);
     /// `WebRTC Binary` (53): a non-empty binary message.
-    Binary = 53,
+    pub const Binary: Self = Self(53);
+    /// `WebRTC String Partial` (54): deprecated, a partial string message.
+    pub const StringPartial: Self = Self(54);
     /// `WebRTC String Empty` (56): an empty string message.
     ///
     /// Needed because SCTP cannot carry a zero-length payload.
-    StringEmpty = 56,
+    pub const StringEmpty: Self = Self(56);
     /// `WebRTC Binary Empty` (57): an empty binary message.
-    BinaryEmpty = 57,
-    #[default]
-    /// An identifier this crate does not recognise.
-    Unknown,
+    pub const BinaryEmpty: Self = Self(57);
+    /// No identifier given (0).
+    pub const Unknown: Self = Self(0);
+}
+
+impl Default for PayloadProtocolIdentifier {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 impl fmt::Display for PayloadProtocolIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
-            PayloadProtocolIdentifier::Dcep => "WebRTC DCEP",
-            PayloadProtocolIdentifier::String => "WebRTC String",
-            PayloadProtocolIdentifier::Binary => "WebRTC Binary",
-            PayloadProtocolIdentifier::StringEmpty => "WebRTC String (Empty)",
-            PayloadProtocolIdentifier::BinaryEmpty => "WebRTC Binary (Empty)",
+            Self::Dcep => "WebRTC DCEP",
+            Self::String => "WebRTC String",
+            Self::StringPartial => "WebRTC String (Partial)",
+            Self::Binary => "WebRTC Binary",
+            Self::BinaryPartial => "WebRTC Binary (Partial)",
+            Self::StringEmpty => "WebRTC String (Empty)",
+            Self::BinaryEmpty => "WebRTC Binary (Empty)",
             _ => "Unknown Payload Protocol Identifier",
         };
         write!(f, "{}", s)
@@ -51,14 +66,7 @@ impl fmt::Display for PayloadProtocolIdentifier {
 
 impl From<u32> for PayloadProtocolIdentifier {
     fn from(v: u32) -> PayloadProtocolIdentifier {
-        match v {
-            50 => PayloadProtocolIdentifier::Dcep,
-            51 => PayloadProtocolIdentifier::String,
-            53 => PayloadProtocolIdentifier::Binary,
-            56 => PayloadProtocolIdentifier::StringEmpty,
-            57 => PayloadProtocolIdentifier::BinaryEmpty,
-            _ => PayloadProtocolIdentifier::Unknown,
-        }
+        Self(v)
     }
 }
 
@@ -294,7 +302,7 @@ impl Chunk for ChunkPayloadData {
         writer.put_u32(self.tsn);
         writer.put_u16(self.stream_identifier);
         writer.put_u16(self.stream_sequence_number);
-        writer.put_u32(self.payload_type as u32);
+        writer.put_u32(self.payload_type.0);
         // NB: `extend(Bytes)` iterates the payload one byte at a time (Bytes is
         // `IntoIterator<Item = u8>`); `extend_from_slice` does a single bulk copy.
         writer.extend_from_slice(&self.user_data);

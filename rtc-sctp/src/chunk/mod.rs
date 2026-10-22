@@ -147,6 +147,10 @@ impl ErrorCause {
             return Err(Error::ErrErrorCauseTooSmall);
         }
 
+        // The cause cannot be longer than the bytes it was cut from.
+        if len as usize > buf.len() {
+            return Err(Error::ErrErrorCauseTooSmall);
+        }
         let value_length = len as usize - ERROR_CAUSE_HEADER_LENGTH;
         let raw = buf.slice(ERROR_CAUSE_HEADER_LENGTH..ERROR_CAUSE_HEADER_LENGTH + value_length);
 

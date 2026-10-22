@@ -312,13 +312,13 @@ use crate::statistics::accumulator::RTCStatsAccumulator;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
-use shared::time::SystemInstant;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::AgentConfig;
 use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::{Interceptor, Registry};
 use shared::error::{Error, Result};
+use shared::time::SystemInstant;
 use shared::util::math_rand_alpha;
 use std::time::Instant;
 
@@ -2524,21 +2524,17 @@ impl RTCPeerConnection {
             let kind = receiver.kind();
             for track_ssrc in receiver.track().ssrcs() {
                 for csrc in receiver.get_contributing_sources() {
-                    report.push_entry(RTCStatsReportEntry::Csrc(
-                        RTCRTPContributingSourceStats {
-                            stats: RTCStats {
-                                timestamp: SystemInstant::now(now),
-                                typ: RTCStatsType::Csrc,
-                                id: format!("RTCRTPContributingSource_{track_ssrc}_{}", csrc.source),
-                            },
-                            contributor_ssrc: csrc.source,
-                            inbound_rtp_stream_id: format!(
-                                "RTCInboundRTPStream_{kind}_{track_ssrc}"
-                            ),
-                            packets_contributed_to: csrc.packets_contributed_to,
-                            audio_level: csrc.audio_level,
+                    report.push_entry(RTCStatsReportEntry::Csrc(RTCRTPContributingSourceStats {
+                        stats: RTCStats {
+                            timestamp: SystemInstant::now(now),
+                            typ: RTCStatsType::Csrc,
+                            id: format!("RTCRTPContributingSource_{track_ssrc}_{}", csrc.source),
                         },
-                    ));
+                        contributor_ssrc: csrc.source,
+                        inbound_rtp_stream_id: format!("RTCInboundRTPStream_{kind}_{track_ssrc}"),
+                        packets_contributed_to: csrc.packets_contributed_to,
+                        audio_level: csrc.audio_level,
+                    }));
                 }
             }
         }
@@ -3230,12 +3226,12 @@ mod tests {
     // source lists. Both are cumulative state read at snapshot time.
     #[test]
     fn get_stats_reports_sctp_transport_and_contributing_sources() {
+        use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+        use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
         use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
         use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
         use crate::statistics::StatsSelector;
         use crate::statistics::stats::RTCStatsType;
-        use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
-        use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 
         let mut media_engine = MediaEngine::default();
         media_engine
@@ -3291,8 +3287,11 @@ mod tests {
         // csrc entries come from receivers that have seen CSRC-carrying packets. Register the
         // stream on the receiver's track the way the inbound pipeline does, record a packet,
         // and the entry must appear joined to that inbound stream's id.
-        pc.add_transceiver_from_kind(crate::rtp_transceiver::rtp_sender::RtpCodecKind::Video, None)
-            .expect("add transceiver");
+        pc.add_transceiver_from_kind(
+            crate::rtp_transceiver::rtp_sender::RtpCodecKind::Video,
+            None,
+        )
+        .expect("add transceiver");
         let transceiver = pc.rtp_transceivers.last_mut().expect("transceiver");
         let receiver = transceiver.receiver_mut().as_mut().expect("receiver");
         receiver.track_mut().add_coding(RTCRtpEncodingParameters {
@@ -3318,4 +3317,3 @@ mod tests {
         );
     }
 }
-

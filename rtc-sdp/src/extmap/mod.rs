@@ -82,8 +82,8 @@ impl ExtMap {
     /// converts this object to an Attribute
     pub fn convert(&self) -> Attribute {
         Attribute {
-            key: "extmap".to_string(),
-            value: Some(self.to_string()),
+            key: smol_str::SmolStr::new_static("extmap"),
+            value: Some(self.to_string().into()),
         }
     }
 

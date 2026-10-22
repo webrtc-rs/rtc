@@ -754,3 +754,38 @@ fn test_message_marshal_binary() -> Result<()> {
 
     Ok(())
 }
+
+/// Decoding into a long-lived message reuses its attribute slots; whatever was in them before
+/// must never leak into the next message.
+#[test]
+fn test_decode_into_reused_message_never_leaks_previous_attributes() -> Result<()> {
+    let build = |attrs: Vec<(AttrType, &str)>| -> Result<Vec<u8>> {
+        let mut m = Message::default();
+        let mut setters: Vec<Box<dyn Setter>> =
+            vec![Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)];
+        for (typ, text) in attrs {
+            setters.push(Box::new(TextAttribute::new(typ, text.to_owned())));
+        }
+        m.build(&setters)?;
+        Ok(m.raw.clone())
+    };
+    let three = build(vec![
+        (ATTR_USERNAME, "alice:bob"),
+        (ATTR_REALM, "example.org"),
+        (ATTR_SOFTWARE, "a long software string"),
+    ])?;
+    let one = build(vec![(ATTR_USERNAME, "x")])?;
+    let none = build(vec![])?;
+
+    let mut reused = Message::default();
+    for raw in [&three, &one, &none, &three, &one] {
+        reused.write(raw)?;
+        let mut fresh = Message::default();
+        fresh.write(raw)?;
+        assert_eq!(reused.attributes, fresh.attributes);
+        assert_eq!(reused.length, fresh.length);
+    }
+    assert_eq!(reused.get_value(ATTR_USERNAME)?, b"x");
+    assert!(reused.get_value(ATTR_REALM).is_err());
+    Ok(())
+}

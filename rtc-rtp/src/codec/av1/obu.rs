@@ -6,6 +6,7 @@ use bytes::Bytes;
 use crate::codec::av1::leb128::read_leb128;
 use shared::error::{Error, Result};
 
+pub const OBU_FORBIDDEN_BIT: u8 = 0b1000_0000;
 pub const OBU_HAS_EXTENSION_BIT: u8 = 0b0000_0100;
 pub const OBU_HAS_SIZE_BIT: u8 = 0b0000_0010;
 pub const OBU_TYPE_MASK: u8 = 0b0111_1000;
@@ -36,44 +37,52 @@ impl Obu {
 
 /// Parses the payload into series of OBUs.
 /// Reference: https://aomediacodec.github.io/av1-spec/#obu-syntax
+///
+/// Every length the payload declares is checked against the bytes present, so malformed input
+/// yields an error rather than a panic.
 pub fn parse_obus(payload: &Bytes) -> Result<Vec<Obu>> {
     let mut obus = vec![];
-    let mut payload_data_remaining = payload.len() as isize;
-    let mut payload_data_index: usize = 0;
+    let mut index: usize = 0;
 
-    while payload_data_remaining > 0 {
+    while index < payload.len() {
         // Read OBU header.
-        let header = payload[payload_data_index];
+        let header = payload[index];
+        if header & OBU_FORBIDDEN_BIT != 0 {
+            return Err(Error::ErrInvalidObuHeader);
+        }
         let has_extension = obu_has_extension(header);
         let has_size = obu_has_size(header);
         let obu_type = obu_type(header);
 
         // Read OBU extension header.
         let extension_header = if has_extension {
-            if payload_data_remaining < 2 {
+            if index + 1 >= payload.len() {
                 return Err(Error::ErrPayloadTooSmallForObuExtensionHeader);
             }
-            payload[payload_data_index + 1]
+            payload[index + 1]
         } else {
             0
         };
         let obu_header_size = if has_extension { 2 } else { 1 };
-        let payload_without_header = payload.slice(payload_data_index + obu_header_size..);
+        let payload_without_header = payload.slice(index + obu_header_size..);
 
         // Read OBU payload.
-        let obu_payload = if !has_size {
-            payload_without_header
+        let (obu_payload, leb128_size) = if !has_size {
+            (payload_without_header, 0)
         } else {
-            if payload_without_header.is_empty() {
+            let (obu_payload_size, leb128_size) = read_leb128(&payload_without_header);
+            if leb128_size == 0 {
                 return Err(Error::ErrPayloadTooSmallForObuPayloadSize);
             }
-            let (obu_payload_size, leb128_size) = read_leb128(&payload_without_header);
-            payload_data_remaining -= leb128_size as isize;
-            payload_data_index += leb128_size;
-            payload_without_header.slice(leb128_size..leb128_size + obu_payload_size as usize)
+            let end = leb128_size
+                .checked_add(obu_payload_size as usize)
+                .filter(|end| *end <= payload_without_header.len())
+                .ok_or(Error::ErrPayloadTooSmallForObuPayloadSize)?;
+            (payload_without_header.slice(leb128_size..end), leb128_size)
         };
 
         let obu_size = obu_header_size + obu_payload.len();
+        index += leb128_size + obu_size;
         if !should_ignore_obu_type(obu_type) {
             obus.push(Obu {
                 header,
@@ -82,9 +91,6 @@ pub fn parse_obus(payload: &Bytes) -> Result<Vec<Obu>> {
                 size: obu_size,
             });
         }
-
-        payload_data_remaining -= obu_size as isize;
-        payload_data_index += obu_size;
     }
 
     Ok(obus)

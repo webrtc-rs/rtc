@@ -3,6 +3,7 @@ name = "rtc-dtls"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC DTLS in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-dtls"
@@ -32,6 +33,7 @@ log.workspace = true
 pem.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 criterion.workspace = true
 local-sync.workspace = true
 core_affinity.workspace = true

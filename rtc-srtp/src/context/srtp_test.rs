@@ -7,7 +7,7 @@ fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
     crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
 }
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use lazy_static::lazy_static;
 
 struct RTPTestCase {
@@ -178,3 +178,179 @@ fn test_rtp_lifecyle() -> Result<()> {
 //TODO: BenchmarkEncryptRTP
 //TODO: BenchmarkEncryptRTPInPlace
 //TODO: BenchmarkDecryptRTP
+
+fn media_context(profile: ProtectionProfile) -> Context {
+    let provider = test_crypto_provider();
+    let key: Vec<u8> = (0..profile.key_len() as u8).collect();
+    let salt: Vec<u8> = (0..profile.salt_len() as u8).map(|i| 0x20 + i).collect();
+    Context::new(
+        &key,
+        &salt,
+        profile,
+        Some(srtp_replay_protection(64)),
+        None,
+        provider.crypto(),
+    )
+    .unwrap()
+}
+
+fn rtp_packet(ssrc: u32, seq: u16, payload_len: usize) -> Vec<u8> {
+    let mut p = vec![0x80, 96, (seq >> 8) as u8, seq as u8, 0, 0, 0, 1];
+    p.extend_from_slice(&ssrc.to_be_bytes());
+    p.extend((0..payload_len).map(|i| i as u8));
+    p
+}
+
+/// The SSRC is read from an unauthenticated header, so spraying forged packets with random SSRCs
+/// must not make the receiver allocate per-SSRC state.
+#[test]
+fn test_unauthenticated_packets_create_no_ssrc_state() {
+    for profile in [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+    ] {
+        let mut receiver = media_context(profile);
+        for ssrc in 0..1000u32 {
+            let mut forged = rtp_packet(0x1000_0000 + ssrc, 1, 100);
+            forged.extend_from_slice(&[0xEE; 16]);
+            assert!(receiver.decrypt_rtp(&forged).is_err());
+        }
+        assert!(
+            receiver.srtp_ssrc_states.is_empty(),
+            "{profile:?}: forged packets left per-SSRC state behind"
+        );
+    }
+}
+
+/// An SSRC is tracked once a packet for it authenticates, and replays are then refused.
+#[test]
+fn test_authenticated_packet_creates_state_and_blocks_replay() {
+    for profile in [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+    ] {
+        let mut sender = media_context(profile);
+        let mut receiver = media_context(profile);
+        let plain = rtp_packet(0xABCD, 7, 200);
+        let protected = sender.encrypt_rtp(&plain).unwrap();
+
+        assert_eq!(&receiver.decrypt_rtp(&protected).unwrap()[..], &plain[..]);
+        assert_eq!(receiver.srtp_ssrc_states.len(), 1);
+        assert!(
+            receiver.decrypt_rtp(&protected).is_err(),
+            "{profile:?}: replayed packet was accepted"
+        );
+    }
+}
+
+/// `*_into` appends to a caller-owned buffer, matches the allocating calls, and leaves the
+/// buffer untouched on failure.
+#[test]
+fn test_rtp_into_appends_and_restores_on_error() {
+    for profile in [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::Aes256CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+        ProtectionProfile::AeadAes256Gcm,
+    ] {
+        let mut sender = media_context(profile);
+        let mut reference = media_context(profile);
+        let mut receiver = media_context(profile);
+
+        let mut dst = BytesMut::from(&b"prefix"[..]);
+        let mut sent = Vec::new();
+        for seq in 0..4u16 {
+            let plain = rtp_packet(0x77, seq, 50 + seq as usize);
+            let start = dst.len();
+            sender.encrypt_rtp_into(&mut dst, &plain).unwrap();
+            let expected = reference.encrypt_rtp(&plain).unwrap();
+            assert_eq!(&dst[start..], &expected[..], "{profile:?} seq {seq}");
+            sent.push((plain, dst[start..].to_vec()));
+        }
+        assert_eq!(&dst[..6], b"prefix");
+
+        let mut out = BytesMut::new();
+        for (plain, protected) in &sent {
+            out.clear();
+            receiver.decrypt_rtp_into(&mut out, protected).unwrap();
+            assert_eq!(&out[..], &plain[..]);
+        }
+
+        // A corrupt packet leaves whatever was already in the buffer alone.
+        let mut bad = sent[0].1.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        let mut keep = BytesMut::from(&b"keep"[..]);
+        assert!(
+            media_context(profile)
+                .decrypt_rtp_into(&mut keep, &bad)
+                .is_err()
+        );
+        assert_eq!(&keep[..], b"keep");
+    }
+}
+
+/// In-place protection must give the same bytes as the copying calls, and in-place unprotection
+/// must undo it exactly.
+#[test]
+fn test_rtp_in_place_matches_copying_calls() {
+    for profile in [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::Aes128CmHmacSha1_32,
+        ProtectionProfile::Aes256CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+        ProtectionProfile::AeadAes256Gcm,
+    ] {
+        let mut sender = media_context(profile);
+        let mut reference = media_context(profile);
+        let mut receiver = media_context(profile);
+        let overhead = sender.rtp_overhead();
+        assert!(overhead >= 4, "{profile:?}: overhead {overhead}");
+
+        for seq in 0..6u16 {
+            let plain = rtp_packet(0x99, seq, 10 + 37 * seq as usize);
+
+            let mut packet = BytesMut::with_capacity(plain.len() + overhead);
+            packet.extend_from_slice(&plain);
+            let before = packet.as_ptr();
+            sender.encrypt_rtp_in_place(&mut packet).unwrap();
+            assert_eq!(
+                packet.as_ptr(),
+                before,
+                "{profile:?}: the reserved capacity must be enough to avoid reallocating"
+            );
+            assert_eq!(packet.len(), plain.len() + overhead);
+            assert_eq!(
+                &packet[..],
+                &reference.encrypt_rtp(&plain).unwrap()[..],
+                "{profile:?} seq {seq}"
+            );
+
+            let protected = packet.clone();
+            receiver.decrypt_rtp_in_place(&mut packet).unwrap();
+            assert_eq!(&packet[..], &plain[..], "{profile:?} seq {seq}");
+
+            // A tampered packet is refused, and the CM profiles leave it byte-for-byte alone.
+            let mut tampered = protected.clone();
+            let n = tampered.len();
+            tampered[n - 1] ^= 1;
+            let snapshot = tampered.clone();
+            assert!(
+                media_context(profile)
+                    .decrypt_rtp_in_place(&mut tampered)
+                    .is_err()
+            );
+            if matches!(
+                profile,
+                ProtectionProfile::Aes128CmHmacSha1_80
+                    | ProtectionProfile::Aes128CmHmacSha1_32
+                    | ProtectionProfile::Aes256CmHmacSha1_80
+            ) {
+                assert_eq!(
+                    tampered, snapshot,
+                    "{profile:?}: rejected packet was modified"
+                );
+            }
+        }
+    }
+}

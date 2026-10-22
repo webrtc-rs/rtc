@@ -261,3 +261,44 @@ fn test_h264_payloader_payload_sps_and_pps_handling() -> Result<()> {
 
     Ok(())
 }
+
+/// The byte-at-a-time start-code scan the payloader used before it switched to `memchr`; kept
+/// as the specification the faster search must reproduce.
+fn next_ind_reference(nalu: &[u8], start: usize) -> Option<(usize, usize)> {
+    let mut zero_count = 0;
+    for (i, &b) in nalu[start..].iter().enumerate() {
+        if b == 0 {
+            zero_count += 1;
+            continue;
+        } else if b == 1 && zero_count >= 2 {
+            return Some((start + i - zero_count, zero_count + 1));
+        }
+        zero_count = 0
+    }
+    None
+}
+
+#[test]
+fn test_next_ind_matches_reference_scan() {
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+    let mut rng = StdRng::seed_from_u64(0x264);
+    for _ in 0..20_000 {
+        // A tiny alphabet, weighted towards 0 and 1, so start codes, near misses and long zero
+        // runs are all common.
+        let len = rng.random_range(0..40);
+        let buf: Vec<u8> = (0..len)
+            .map(|_| match rng.random_range(0..8) {
+                0..=3 => 0,
+                4..=5 => 1,
+                _ => rng.random(),
+            })
+            .collect();
+        for start in 0..=buf.len() {
+            assert_eq!(
+                H264Payloader::next_ind(&buf, start),
+                next_ind_reference(&buf, start),
+                "{buf:?} from {start}"
+            );
+        }
+    }
+}

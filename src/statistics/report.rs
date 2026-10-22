@@ -6,6 +6,7 @@
 use crate::statistics::stats::RTCStatsType;
 use crate::statistics::stats::certificate::RTCCertificateStats;
 use crate::statistics::stats::codec::RTCCodecStats;
+use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
 use crate::statistics::stats::data_channel::RTCDataChannelStats;
 use crate::statistics::stats::ice_candidate::RTCIceCandidateStats;
 use crate::statistics::stats::ice_candidate_pair::RTCIceCandidatePairStats;
@@ -18,7 +19,6 @@ use crate::statistics::stats::rtp_stream::received::remote_inbound::RTCRemoteInb
 use crate::statistics::stats::rtp_stream::sent::outbound::RTCOutboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::remote_outbound::RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::sctp_transport::RTCSctpTransportStats;
-use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
 use crate::statistics::stats::transport::RTCTransportStats;
 use std::collections::HashMap;
 

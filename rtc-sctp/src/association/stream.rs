@@ -135,6 +135,9 @@ impl Stream<'_> {
                 self.association
                     .retry_deferred_resets(self.stream_identifier);
             }
+            if chunks.is_some() {
+                self.association.note_receive_buffer_drained();
+            }
             Ok(chunks)
         } else {
             Err(Error::ErrStreamClosed)

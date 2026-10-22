@@ -249,6 +249,12 @@ pub enum Error {
     /// Invalid padding value.
     #[error("Invalid padding value")]
     WrongPadding,
+    /// An RTCP APP packet's data does not fit the 16-bit length field.
+    #[error("application defined data is too large")]
+    AppDefinedDataTooLarge,
+    /// An RTCP APP packet's length field disagrees with the bytes received.
+    #[error("application defined packet length does not match its data")]
+    AppDefinedInvalidLength,
     /// Wrong feedback message type.
     #[error("Wrong feedback message type")]
     WrongFeedbackType,
@@ -1577,6 +1583,12 @@ pub enum Error {
     /// Unknow Protocol.
     #[error("Unknow Protocol")]
     UnknownProtocol,
+    /// A data channel label is too long for the 16-bit length field of the OPEN message.
+    #[error("label is too long, must be less than 65536 characters")]
+    ErrTooLongLabel,
+    /// A data channel subprotocol is too long for the 16-bit length field of the OPEN message.
+    #[error("protocol is too long, must be less than 65536 characters")]
+    ErrTooLongProtocol,
 
     //Media
     /// Stream is nil.
@@ -2212,6 +2224,27 @@ pub enum Error {
     #[error("excessive retries in CreateOffer")]
     ErrExcessiveRetries,
 
+    /// An H.265 fragmentation unit arrived mid-NAL-unit with no start fragment before it.
+    #[error("expecting a fragmentation start unit")]
+    ErrH265ExpectedFragmentationStart,
+    /// An H.265 NAL unit's fragments are not a complete, ordered start-to-end sequence.
+    #[error("h265 fragmentation units are incomplete")]
+    ErrH265FragmentsIncomplete,
+    /// An AV1 OBU header has its forbidden bit set.
+    #[error("invalid OBU header: forbidden bit is set")]
+    ErrInvalidObuHeader,
+    /// A VP9 frame header ended before all its fields were read.
+    #[error("not enough bits")]
+    ErrVp9NotEnoughBits,
+    /// A VP9 frame header does not start with the frame marker.
+    #[error("invalid frame marker")]
+    ErrVp9InvalidFrameMarker,
+    /// A VP9 key frame's sync code is wrong.
+    #[error("wrong frame sync byte")]
+    ErrVp9WrongFrameSyncByte,
+    /// An RTP packet has the padding bit set but a padding count of zero.
+    #[error("invalid RTP padding")]
+    ErrInvalidRtpPadding,
     /// Not long enough to be a RTP Packet.
     #[error("not long enough to be a RTP Packet")]
     ErrRTPTooShort,

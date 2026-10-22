@@ -25,7 +25,7 @@ pub struct RTCSctpTransportStats {
     #[serde(flatten)]
     pub stats: RTCStats,
 
-    /// The identifier of the [`RTCTransportStats`] object for the DTLS/ICE
+    /// The identifier of the [`RTCTransportStats`](super::transport::RTCTransportStats) object for the DTLS/ICE
     /// transport that carries this SCTP association.
     pub transport_id: String,
 

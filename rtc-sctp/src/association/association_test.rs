@@ -710,7 +710,10 @@ fn many_small_chunks_bundle_within_mtu() {
 }
 
 fn timed_test_association() -> Association {
-    let mut a = create_association(TransportConfig::default());
+    // These tests drive the classic mechanisms — fast retransmit and T3-rtx — by hand, jumping to
+    // `poll_timeout()`. RACK's earlier timers would be what they jump to instead, so it is off
+    // here; RACK has its own tests (`rack_test`).
+    let mut a = create_association(TransportConfig::default().with_enable_rack(false));
     a.control_queue.clear();
     a.timers.stop(Timer::T1Init);
     a.set_state(AssociationState::Established);
@@ -1606,6 +1609,9 @@ fn test_timed_zero_fragment_loss_restores_receive_window() -> Result<()> {
 #[path = "timer_deadline_test.rs"]
 mod timer_deadline_test;
 
+#[path = "rack_test.rs"]
+mod rack_test;
+
 #[path = "retransmission_review_test.rs"]
 mod retransmission_review_test;
 
@@ -1633,3 +1639,79 @@ fn test_reconfig_backoff_must_double_once() -> Result<()> {
 
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
+
+/// A receiver whose buffer filled up and then drained must tell the sender straight away. Without
+/// that, the sender (which stopped on a zero window and so has nothing in flight to be SACKed)
+/// finds out only from its next zero-window probe — a retransmission timeout, one second at
+/// minimum — and every transfer that starts with a slow reader loses a second.
+#[test]
+fn test_reopened_receive_window_is_announced_without_waiting_for_a_probe() -> Result<()> {
+    let mut sender = timed_test_association();
+    let mut receiver = timed_test_association();
+    // A small buffer so a handful of messages fills it.
+    receiver.max_receive_buffer_size = 8 * 1024;
+    receiver.last_advertised_credit = receiver.max_receive_buffer_size;
+    receiver.peer_last_tsn = sender.my_next_tsn - 1;
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    sender.open_stream(1, ppi)?;
+    receiver.open_stream(1, ppi)?;
+
+    // The sender writes until the receiver has no window left; the receiver acknowledges.
+    for _ in 0..16 {
+        sender
+            .stream(1)?
+            .write_sctp(now, &Bytes::from(vec![0xAB; 1000]), ppi)?;
+    }
+    sender.cwnd = 1 << 20;
+    for raw in sender.gather_outbound(now).0 {
+        for c in Packet::unmarshal(&raw)?.chunks {
+            if let Some(c) = c.as_any().downcast_ref::<ChunkPayloadData>() {
+                receiver.handle_data(c)?;
+            }
+        }
+    }
+    assert_eq!(
+        0,
+        receiver.get_my_receiver_window_credit(),
+        "the test needs a full receive buffer"
+    );
+    // The SACK that reports the closed window.
+    let closed = receiver.create_selective_ack_chunk();
+    assert_eq!(0, closed.advertised_receiver_window_credit);
+    assert!(receiver.last_advertised_credit < receiver.mtu * 2);
+    receiver.ack_state = AckState::Idle;
+
+    // The application reads: the window reopens, and the receiver must say so unprompted.
+    while receiver.stream(1)?.read_sctp()?.is_some() {}
+    assert!(receiver.get_my_receiver_window_credit() >= receiver.mtu * 2);
+    assert_eq!(
+        receiver.ack_state,
+        AckState::Immediate,
+        "draining a closed window must schedule an immediate SACK"
+    );
+
+    let packets = receiver.gather_outbound(now).0;
+    let reopened = packets
+        .iter()
+        .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+        .filter_map(|c| {
+            c.as_any()
+                .downcast_ref::<ChunkSelectiveAck>()
+                .map(|sack| sack.advertised_receiver_window_credit)
+        })
+        .next()
+        .expect("a window-update SACK");
+    assert!(
+        reopened >= receiver.mtu * 2,
+        "the SACK must carry the reopened window, not {reopened}"
+    );
+
+    // Reading when the sender already knows of plenty of window sends nothing.
+    sender.open_stream(2, ppi)?;
+    receiver.open_stream(2, ppi)?;
+    let before = receiver.ack_state;
+    receiver.stream(2)?.read_sctp()?;
+    assert_eq!(before, receiver.ack_state);
+    Ok(())
+}

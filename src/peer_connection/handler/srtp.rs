@@ -48,7 +48,7 @@ impl<'a>
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Rtp(RTPMessage::Raw(message)) = msg.message {
+        if let RTCMessageInternal::Rtp(RTPMessage::Raw(mut message)) = msg.message {
             debug!("srtp read {:?}", msg.transport.peer_addr);
 
             #[allow(clippy::collapsible_else_if)]
@@ -75,8 +75,9 @@ impl<'a>
                 }
             } else {
                 if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
-                    let mut decrypted = context.decrypt_rtp(&message)?;
-                    let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
+                    // Decrypted where it arrived: no second buffer, no copy.
+                    context.decrypt_rtp_in_place(&mut message)?;
+                    let rtp_packet = rtp::Packet::unmarshal(&mut message)?;
 
                     self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                         now: msg.now,
@@ -125,8 +126,11 @@ impl<'a>
                 }
                 RTPMessage::Packet(Packet::Rtp(rtp_message)) => {
                     if let Some(context) = self.ctx.local_srtp_context.as_mut() {
-                        let packet = rtp_message.marshal()?;
-                        context.encrypt_rtp(&packet)?
+                        // Marshalled once into a buffer with room for the tag, then protected in
+                        // place: one allocation and no copy per packet.
+                        let mut packet = rtp_message.marshal_with_spare(context.rtp_overhead())?;
+                        context.encrypt_rtp_in_place(&mut packet)?;
+                        packet
                     } else {
                         return Err(Error::Other(format!(
                             "local_srtp_context is not set yet for rtp_packet {:?}",

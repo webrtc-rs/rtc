@@ -754,7 +754,7 @@ impl RTCPeerConnection {
                     if let Some(mid) = get_mid_value(media)
                         && !mid.is_empty()
                     {
-                        mids.insert(mid.clone());
+                        mids.insert(mid.to_owned());
                     }
                 }
             }

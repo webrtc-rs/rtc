@@ -456,7 +456,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
         if attr.key.as_str() == SDP_ATTRIBUTE_RID {
             if let Err(err) = attr
                 .value
-                .as_ref()
+                .as_deref()
                 .ok_or(Error::SimulcastRidParseErrorSyntaxIdDirSplit)
                 .and_then(SimulcastRid::try_from)
                 .map(|rid| rids.push(rid))
@@ -464,7 +464,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
                 log::warn!("Failed to parse RID: {err}");
             }
         } else if attr.key.as_str() == SDP_ATTRIBUTE_SIMULCAST {
-            simulcast_attr.clone_from(&attr.value);
+            simulcast_attr = attr.value.as_ref().map(|value| value.to_string());
         }
     }
 
@@ -978,9 +978,9 @@ pub(crate) struct SimulcastRid {
     pub(crate) paused: bool,
 }
 
-impl TryFrom<&String> for SimulcastRid {
+impl TryFrom<&str> for SimulcastRid {
     type Error = Error;
-    fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         let mut split = value.split(' ');
         let id = split
             .next()
@@ -1032,13 +1032,13 @@ pub(crate) struct PopulateSdpParams {
 
 impl RTCPeerConnection {
     pub(crate) fn find_by_mid(
-        mid: &String,
+        mid: &str,
         local_transceivers: &[RTCRtpTransceiverInternal],
     ) -> Option<usize> {
         local_transceivers
             .iter()
             .enumerate()
-            .find(|(_i, t)| t.mid().as_ref() == Some(mid))
+            .find(|(_i, t)| t.mid().as_deref() == Some(mid))
             .map(|(i, _v)| i)
     }
 
@@ -1184,10 +1184,10 @@ impl RTCPeerConnection {
     }
 }
 
-pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&String> {
+pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&str> {
     for attr in &media.attributes {
         if attr.key == "mid" {
-            return attr.value.as_ref();
+            return attr.value.as_deref();
         }
     }
     None
@@ -1207,12 +1207,12 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
     let mut fingerprints = vec![];
 
     if let Some(fingerprint) = desc.attribute("fingerprint") {
-        fingerprints.push(fingerprint.clone());
+        fingerprints.push(fingerprint);
     }
 
     for m in &desc.media_descriptions {
         if let Some(fingerprint) = m.attribute("fingerprint").and_then(|o| o) {
-            fingerprints.push(fingerprint.to_owned());
+            fingerprints.push(fingerprint);
         }
     }
 
@@ -1247,8 +1247,8 @@ pub(crate) fn extract_ice_details(
     let mut backup_ufrag = None;
     let mut backup_pwd = None;
 
-    let mut remote_ufrag = desc.attribute("ice-ufrag").map(|s| s.as_str());
-    let mut remote_pwd = desc.attribute("ice-pwd").map(|s| s.as_str());
+    let mut remote_ufrag = desc.attribute("ice-ufrag");
+    let mut remote_pwd = desc.attribute("ice-pwd");
 
     for m in &desc.media_descriptions {
         let ufrag = m.attribute("ice-ufrag").and_then(|o| o);

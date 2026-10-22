@@ -5,10 +5,7 @@ use crypto::{AeadAlgorithm, AeadCipher, RTCCrypto, SecretVec};
 use super::{Cipher, Kdf, crypto_error};
 use crate::key_derivation::*;
 use crate::protection_profile::ProtectionProfile;
-use shared::{
-    error::{Error, Result},
-    marshal::*,
-};
+use shared::error::{Error, Result};
 
 pub const CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN: usize = 16;
 
@@ -38,38 +35,46 @@ impl Cipher for CipherAeadAesGcm {
         self.profile.aead_auth_tag_len()
     }
 
-    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
-        // Copy the whole packet once, then encrypt the payload region in place
-        // with the header region as AAD and a detached tag appended afterwards.
-        let header_len = header.marshal_size();
+    fn encrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        // Encrypt the payload region in place with the header region as AAD and a detached
+        // tag appended afterwards.
+        let header_len = header.header_len;
+        if header_len > buf.len() - start {
+            return Err(Error::ErrTooShortRtp);
+        }
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        let mut writer = BytesMut::with_capacity(payload.len() + self.aead_auth_tag_len());
-        writer.extend_from_slice(payload);
-
-        let (aad, plaintext) = writer.split_at_mut(header_len);
+        let (aad, plaintext) = buf[start..].split_at_mut(header_len);
         let mut tag = [0; CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN];
         self.srtp_cipher
             .seal_in_place(&nonce, aad, plaintext, &mut tag)
             .map_err(crypto_error)?;
 
-        writer.extend_from_slice(&tag);
-        Ok(writer)
+        buf.extend_from_slice(&tag);
+        Ok(())
     }
 
-    fn decrypt_rtp(
+    fn decrypt_rtp_in_place(
         &mut self,
-        ciphertext: &[u8],
-        header: &rtp::Header,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
         roc: u32,
-    ) -> Result<BytesMut> {
+    ) -> Result<()> {
         let tag_len = self.aead_auth_tag_len();
-        if ciphertext.len() < tag_len {
+        let ciphertext_len = buf.len() - start;
+        if ciphertext_len < tag_len {
             return Err(Error::ErrFailedToVerifyAuthTag);
         }
 
-        let payload_offset = header.marshal_size();
-        if ciphertext.len() < payload_offset + tag_len {
+        let payload_offset = header.header_len;
+        if ciphertext_len < payload_offset + tag_len {
             // Too short to hold header + tag; the AEAD would reject it and the
             // slice split below would panic.
             return Err(Error::ErrFailedToVerifyAuthTag);
@@ -77,16 +82,16 @@ impl Cipher for CipherAeadAesGcm {
 
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        let tag_offset = ciphertext.len() - tag_len;
-        let tag = &ciphertext[tag_offset..];
-        let mut writer = BytesMut::with_capacity(tag_offset);
-        writer.extend_from_slice(&ciphertext[..tag_offset]);
+        let tag_offset = buf.len() - tag_len;
+        let mut tag = [0u8; CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN];
+        tag.copy_from_slice(&buf[tag_offset..]);
+        buf.truncate(tag_offset);
 
-        let (aad, encrypted_payload) = writer.split_at_mut(payload_offset);
+        let (aad, encrypted_payload) = buf[start..].split_at_mut(payload_offset);
         self.srtp_cipher
-            .open_in_place(&nonce, aad, encrypted_payload, tag)
+            .open_in_place(&nonce, aad, encrypted_payload, &tag)
             .map_err(|_| Error::ErrFailedToVerifyAuthTag)?;
-        Ok(writer)
+        Ok(())
     }
 
     fn encrypt_rtcp(
@@ -235,7 +240,11 @@ impl CipherAeadAesGcm {
     /// value is then XORed to the 12-octet salt to form the 12-octet IV.
     ///
     /// https://tools.ietf.org/html/rfc7714#section-8.1
-    pub(crate) fn rtp_initialization_vector(&self, header: &rtp::Header, roc: u32) -> [u8; 12] {
+    pub(crate) fn rtp_initialization_vector(
+        &self,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> [u8; 12] {
         let mut iv = [0u8; 12];
         BigEndian::write_u32(&mut iv[2..], header.ssrc);
         BigEndian::write_u32(&mut iv[6..], roc);
@@ -293,6 +302,18 @@ impl CipherAeadAesGcm {
 mod tests {
     use super::*;
 
+    /// A fixed-size header (no CSRCs, no extension) for SSRC 0x12345678.
+    fn test_header() -> rtp::header::HeaderSummary {
+        rtp::header::HeaderSummary {
+            marker: false,
+            payload_type: 0,
+            sequence_number: 0,
+            timestamp: 0,
+            ssrc: 0x12345678,
+            header_len: 12,
+        }
+    }
+
     #[test]
     fn test_aead_aes_gcm_128() {
         let profile = ProtectionProfile::AeadAes128Gcm;
@@ -303,10 +324,7 @@ mod tests {
         let mut cipher =
             CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
-        let header = rtp::Header {
-            ssrc: 0x12345678,
-            ..Default::default()
-        };
+        let header = test_header();
 
         let payload = vec![0u8; 100];
         let encrypted = cipher.encrypt_rtp(&payload, &header, 0).unwrap();
@@ -327,10 +345,7 @@ mod tests {
         let mut cipher =
             CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
-        let header = rtp::Header {
-            ssrc: 0x12345678,
-            ..Default::default()
-        };
+        let header = test_header();
 
         // 20 bytes: >= the 16-byte tag, but < 12-byte header + 16-byte tag.
         assert!(cipher.decrypt_rtp(&[0u8; 20], &header, 0).is_err());
@@ -350,10 +365,7 @@ mod tests {
         let mut cipher =
             CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
-        let header = rtp::Header {
-            ssrc: 0x12345678,
-            ..Default::default()
-        };
+        let header = test_header();
 
         let payload = vec![0u8; 100];
         let encrypted = cipher.encrypt_rtp(&payload, &header, 0).unwrap();

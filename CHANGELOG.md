@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **SRTCP accepted forged packets with the E bit clear.** The authentication tag was only checked
+  for encrypted SRTCP, so anyone able to send a datagram could inject RTCP (BYE, PLI, REMB, …) into
+  a session. The tag is now verified before the E bit is looked at.
+- **SRTP and SRTCP no longer allocate per-SSRC state before a packet authenticates.** The SSRC is
+  read from an unauthenticated header, so spraying random SSRCs used to grow the receiver's memory
+  without bound; state is now created only for an SSRC that has delivered an authentic packet.
+- SRTP located the payload with the *re-marshalled* header size rather than the size on the wire, so
+  a packet whose extension block was padded by the sender was encrypted from the wrong offset.
+- Remotely triggerable panics fixed: SCTP error causes, the DCEP threshold parser, AV1 payloading
+  and OBU parsing, RTCP SLI, and VP9 scalability-structure parsing.
+
+### Added (transport performance)
+
+- **RACK-TLP loss detection for SCTP** ([RFC 8985]; `TransportConfig::with_enable_rack`, on by
+  default). A chunk is declared lost once a chunk sent after it has been delivered and a round
+  trip plus a reordering allowance has passed, and a tail-loss probe re-sends the newest
+  outstanding chunk after about two round trips of silence. Before, a lost tail left nothing to
+  open a gap, so recovery waited for T3-rtx — one second at minimum, with the congestion window
+  collapsed to one MTU. On a path that drops a few datagrams per second that was most of the
+  throughput: over loopback on Linux, a 256 MiB transfer ran at 25–45 MiB/s and now runs at
+  110–190 MiB/s. `AssociationStats` gains `get_num_rack_losses` and `get_num_pto_probes`.
+- **Window-update SACK.** When the application drains a receive buffer that had been advertised
+  as (nearly) full, the receiver now reports the reopened window at once (RFC 9260 §6.2) instead
+  of leaving a stopped sender to find out from its next zero-window probe — a retransmission
+  timeout away. Every transfer whose reader started a moment after the sender used to lose a
+  second to this.
+
+[RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+
+- **`RTCDataChannel::outstanding_bytes_handle()` and `data_channel::OutstandingBytes`.** A cheap,
+  clonable, lock-free view of a channel's outstanding send bytes (`get()`, plus `is_detached()` once
+  the channel is gone). `outstanding_bytes()` itself is unchanged. A driver that keeps the core
+  behind a lock can sample the handle without taking it, so an application polling for send room no
+  longer contends with the I/O loop that is making room: on Linux the poll-style data-channel
+  benchmark was spending most of its time waiting for that lock.
+- The data-channel registry and the per-channel statistics are keyed with `FxHashMap` rather than
+  SipHash: their keys are connection-local handles and SCTP stream ids, looked up for every
+  acknowledged chunk.
+- **`rtp::packet::PacketView`**, a borrowed, allocation-free parse of an RTP packet: the header
+  fields, the CSRC list, the extension elements (`extension(id)`, `extensions()`) and the payload,
+  all read from the datagram it was parsed from. `parse` accepts and rejects exactly what
+  `Packet::unmarshal` does (a differential test holds it to that on 20,000 random inputs). It takes
+  10 ns on a 1200-byte packet with three extensions, against 60 ns for an owned `Packet` and 26 ns
+  for `Packet::unmarshal_reuse`: the owned forms pay for reference-counted payloads, which a packet
+  that is inspected and forwarded never needed.
+- `Packet::unmarshal_reuse` fills in one pass when the packet already owns an extension table
+  (30 ns to 26 ns).
+- SDP marshalling writes `m=`, `o=`, `c=` and `b=` lines piece by piece instead of through
+  `format_args!`, and sizes its output from the attribute count; and the output goes through a small
+  text writer that copies short pieces inline instead of calling `memcpy` for each. A browser offer
+  marshals in 3.4 µs, down from 5.6 µs (pion: 4.2 µs). The writer is the only `unsafe` in `rtc-sdp`;
+  it is Miri-clean and tested at every piece length.
+
+### Changed (breaking)
+
+- SDP `Attribute::key` and `Attribute::value` are `smol_str::SmolStr` instead of `String`. Text up
+  to 23 bytes is stored inline, so parsing a browser offer allocates 219 times instead of 902 and
+  runs in about 20 µs (pion: 23 µs). They dereference to `&str` and compare equal to `&str` and
+  `String`; `Attribute::new` still takes `String`s, and `Attribute::from_parts` takes anything
+  convertible. `SessionDescription::attribute` returns `Option<&str>`.
+
+### Added
+
+- **Differential tests against pion.** Every protocol parser — SDP, RTCP, RTP (and the codec
+  depacketizers/payloaders), STUN, SCTP, DCEP, DTLS records, SRTP — is checked against pion's own
+  verdicts and parsed fields on corpora of valid and mutated inputs harvested from pion's tests
+  (`tests/pion_golden.rs`, regenerated with the Go oracle in `tests/oracle/`). Where we deliberately
+  differ because pion is wrong (for example pion's H.265 payloader hangs at an MTU of 3 and its PACI
+  accessor mis-parses the A bit), the test names the divergence.
+- RTCP `ApplicationDefined` (APP) packets, `SdesType::Unknown`, and the SDP lexer/state machine are
+  now ports of pion's, so malformed input is accepted and rejected the same way.
+- `rtp::Header::peek` reads the routing fields of an RTP header without allocating, accepting and
+  rejecting exactly what `Header::unmarshal` does; `Packet::unmarshal_reuse` parses into an existing
+  packet and allocates nothing in steady state.
+- `rtc_srtp::Context::{encrypt_rtp_into, decrypt_rtp_into}` append to a caller-owned buffer, so a
+  send or receive loop that keeps one `BytesMut` allocates nothing per packet.
+- `rtc_stun::Message::{get_value, build_with}` and `Attributes::find` borrow instead of copying and
+  boxing.
+- New fuzz targets: RTP depacketizers and payloaders, `Header::peek` against `Header::unmarshal`,
+  SRTP/SRTCP unprotect and round trip, and DCEP.
+- `benchmarks/pion-compare`: the same micro-benchmarks run against this workspace and against pion,
+  side by side, with gates (see `docs/ci.md`).
+- CI on Linux and macOS, x86-64 and arm64: see `docs/ci.md`.
+
+### Changed
+
+- **Hardware AES and SHA-1 everywhere, with no build flags.** `aes` 0.9, `ctr` 0.10, `ccm` 0.6,
+  `sha1` 0.11, `hmac` 0.13 and `md-5` 0.11 detect the CPU's AES/SHA instructions at run time on
+  aarch64 and x86-64. Before this, a downstream build on Apple silicon or Linux/arm64 silently used
+  the software implementations unless it passed `--cfg aes_armv8`, which only worked inside this
+  repository (`.cargo/config.toml` is not inherited by dependents). The AES-CTR key schedule is now
+  expanded once per context rather than once per packet. SRTP AES-CM-HMAC-SHA1 is about 2.3×
+  faster than before and about 2× faster than pion on the same machine.
+- The workspace declares `rust-version = "1.91"`.
+- Faster parsing and marshalling: RTCP compound packets, H.264 payloading (SIMD start-code
+  search), SDP marshalling and codec-map construction, STUN decode and build.
+
+### Fixed
+
+- Many parse paths now agree with pion where we differed: RTP header/extension/padding validation,
+  RTCP header lengths on re-marshal, TWCC status vectors, SDP fields and numeric ranges, STUN
+  attribute ordering after MESSAGE-INTEGRITY, SCTP unknown PPIDs and reconfiguration results.
+
 ### Added
 
 - **SCTP zero checksum (RFC 9653)**: `TransportConfig::with_enable_zero_checksum` advertises the capability (parameter 0x8001, EDMID 1, byte-compatible with pion/sctp) and accepts zero-checksum packets on the DTLS-protected association; the send side arms when the peer advertises back, and then skips the CRC-32C on the DATA/SACK/FORWARD-TSN hot paths. INIT and COOKIE ECHO stay checksummed per section 5; a zero-checksum packet reaching an association that never enabled it is dropped.

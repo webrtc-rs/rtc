@@ -806,3 +806,22 @@ fn test_chunk_heartbeat_ack_roundtrip() -> Result<()> {
     assert_eq!(raw, parsed.marshal()?);
     Ok(())
 }
+
+/// Found by fuzzing: a FORWARD-TSN whose header declares no room for the new-cumulative-TSN, with
+/// more bytes after it than the chunk owns, used to read past the end of the chunk and panic.
+/// (`Packet::unmarshal` hands each chunk exactly its own bytes, so a packet could not trigger
+/// this; the public chunk API could.)
+#[test]
+fn test_forward_tsn_shorter_than_its_fixed_part_is_rejected() {
+    let raw = Bytes::from_static(&[0xc0, 0x00, 0x00, 0x04, 0x00, 0x00, 0x23, 0x30, 0x24]);
+    assert!(ChunkForwardTsn::unmarshal(&raw).is_err());
+
+    // The bytes after the declared length are not part of the chunk, whatever they look like.
+    let raw = Bytes::from_static(&[
+        0xc0, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x07, // FORWARD-TSN, new cumulative TSN 7
+        0xff, 0xff, 0xff, 0xff, // the start of some other chunk
+    ]);
+    let chunk = ChunkForwardTsn::unmarshal(&raw).unwrap();
+    assert_eq!(chunk.new_cumulative_tsn, 7);
+    assert!(chunk.streams.is_empty());
+}

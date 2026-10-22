@@ -53,6 +53,13 @@ impl Unmarshal for DataChannelThreshold {
         Self: Sized,
         B: Buf,
     {
+        // These bytes can come off the wire as a malformed DCEP message, so the length is checked.
+        if buf.remaining() < 5 {
+            return Err(shared::error::Error::UnexpectedEndOfBuffer {
+                expected: 5,
+                actual: buf.remaining(),
+            });
+        }
         let t = buf.get_u8();
         let v = buf.get_u32();
         if t == 0 {

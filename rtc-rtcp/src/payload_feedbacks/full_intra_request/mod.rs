@@ -148,7 +148,7 @@ impl Unmarshal for FullIntraRequest {
 
         let mut i = HEADER_LENGTH + FIR_OFFSET;
         let mut fir = vec![];
-        while i < HEADER_LENGTH + (h.length * 4) as usize {
+        while i < HEADER_LENGTH + 4 * (h.length as usize) {
             // An FIR entry is 8 bytes
             if raw_packet.remaining() < 8 {
                 return Err(Error::PacketTooShort);

@@ -132,7 +132,7 @@ impl XorMappedAddress {
     /// get_from_as decodes XOR-MAPPED-ADDRESS attribute value in message
     /// getting it as for t type.
     pub fn get_from_as(&mut self, m: &Message, t: AttrType) -> Result<()> {
-        let v = m.get(t)?;
+        let v = m.get_value(t)?;
         if v.len() <= 4 {
             return Err(Error::ErrUnexpectedEof);
         }

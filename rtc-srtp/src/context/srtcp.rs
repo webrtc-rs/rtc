@@ -28,7 +28,11 @@ impl Context {
         let index = self.cipher.get_rtcp_index(encrypted);
         let ssrc = u32::from_be_bytes([encrypted[4], encrypted[5], encrypted[6], encrypted[7]]);
 
-        if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector
+        // The SSRC comes from an unauthenticated header, so no state is created for one this
+        // context has not seen until a packet for it authenticates; otherwise random SSRCs would
+        // grow the context's memory without bound. See `decrypt_rtp`.
+        if let Some(state) = self.srtcp_ssrc_states.get_mut(&ssrc)
+            && let Some(replay_detector) = &mut state.replay_detector
             && !replay_detector.check(index as u64)
         {
             return Err(Error::SrtcpSsrcDuplicated(ssrc, index));
@@ -37,6 +41,8 @@ impl Context {
         let dst = self.cipher.decrypt_rtcp(encrypted, index, ssrc)?;
 
         if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector {
+            // A new SSRC's detector has not been asked about this packet yet.
+            replay_detector.check(index as u64);
             replay_detector.accept();
         }
 
@@ -65,5 +71,58 @@ impl Context {
         };
 
         self.cipher.encrypt_rtcp(decrypted, index, ssrc)
+    }
+}
+
+#[cfg(test)]
+mod unauthenticated_srtcp_test {
+    use super::*;
+    use crate::protection_profile::ProtectionProfile;
+
+    /// SRTCP authentication is mandatory: a packet whose E bit is clear must still carry a valid
+    /// tag, or anyone could inject RTCP (BYE, PLI, REMB) into a session.
+    #[test]
+    fn rejects_unencrypted_srtcp_with_a_forged_tag() {
+        let provider = crypto::default_provider().unwrap();
+        let key: Vec<u8> = (0..16).collect();
+        let salt: Vec<u8> = (0..14).map(|i| 0x10 + i).collect();
+        let mut ctx = Context::new(
+            &key,
+            &salt,
+            ProtectionProfile::Aes128CmHmacSha1_80,
+            None,
+            None,
+            provider.crypto(),
+        )
+        .unwrap();
+
+        // RTCP BYE for SSRC 0xdeadbeef, then E = 0 | index 1 and ten bytes of made-up "tag".
+        let mut forged = vec![0x80, 0xcb, 0x00, 0x01, 0xde, 0xad, 0xbe, 0xef];
+        forged.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        forged.extend_from_slice(&[0xAA; 10]);
+        assert!(
+            ctx.decrypt_rtcp(&forged).is_err(),
+            "forged SRTCP was accepted"
+        );
+
+        // A genuine packet protected with the same context still round-trips.
+        let mut sender = Context::new(
+            &key,
+            &salt,
+            ProtectionProfile::Aes128CmHmacSha1_80,
+            None,
+            None,
+            provider.crypto(),
+        )
+        .unwrap();
+        let plain = [0x80, 0xcb, 0x00, 0x01, 0xde, 0xad, 0xbe, 0xef];
+        let protected = sender.encrypt_rtcp(&plain).unwrap();
+        assert_eq!(&ctx.decrypt_rtcp(&protected).unwrap()[..], &plain[..]);
+
+        // Clearing the E bit of a genuine packet changes the authenticated bytes: refused.
+        let mut tampered = protected.to_vec();
+        let n = tampered.len();
+        tampered[n - 14] &= 0x7f;
+        assert!(ctx.decrypt_rtcp(&tampered).is_err());
     }
 }

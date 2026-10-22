@@ -69,7 +69,9 @@ pub fn write_key_value<W: fmt::Write, V: Display>(
         return Ok(());
     };
 
-    write!(writer, "{key}{value}{END_LINE}")
+    writer.write_str(key)?;
+    write!(writer, "{value}")?;
+    writer.write_str(END_LINE)
 }
 
 pub fn write_key_slice_of_values<W: fmt::Write, V: Display>(
@@ -83,16 +85,16 @@ pub fn write_key_slice_of_values<W: fmt::Write, V: Display>(
 
     let mut first = true;
 
-    write!(writer, "{key}")?;
+    writer.write_str(key)?;
     for val in value {
         if first {
             first = false;
-            write!(writer, "{val}")?;
         } else {
-            write!(writer, " {val}")?;
+            writer.write_str(" ")?;
         }
+        write!(writer, "{val}")?;
     }
-    write!(writer, "{END_LINE}")?;
+    writer.write_str(END_LINE)?;
 
     Ok(())
 }

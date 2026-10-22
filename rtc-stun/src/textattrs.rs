@@ -92,8 +92,10 @@ impl TextAttribute {
             _ => return Err(Error::Other(format!("Unsupported AttrType {attr}"))),
         };
 
-        let a = m.get(attr)?;
-        let text = String::from_utf8(a)?;
+        let a = m.get_value(attr)?;
+        // pion carries these as raw bytes; a value that is not UTF-8 is converted lossily here
+        // rather than rejected, so the rest of the message stays usable.
+        let text = String::from_utf8_lossy(a).into_owned();
         Ok(TextAttribute { attr, text })
     }
 }

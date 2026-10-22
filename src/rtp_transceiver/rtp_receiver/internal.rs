@@ -203,13 +203,14 @@ impl RTCRtpReceiverInternal {
     /// memory window. `clock_origin` is absent only before the first packet, and
     /// `record_source` always runs first, so there is nothing to prune in that case.
     fn prune_sources(&mut self, now: Instant) {
-        let Some(origin) = self.clock_origin else { return };
+        let Some(origin) = self.clock_origin else {
+            return;
+        };
         let cutoff = now
             .checked_sub(SOURCE_MEMORY_WINDOW)
             .unwrap_or(origin)
             .saturating_duration_since(origin);
-        self.contributing_sources
-            .retain(|s| s.timestamp >= cutoff);
+        self.contributing_sources.retain(|s| s.timestamp >= cutoff);
         self.synchronization_sources
             .retain(|s| s.timestamp >= cutoff);
     }
@@ -797,7 +798,10 @@ mod source_tracking_test {
         let eleven = csrcs.iter().find(|s| s.source == 11).expect("csrc 11");
         assert_eq!(eleven.packets_contributed_to, 2, "csrc 11 in two packets");
         let twenty_two = csrcs.iter().find(|s| s.source == 22).expect("csrc 22");
-        assert_eq!(twenty_two.packets_contributed_to, 2, "csrc 22 in two packets");
+        assert_eq!(
+            twenty_two.packets_contributed_to, 2,
+            "csrc 22 in two packets"
+        );
 
         // Timestamps are relative to the receiver's first packet, and advance with it.
         assert_eq!(eleven.timestamp, Duration::from_millis(20));
@@ -820,10 +824,7 @@ mod source_tracking_test {
 
         receiver.on_rtp_packet(start, &header(1, &[11]));
         // 10 s later, exactly at the window edge: still remembered...
-        receiver.on_rtp_packet(
-            start + Duration::from_secs(10),
-            &header(1, &[]),
-        );
+        receiver.on_rtp_packet(start + Duration::from_secs(10), &header(1, &[]));
         assert_eq!(receiver.get_contributing_sources().count(), 1);
         // ...and its last-seen advanced to the second packet, which carried no CSRC.
         let entry = receiver

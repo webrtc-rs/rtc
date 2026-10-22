@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(decoder.buffered_len(), 4);
 
         // Rest of payload
-        decoder.extend_from_slice(&[b'l', b'l', b'o']);
+        decoder.extend_from_slice(b"llo");
         assert_eq!(decoder.next_packet(), Some(b"Hello".to_vec()));
     }
 

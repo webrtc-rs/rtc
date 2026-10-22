@@ -1,15 +1,17 @@
 #[cfg(test)]
 mod vp9_test;
 
+mod header;
+
+pub use header::{HeaderColorConfig, HeaderFrameSize, Vp9Header};
+
 use crate::packetizer::{Depacketizer, Payloader};
 use shared::error::{Error, Result};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt;
 use std::sync::Arc;
 
-/// Flexible mode 15 bit picture ID
-const VP9HEADER_SIZE: usize = 3;
 const MAX_SPATIAL_LAYERS: u8 = 5;
 const MAX_VP9REF_PICS: usize = 3;
 
@@ -22,6 +24,10 @@ pub struct Vp9Payloader {
     picture_id: u16,
     initialized: bool,
 
+    /// Use the flexible mode (F=1), which carries no scalability structure, instead of the
+    /// non-flexible mode (F=0), which announces a key frame's resolution.
+    pub flexible_mode: bool,
+
     /// Supplies the starting picture id; randomized when absent.
     pub initial_picture_id_fn: Option<InitialPictureIDFn>,
 }
@@ -31,112 +37,158 @@ impl fmt::Debug for Vp9Payloader {
         f.debug_struct("Vp9Payloader")
             .field("picture_id", &self.picture_id)
             .field("initialized", &self.initialized)
+            .field("flexible_mode", &self.flexible_mode)
             .finish()
     }
 }
 
 impl Payloader for Vp9Payloader {
-    /// Payload fragments an Vp9Payloader packet across one or more byte arrays
+    /// Payload fragments a VP9 frame across one or more payloads.
     fn payload(&mut self, mtu: usize, payload: &Bytes) -> Result<Vec<Bytes>> {
-        /*
-         * https://www.ietf.org/id/draft-ietf-payload-vp9-13.txt
-         *
-         * Flexible mode (F=1)
-         *        0 1 2 3 4 5 6 7
-         *       +-+-+-+-+-+-+-+-+
-         *       |I|P|L|F|B|E|V|Z| (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  I:   |M| PICTURE ID  | (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  M:   | EXTENDED PID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+                             -\
-         *  P,F: | P_DIFF      |N| (CONDITIONALLY REQUIRED)    - up to 3 times
-         *       +-+-+-+-+-+-+-+-+                             -/
-         *  V:   | SS            |
-         *       | ..            |
-         *       +-+-+-+-+-+-+-+-+
-         *
-         * Non-flexible mode (F=0)
-         *        0 1 2 3 4 5 6 7
-         *       +-+-+-+-+-+-+-+-+
-         *       |I|P|L|F|B|E|V|Z| (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  I:   |M| PICTURE ID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  M:   | EXTENDED PID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *       |   tl0picidx   | (CONDITIONALLY REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  V:   | SS            |
-         *       | ..            |
-         *       +-+-+-+-+-+-+-+-+
-         */
-
-        if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
-        }
-
         if !self.initialized {
             if self.initial_picture_id_fn.is_none() {
                 self.initial_picture_id_fn =
-                    Some(Arc::new(|| -> u16 { rand::random::<u16>() & 0x7FFF }));
+                    Some(Arc::new(|| -> u16 { rand::random::<u16>() % 0x7FFF }));
             }
-            self.picture_id = if let Some(f) = &self.initial_picture_id_fn {
-                f()
-            } else {
-                0
-            };
+            self.picture_id = self.initial_picture_id_fn.as_ref().map_or(0, |f| f()) & 0x7FFF;
             self.initialized = true;
         }
 
-        let max_fragment_size = mtu as isize - VP9HEADER_SIZE as isize;
-        let mut payloads = vec![];
-        let mut payload_data_remaining = payload.len();
-        let mut payload_data_index = 0;
-
-        if std::cmp::min(max_fragment_size, payload_data_remaining as isize) <= 0 {
-            return Ok(vec![]);
-        }
-
-        while payload_data_remaining > 0 {
-            let current_fragment_size =
-                std::cmp::min(max_fragment_size as usize, payload_data_remaining);
-            let mut out = BytesMut::with_capacity(VP9HEADER_SIZE + current_fragment_size);
-            let mut buf = [0u8; VP9HEADER_SIZE];
-            buf[0] = 0x90; // F=1 I=1
-            if payload_data_index == 0 {
-                buf[0] |= 0x08; // B=1
-            }
-            if payload_data_remaining == current_fragment_size {
-                buf[0] |= 0x04; // E=1
-            }
-            buf[1] = (self.picture_id >> 8) as u8 | 0x80;
-            buf[2] = (self.picture_id & 0xFF) as u8;
-
-            out.put(&buf[..]);
-
-            out.put(
-                &*payload.slice(payload_data_index..payload_data_index + current_fragment_size),
-            );
-
-            payloads.push(out.freeze());
-
-            payload_data_remaining -= current_fragment_size;
-            payload_data_index += current_fragment_size;
-        }
+        let payloads = if self.flexible_mode {
+            self.payload_flexible(mtu, payload)
+        } else {
+            self.payload_non_flexible(mtu, payload)
+        };
 
         self.picture_id += 1;
-        self.picture_id &= 0x7FFF;
+        if self.picture_id >= 0x8000 {
+            self.picture_id = 0;
+        }
 
         Ok(payloads)
     }
 
     fn clone_to(&self) -> Box<dyn Payloader> {
         Box::new(self.clone())
+    }
+}
+
+impl Vp9Payloader {
+    /// Flexible mode (F=1):
+    ///
+    /// ```text
+    ///        0 1 2 3 4 5 6 7
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  I:   |M| PICTURE ID  | (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  M:   | EXTENDED PID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    /// ```
+    fn payload_flexible(&self, mtu: usize, payload: &Bytes) -> Vec<Bytes> {
+        const HEADER_SIZE: usize = 3;
+        let max_fragment_size = mtu as isize - HEADER_SIZE as isize;
+        if max_fragment_size.min(payload.len() as isize) <= 0 {
+            return vec![];
+        }
+        let max_fragment_size = max_fragment_size as usize;
+
+        let mut payloads = vec![];
+        let mut remaining = payload.len();
+        let mut index = 0;
+        while remaining > 0 {
+            let fragment = max_fragment_size.min(remaining);
+            let mut out = BytesMut::with_capacity(HEADER_SIZE + fragment);
+
+            let mut b0 = 0x90; // F=1, I=1
+            if index == 0 {
+                b0 |= 0x08; // B=1
+            }
+            if remaining == fragment {
+                b0 |= 0x04; // E=1
+            }
+            out.put_u8(b0);
+            out.put_u8((self.picture_id >> 8) as u8 | 0x80);
+            out.put_u8(self.picture_id as u8);
+            out.put_slice(&payload[index..index + fragment]);
+            payloads.push(out.freeze());
+
+            remaining -= fragment;
+            index += fragment;
+        }
+        payloads
+    }
+
+    /// Non-flexible mode (F=0). A key frame's first packet carries the scalability structure
+    /// with the frame's resolution.
+    ///
+    /// ```text
+    ///        0 1 2 3 4 5 6 7
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  I:   |M| PICTURE ID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  M:   | EXTENDED PID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  V:   | SS            |
+    ///       | ..            |
+    ///       +-+-+-+-+-+-+-+-+
+    /// ```
+    fn payload_non_flexible(&self, mtu: usize, payload: &Bytes) -> Vec<Bytes> {
+        let Ok(header) = Vp9Header::unmarshal(payload) else {
+            return vec![];
+        };
+
+        let mut payloads = vec![];
+        let mut remaining = payload.len();
+        let mut index = 0;
+        while remaining > 0 {
+            let with_ss = !header.non_key_frame && index == 0;
+            let header_size = if with_ss { 3 + 8 } else { 3 };
+
+            let fragment = (mtu as isize - header_size as isize).min(remaining as isize);
+            if fragment <= 0 {
+                return vec![];
+            }
+            let fragment = fragment as usize;
+
+            let mut out = BytesMut::with_capacity(header_size + fragment);
+
+            let mut b0 = 0x80 | 0x01; // I=1, Z=1
+            if header.non_key_frame {
+                b0 |= 0x40; // P=1
+            }
+            if index == 0 {
+                b0 |= 0x08; // B=1
+            }
+            if remaining == fragment {
+                b0 |= 0x04; // E=1
+            }
+            if with_ss {
+                b0 |= 0x02; // V=1
+            }
+            out.put_u8(b0);
+            out.put_u8((self.picture_id >> 8) as u8 | 0x80);
+            out.put_u8(self.picture_id as u8);
+
+            if with_ss {
+                out.put_u8(0x10 | 0x08); // N_S=0, Y=1, G=1
+                out.put_u16(header.width());
+                out.put_u16(header.height());
+                out.put_u8(0x01); // N_G=1
+                out.put_u8(1 << 4 | 1 << 2); // TID=0, U=1, R=1
+                out.put_u8(0x01); // P_DIFF=1
+            }
+
+            out.put_slice(&payload[index..index + fragment]);
+            payloads.push(out.freeze());
+
+            remaining -= fragment;
+            index += fragment;
+        }
+        payloads
     }
 }
 
@@ -208,9 +260,7 @@ impl Depacketizer for Vp9Packet {
             return Err(Error::ErrShortPacket);
         }
 
-        let reader = &mut packet.clone();
-        let b = reader.get_u8();
-
+        let b = packet[0];
         self.i = (b & 0x80) != 0;
         self.p = (b & 0x40) != 0;
         self.l = (b & 0x20) != 0;
@@ -220,34 +270,38 @@ impl Depacketizer for Vp9Packet {
         self.v = (b & 0x02) != 0;
         self.z = (b & 0x01) != 0;
 
-        let mut payload_index = 1;
+        // Optional fields are cleared first so a reused `Vp9Packet` never reports a previous
+        // packet's descriptor.
+        self.picture_id = 0;
+        (self.tid, self.u, self.sid, self.d, self.tl0picidx) = (0, false, 0, false, 0);
+        self.pdiff.clear();
+        (self.ns, self.y, self.g, self.ng) = (0, false, false, 0);
+        self.width.clear();
+        self.height.clear();
+        self.pgtid.clear();
+        self.pgu.clear();
+        self.pgpdiff.clear();
 
+        let mut pos = 1;
         if self.i {
-            payload_index = self.parse_picture_id(reader, payload_index)?;
+            pos = self.parse_picture_id(packet, pos)?;
         }
-
         if self.l {
-            payload_index = self.parse_layer_info(reader, payload_index)?;
+            pos = self.parse_layer_info(packet, pos)?;
         }
-
         if self.f && self.p {
-            payload_index = self.parse_ref_indices(reader, payload_index)?;
+            pos = self.parse_ref_indices(packet, pos)?;
         }
-
         if self.v {
-            payload_index = self.parse_ssdata(reader, payload_index)?;
+            pos = self.parse_ssdata(packet, pos)?;
         }
 
-        Ok(packet.slice(payload_index..))
+        Ok(packet.slice(pos..))
     }
 
     /// is_partition_head checks whether if this is a head of the VP9 partition
     fn is_partition_head(&self, payload: &Bytes) -> bool {
-        if payload.is_empty() {
-            false
-        } else {
-            (payload[0] & 0x08) != 0
-        }
+        payload.first().is_some_and(|b| b & 0x08 != 0)
     }
 
     fn is_partition_tail(&self, marker: bool, _payload: &Bytes) -> bool {
@@ -264,42 +318,27 @@ impl Vp9Packet {
     // M:   | EXTENDED PID  |
     //      +-+-+-+-+-+-+-+-+
     //
-    fn parse_picture_id(
-        &mut self,
-        reader: &mut dyn Buf,
-        mut payload_index: usize,
-    ) -> Result<usize> {
-        if reader.remaining() == 0 {
+    fn parse_picture_id(&mut self, packet: &[u8], mut pos: usize) -> Result<usize> {
+        if packet.len() <= pos {
             return Err(Error::ErrShortPacket);
         }
-        let b = reader.get_u8();
-        payload_index += 1;
-        // PID present?
-        if (b & 0x80) != 0 {
-            if reader.remaining() == 0 {
+        self.picture_id = (packet[pos] & 0x7F) as u16;
+        if packet[pos] & 0x80 != 0 {
+            pos += 1;
+            if packet.len() <= pos {
                 return Err(Error::ErrShortPacket);
             }
-            // M == 1, PID is 15bit
-            self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
-            payload_index += 1;
-        } else {
-            self.picture_id = (b & 0x7F) as u16;
+            self.picture_id = (self.picture_id << 8) | packet[pos] as u16;
         }
-
-        Ok(payload_index)
+        Ok(pos + 1)
     }
 
-    fn parse_layer_info(
-        &mut self,
-        reader: &mut dyn Buf,
-        mut payload_index: usize,
-    ) -> Result<usize> {
-        payload_index = self.parse_layer_info_common(reader, payload_index)?;
-
+    fn parse_layer_info(&mut self, packet: &[u8], pos: usize) -> Result<usize> {
+        let pos = self.parse_layer_info_common(packet, pos)?;
         if self.f {
-            Ok(payload_index)
+            Ok(pos)
         } else {
-            self.parse_layer_info_non_flexible_mode(reader, payload_index)
+            self.parse_layer_info_non_flexible_mode(packet, pos)
         }
     }
 
@@ -309,27 +348,20 @@ impl Vp9Packet {
     // L:   |  T  |U|  S  |D|
     //      +-+-+-+-+-+-+-+-+
     //
-    fn parse_layer_info_common(
-        &mut self,
-        reader: &mut dyn Buf,
-        mut payload_index: usize,
-    ) -> Result<usize> {
-        if reader.remaining() == 0 {
+    fn parse_layer_info_common(&mut self, packet: &[u8], pos: usize) -> Result<usize> {
+        if packet.len() <= pos {
             return Err(Error::ErrShortPacket);
         }
-        let b = reader.get_u8();
-        payload_index += 1;
-
+        let b = packet[pos];
         self.tid = b >> 5;
         self.u = b & 0x10 != 0;
         self.sid = (b >> 1) & 0x7;
         self.d = b & 0x01 != 0;
 
         if self.sid >= MAX_SPATIAL_LAYERS {
-            Err(Error::ErrTooManySpatialLayers)
-        } else {
-            Ok(payload_index)
+            return Err(Error::ErrTooManySpatialLayers);
         }
+        Ok(pos + 1)
     }
 
     // Layer indices (non-flexible mode):
@@ -340,17 +372,12 @@ impl Vp9Packet {
     //      |   tl0picidx   |
     //      +-+-+-+-+-+-+-+-+
     //
-    fn parse_layer_info_non_flexible_mode(
-        &mut self,
-        reader: &mut dyn Buf,
-        mut payload_index: usize,
-    ) -> Result<usize> {
-        if reader.remaining() == 0 {
+    fn parse_layer_info_non_flexible_mode(&mut self, packet: &[u8], pos: usize) -> Result<usize> {
+        if packet.len() <= pos {
             return Err(Error::ErrShortPacket);
         }
-        self.tl0picidx = reader.get_u8();
-        payload_index += 1;
-        Ok(payload_index)
+        self.tl0picidx = packet[pos];
+        Ok(pos + 1)
     }
 
     // Reference indices:
@@ -360,26 +387,21 @@ impl Vp9Packet {
     //      +-+-+-+-+-+-+-+-+                    N=1: An additional P_DIFF follows
     //                                                current P_DIFF.
     //
-    fn parse_ref_indices(
-        &mut self,
-        reader: &mut dyn Buf,
-        mut payload_index: usize,
-    ) -> Result<usize> {
-        let mut b = 1u8;
-        while (b & 0x1) != 0 {
-            if reader.remaining() == 0 {
+    fn parse_ref_indices(&mut self, packet: &[u8], mut pos: usize) -> Result<usize> {
+        loop {
+            if packet.len() <= pos {
                 return Err(Error::ErrShortPacket);
             }
-            b = reader.get_u8();
-            payload_index += 1;
-
-            self.pdiff.push(b >> 1);
+            self.pdiff.push(packet[pos] >> 1);
+            if packet[pos] & 0x01 == 0 {
+                break;
+            }
             if self.pdiff.len() >= MAX_VP9REF_PICS {
                 return Err(Error::ErrTooManyPDiff);
             }
+            pos += 1;
         }
-
-        Ok(payload_index)
+        Ok(pos + 1)
     }
 
     // Scalability structure (SS):
@@ -402,68 +424,60 @@ impl Vp9Packet {
     //      |    P_DIFF     | (OPTIONAL)    . R times    .
     //      +-+-+-+-+-+-+-+-+              -|           -|
     //
-    fn parse_ssdata(&mut self, reader: &mut dyn Buf, mut payload_index: usize) -> Result<usize> {
-        if reader.remaining() == 0 {
+    fn parse_ssdata(&mut self, packet: &[u8], mut pos: usize) -> Result<usize> {
+        if packet.len() <= pos {
             return Err(Error::ErrShortPacket);
         }
 
-        let b = reader.get_u8();
-        payload_index += 1;
+        self.ns = packet[pos] >> 5;
+        self.y = packet[pos] & 0x10 != 0;
+        self.g = packet[pos] & 0x08 != 0;
+        pos += 1;
 
-        self.ns = b >> 5;
-        self.y = b & 0x10 != 0;
-        self.g = (b >> 1) & 0x7 != 0;
-
-        let ns = (self.ns + 1) as usize;
+        let ns = self.ns as usize + 1;
         self.ng = 0;
 
         if self.y {
-            if reader.remaining() < 4 * ns {
-                return Err(Error::ErrShortPacket);
-            }
-
-            self.width = vec![0u16; ns];
-            self.height = vec![0u16; ns];
+            self.width = vec![0; ns];
+            self.height = vec![0; ns];
             for i in 0..ns {
-                self.width[i] = reader.get_u16();
-                self.height[i] = reader.get_u16();
+                if packet.len() <= pos + 3 {
+                    return Err(Error::ErrShortPacket);
+                }
+                self.width[i] = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
+                pos += 2;
+                self.height[i] = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
+                pos += 2;
             }
-            payload_index += 4 * ns;
         }
 
         if self.g {
-            if reader.remaining() == 0 {
+            if packet.len() <= pos {
                 return Err(Error::ErrShortPacket);
             }
-
-            self.ng = reader.get_u8();
-            payload_index += 1;
+            self.ng = packet[pos];
+            pos += 1;
         }
 
         for i in 0..self.ng as usize {
-            if reader.remaining() == 0 {
+            if packet.len() <= pos {
                 return Err(Error::ErrShortPacket);
             }
-            let b = reader.get_u8();
-            payload_index += 1;
-
-            self.pgtid.push(b >> 5);
-            self.pgu.push(b & 0x10 != 0);
-
-            let r = ((b >> 2) & 0x3) as usize;
-            if reader.remaining() < r {
-                return Err(Error::ErrShortPacket);
-            }
+            self.pgtid.push(packet[pos] >> 5);
+            self.pgu.push(packet[pos] & 0x10 != 0);
+            let reference = ((packet[pos] >> 2) & 0x3) as usize;
+            pos += 1;
 
             self.pgpdiff.push(vec![]);
-            for _ in 0..r {
-                let b = reader.get_u8();
-                payload_index += 1;
-
-                self.pgpdiff[i].push(b);
+            if packet.len() < pos + reference {
+                return Err(Error::ErrShortPacket);
+            }
+            for _ in 0..reference {
+                self.pgpdiff[i].push(packet[pos]);
+                pos += 1;
             }
         }
 
-        Ok(payload_index)
+        Ok(pos)
     }
 }

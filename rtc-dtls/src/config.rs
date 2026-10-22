@@ -32,7 +32,8 @@ use shared::error::*;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;use std::time::Duration;
+use std::sync::Arc;
+use std::time::Duration;
 
 use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
@@ -671,10 +672,10 @@ impl KeyLogger for FileKeyLogger {
         use std::io::Write as _;
         // A failed write logs and moves on: key logging is a debugging aid, and failing
         // the handshake over a full disk would trade a capture for the connection.
-        if let Ok(mut file) = self.file.lock() {
-            if let Err(err) = file.write_all(line.as_bytes()).and_then(|()| file.flush()) {
-                log::warn!("key logger write failed: {err}");
-            }
+        if let Ok(mut file) = self.file.lock()
+            && let Err(err) = file.write_all(line.as_bytes()).and_then(|()| file.flush())
+        {
+            log::warn!("key logger write failed: {err}");
         }
     }
 }
@@ -684,16 +685,13 @@ impl KeyLogger for FileKeyLogger {
 /// `client_random` is the 32-byte ClientHello random of the client end (regardless of which
 /// end we are), and `master_secret` the derived secret. Both are the raw bytes; the
 /// formatting and newline are added here so implementations cannot get the format wrong.
-pub(crate) fn log_master_secret(
-    cfg: &HandshakeConfig,
-    client_random: &[u8],
-    master_secret: &[u8],
-) {
+pub(crate) fn log_master_secret(cfg: &HandshakeConfig, client_random: &[u8], master_secret: &[u8]) {
     use std::fmt::Write as _;
     let Some(logger) = cfg.key_logger.as_ref() else {
         return;
     };
-    let mut line = String::with_capacity(13 + client_random.len() * 2 + 1 + master_secret.len() * 2 + 1);
+    let mut line =
+        String::with_capacity(13 + client_random.len() * 2 + 1 + master_secret.len() * 2 + 1);
     line.push_str("CLIENT_RANDOM ");
     for byte in client_random {
         let _ = write!(line, "{byte:02x}");
@@ -872,7 +870,10 @@ mod file_key_logger_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("keys.log");
 
-        for (i, line) in ["CLIENT_RANDOM a0 b1\n", "CLIENT_RANDOM c2 d3\n"].iter().enumerate() {
+        for (i, line) in ["CLIENT_RANDOM a0 b1\n", "CLIENT_RANDOM c2 d3\n"]
+            .iter()
+            .enumerate()
+        {
             if i == 0 {
                 std::fs::remove_file(&path).ok();
             }

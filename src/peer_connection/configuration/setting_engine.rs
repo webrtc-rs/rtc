@@ -384,6 +384,7 @@ pub struct SettingEngine {
     /// Whether SCTP packets may carry a zero checksum, per [RFC 9653]. Off by default.
     ///
     /// Only sound on a DTLS-protected association, which every WebRTC data channel is.
+    ///
     /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
     pub(crate) sctp_enable_zero_checksum: bool,
     pub(crate) ignore_rid_pause_for_recv: bool,

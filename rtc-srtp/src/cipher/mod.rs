@@ -50,11 +50,97 @@ pub(crate) trait Cipher: Send {
     /// Retrieved RTCP index.
     fn get_rtcp_index(&self, input: &[u8]) -> usize;
 
-    /// Encrypt RTP payload.
-    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    /// Protects, in place, the RTP packet that occupies `buf[start..]`: encrypts its payload and
+    /// appends the authentication tag, so `buf[start..]` becomes the SRTP packet.
+    ///
+    /// On error the contents of `buf[start..]` are unspecified; callers that must preserve the
+    /// buffer truncate it back to `start`.
+    fn encrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()>;
 
-    /// Decrypt RTP payload.
-    fn decrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    /// Verifies and decrypts, in place, the SRTP packet that occupies `buf[start..]`, removing
+    /// the authentication tag, so `buf[start..]` becomes the plain RTP packet.
+    ///
+    /// Authentication is checked before anything is decrypted, so a forged packet leaves the
+    /// buffer as it was (AES-GCM is the exception: its contents are unspecified on failure).
+    fn decrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()>;
+
+    /// Encrypt an RTP packet, appending the protected packet to `dst`.
+    ///
+    /// On error `dst` is left as it was.
+    fn encrypt_rtp_into(
+        &mut self,
+        dst: &mut BytesMut,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        let start = dst.len();
+        dst.reserve(payload.len() + self.rtp_auth_tag_len().max(self.aead_auth_tag_len()));
+        dst.extend_from_slice(payload);
+        let result = self.encrypt_rtp_in_place(dst, start, header, roc);
+        if result.is_err() {
+            dst.truncate(start);
+        }
+        result
+    }
+
+    /// Decrypt an SRTP packet, appending the plain packet to `dst`.
+    ///
+    /// On error `dst` is left as it was.
+    fn decrypt_rtp_into(
+        &mut self,
+        dst: &mut BytesMut,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        let start = dst.len();
+        dst.reserve(payload.len());
+        dst.extend_from_slice(payload);
+        let result = self.decrypt_rtp_in_place(dst, start, header, roc);
+        if result.is_err() {
+            dst.truncate(start);
+        }
+        result
+    }
+
+    /// Encrypt an RTP packet into a new buffer.
+    fn encrypt_rtp(
+        &mut self,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<BytesMut> {
+        let mut dst = BytesMut::with_capacity(
+            payload.len() + self.rtp_auth_tag_len().max(self.aead_auth_tag_len()),
+        );
+        self.encrypt_rtp_into(&mut dst, payload, header, roc)?;
+        Ok(dst)
+    }
+
+    /// Decrypt an SRTP packet into a new buffer.
+    fn decrypt_rtp(
+        &mut self,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<BytesMut> {
+        let mut dst = BytesMut::with_capacity(payload.len());
+        self.decrypt_rtp_into(&mut dst, payload, header, roc)?;
+        Ok(dst)
+    }
 
     /// Encrypt RTCP payload.
     fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;

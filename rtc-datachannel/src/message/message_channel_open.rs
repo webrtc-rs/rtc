@@ -164,6 +164,14 @@ impl MarshalSize for DataChannelOpen {
 
 impl Marshal for DataChannelOpen {
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
+        // The lengths travel in 16-bit fields: truncating them would put a corrupt message on
+        // the wire, so refuse before writing anything.
+        if self.label.len() > u16::MAX as usize {
+            return Err(Error::ErrTooLongLabel);
+        }
+        if self.protocol.len() > u16::MAX as usize {
+            return Err(Error::ErrTooLongProtocol);
+        }
         let required_len = self.marshal_size();
         if buf.remaining_mut() < required_len {
             return Err(Error::UnexpectedEndOfBuffer {
@@ -435,6 +443,50 @@ mod tests {
 
         assert_eq!(bytes_written, channel_open.marshal_size());
         assert_eq!(&bytes[..], &MARSHALED_BYTES);
+        Ok(())
+    }
+
+    // pion/datachannel `TestChannelOpenMarshalTooLongLabel` / `...TooLongProtocol`: the lengths are
+    // 16-bit fields, so a longer value is refused instead of being truncated into a corrupt message.
+    #[test]
+    fn test_channel_open_marshal_too_long_label() {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![b'a'; u16::MAX as usize + 1],
+            protocol: b"bar".to_vec(),
+        };
+        assert_eq!(open.marshal().unwrap_err(), Error::ErrTooLongLabel);
+    }
+
+    #[test]
+    fn test_channel_open_marshal_too_long_protocol() {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: b"foo".to_vec(),
+            protocol: vec![b'b'; u16::MAX as usize + 1],
+        };
+        assert_eq!(open.marshal().unwrap_err(), Error::ErrTooLongProtocol);
+    }
+
+    // pion/datachannel `TestChannelOpenUnmarshalVeryLongMessage`: the largest label and protocol
+    // the length fields can express survive a round trip.
+    #[test]
+    fn test_channel_open_very_long_message_round_trips() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![b'a'; u16::MAX as usize],
+            protocol: vec![b'b'; u16::MAX as usize],
+        };
+        let mut raw = open.marshal()?;
+        assert_eq!(raw.len(), 11 + 2 * u16::MAX as usize);
+        assert_eq!(&raw[7..11], &[0xff, 0xff, 0xff, 0xff]);
+        assert_eq!(DataChannelOpen::unmarshal(&mut raw)?, open);
         Ok(())
     }
 }

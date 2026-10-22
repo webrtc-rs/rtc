@@ -474,8 +474,8 @@ impl<'a>
                 // Pure accounting: SCTP released (acked or abandoned) `n_bytes` of
                 // this channel's outgoing buffer. Decrement the synchronous send
                 // back-pressure counter; do NOT forward the event further.
-                if let Some(dc) = self.data_channels.get_by_stream_mut(&stream_id) {
-                    dc.outstanding_bytes = dc.outstanding_bytes.saturating_sub(n_bytes);
+                if let Some(dc) = self.data_channels.get_by_stream(&stream_id) {
+                    dc.outstanding_bytes.release(n_bytes);
                 }
             }
             // The SCTP layer knows only stream ids; the application-facing events name the

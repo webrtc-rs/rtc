@@ -40,6 +40,8 @@ use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use bytes::BytesMut;
 use sansio::Protocol;
 use shared::error::{Error, Result};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 pub(crate) mod init;
@@ -82,6 +84,53 @@ pub use init::RTCDataChannelInit;
 pub use message::RTCDataChannelMessage;
 
 pub use state::RTCDataChannelState;
+
+/// A lock-free view of one channel's [`outstanding_bytes`](RTCDataChannel::outstanding_bytes).
+///
+/// Cloning is cheap and every clone observes the same counter. The core is the only writer, so
+/// a reader sees a value the core really held at some point, never a torn one.
+#[derive(Clone, Debug, Default)]
+pub struct OutstandingBytes(Arc<AtomicUsize>);
+
+impl OutstandingBytes {
+    /// The bytes handed to `send`/`send_text` that SCTP has not yet released.
+    pub fn get(&self) -> usize {
+        self.0.load(Ordering::Acquire)
+    }
+
+    /// Whether the channel this handle was taken from has been removed from its peer
+    /// connection.
+    ///
+    /// The core holds the only other reference, so once it drops the channel this handle is the
+    /// last one standing. A driver that caches a handle uses this to keep reporting a closed
+    /// channel as closed rather than serving its final value forever. It assumes the caller
+    /// holds exactly one clone.
+    pub fn is_detached(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
+
+    pub(crate) fn add(&self, n: usize) {
+        self.0.fetch_add(n, Ordering::AcqRel);
+    }
+
+    pub(crate) fn release(&self, n: usize) {
+        // Saturating subtraction, so a stray release can never wrap the counter around. A plain
+        // compare-exchange loop rather than `fetch_update`, which newer toolchains deprecate in
+        // favour of a method the MSRV does not have.
+        let mut current = self.0.load(Ordering::Acquire);
+        loop {
+            match self.0.compare_exchange_weak(
+                current,
+                current.saturating_sub(n),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
 
 /// Represents a WebRTC data channel for bidirectional peer-to-peer data transfer.
 ///
@@ -358,8 +407,8 @@ impl RTCDataChannel<'_> {
         // Count only after a successful enqueue, so a failed send never leaks the
         // counter upward (those bytes never entered the SCTP send pipeline). This
         // is the synchronous send-boundary accounting used for back-pressure.
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
-            dc.outstanding_bytes += data_len;
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
+            dc.outstanding_bytes.add(data_len);
         }
         Ok(())
     }
@@ -384,8 +433,8 @@ impl RTCDataChannel<'_> {
                 },
             ),
         })?;
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
-            dc.outstanding_bytes += data_len;
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
+            dc.outstanding_bytes.add(data_len);
         }
         Ok(())
     }
@@ -399,8 +448,23 @@ impl RTCDataChannel<'_> {
         self.peer_connection
             .data_channels
             .get(&self.id)
-            .map(|dc| dc.outstanding_bytes)
+            .map(|dc| dc.outstanding_bytes.get())
             .unwrap_or(0)
+    }
+
+    /// A shared handle onto [`outstanding_bytes`](Self::outstanding_bytes) that can be read
+    /// without borrowing the peer connection.
+    ///
+    /// A sans-I/O core is normally driven behind a lock, and back-pressure wants to be checked
+    /// far more often than the core makes progress. The handle lets a driver sample the
+    /// counter lock-free, so a sender waiting for room does not contend with the I/O loop
+    /// that is trying to make room.
+    pub fn outstanding_bytes_handle(&self) -> OutstandingBytes {
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .map(|dc| dc.outstanding_bytes.clone())
+            .unwrap_or_default()
     }
 
     /// Closes the data channel.
@@ -422,5 +486,66 @@ impl RTCDataChannel<'_> {
         } else {
             Err(Error::ErrDataChannelClosed)
         }
+    }
+}
+
+#[cfg(test)]
+mod outstanding_bytes_tests {
+    use super::*;
+
+    #[test]
+    fn clones_observe_the_same_counter() {
+        let owner = OutstandingBytes::default();
+        let reader = owner.clone();
+        owner.add(100);
+        owner.add(28);
+        assert_eq!(reader.get(), 128);
+        owner.release(28);
+        assert_eq!(reader.get(), 100);
+    }
+
+    #[test]
+    fn release_saturates_at_zero() {
+        let counter = OutstandingBytes::default();
+        counter.add(10);
+        counter.release(25);
+        assert_eq!(counter.get(), 0, "an over-release must not wrap");
+    }
+
+    #[test]
+    fn detached_once_the_core_drops_its_reference() {
+        let core_side = OutstandingBytes::default();
+        let driver_side = core_side.clone();
+        assert!(!driver_side.is_detached());
+        drop(core_side);
+        assert!(driver_side.is_detached());
+        assert_eq!(
+            driver_side.get(),
+            0,
+            "a detached handle keeps its final value"
+        );
+    }
+
+    #[test]
+    fn readers_never_observe_a_torn_value() {
+        let owner = OutstandingBytes::default();
+        let reader = owner.clone();
+        let reading = std::thread::spawn(move || {
+            let mut last = 0;
+            for _ in 0..200_000 {
+                let seen = reader.get();
+                assert!(
+                    seen % 16 == 0,
+                    "saw {seen}, not a multiple of the 16-byte step"
+                );
+                last = seen;
+            }
+            last
+        });
+        for _ in 0..50_000 {
+            owner.add(16);
+            owner.release(16);
+        }
+        reading.join().expect("reader thread panicked");
     }
 }

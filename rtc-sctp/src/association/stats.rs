@@ -6,6 +6,8 @@ pub struct AssociationStats {
     n_t3timeouts: u64,
     n_ack_timeouts: u64,
     n_fast_retrans: u64,
+    n_rack_losses: u64,
+    n_pto_probes: u64,
     bytes_sent: u64,
     bytes_received: u64,
 }
@@ -49,6 +51,27 @@ impl AssociationStats {
     /// The number of delayed-acknowledgement timeouts.
     pub fn get_num_ack_timeouts(&mut self) -> u64 {
         self.n_ack_timeouts
+    }
+
+    /// Counts chunks that RACK declared lost.
+    pub(crate) fn add_rack_losses(&mut self, count: usize) {
+        self.n_rack_losses += count as u64;
+    }
+
+    /// The number of DATA chunks declared lost by time-based (RACK) detection, i.e. without three
+    /// SACK gap reports and without waiting for a retransmission timeout.
+    pub fn get_num_rack_losses(&self) -> u64 {
+        self.n_rack_losses
+    }
+
+    /// Counts one tail-loss probe.
+    pub(crate) fn inc_pto_probes(&mut self) {
+        self.n_pto_probes += 1;
+    }
+
+    /// The number of tail-loss probes sent after two round trips of silence.
+    pub fn get_num_pto_probes(&self) -> u64 {
+        self.n_pto_probes
     }
 
     /// Counts one fast retransmission.

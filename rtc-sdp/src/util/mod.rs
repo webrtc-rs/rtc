@@ -121,32 +121,43 @@ impl fmt::Display for Codec {
     }
 }
 
-pub(crate) fn parse_rtpmap(rtpmap: &str) -> Result<Codec> {
-    // a=rtpmap:<payload type> <encoding name>/<clock rate>[/<encoding parameters>]
-    let split: Vec<&str> = rtpmap.split_whitespace().collect();
-    if split.len() != 2 {
-        return Err(Error::MissingWhitespace);
-    }
-
-    let pt_split: Vec<&str> = split[0].split(':').collect();
-    if pt_split.len() != 2 {
+/// `strconv.ParseUint(s, 10, 8)`: digits only, no sign.
+fn parse_u8(s: &str) -> Result<u8> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
         return Err(Error::MissingColon);
     }
-    let payload_type = pt_split[1].parse::<u8>()?;
+    Ok(s.parse::<u8>()?)
+}
 
-    let split: Vec<&str> = split[1].split('/').collect();
-    let name = split[0].to_string();
-    let parts = split.len();
-    let clock_rate = if parts > 1 {
-        split[1].parse::<u32>()?
-    } else {
-        0
+/// Splits `s` on `sep` into exactly two parts, as `split(sep)` would yield them, or reports that
+/// there were more or fewer. Written with the iterator directly: collecting into a `Vec` just to
+/// count and index costs an allocation per call, and these run once per attribute.
+fn split_exactly_two(s: &str, sep: char) -> Option<(&str, &str)> {
+    let mut parts = s.split(sep);
+    let first = parts.next()?;
+    let second = parts.next()?;
+    parts.next().is_none().then_some((first, second))
+}
+
+pub(crate) fn parse_rtpmap(rtpmap: &str) -> Result<Codec> {
+    // a=rtpmap:<payload type> <encoding name>/<clock rate>[/<encoding parameters>]
+    let (head, encoding) = split_exactly_two(rtpmap, ' ').ok_or(Error::MissingWhitespace)?;
+
+    let (_, payload_type) = split_exactly_two(head, ':').ok_or(Error::MissingColon)?;
+    let payload_type = parse_u8(payload_type)?;
+
+    let mut parts = encoding.split('/');
+    let name = parts.next().unwrap_or_default().to_string();
+    let clock_rate = match parts.next() {
+        Some(rate) => {
+            if rate.is_empty() || !rate.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(Error::MissingColon);
+            }
+            rate.parse::<u32>()?
+        }
+        None => 0,
     };
-    let encoding_parameters = if parts > 2 {
-        split[2].to_string()
-    } else {
-        "".to_string()
-    };
+    let encoding_parameters = parts.next().unwrap_or_default().to_string();
 
     Ok(Codec {
         payload_type,
@@ -159,65 +170,68 @@ pub(crate) fn parse_rtpmap(rtpmap: &str) -> Result<Codec> {
 
 pub(crate) fn parse_fmtp(fmtp: &str) -> Result<Codec> {
     // a=fmtp:<format> <format specific parameters>
-    let split: Vec<&str> = fmtp.split_whitespace().collect();
-    if split.len() != 2 {
-        return Err(Error::MissingWhitespace);
-    }
+    let (head, format_params) = fmtp.split_once(' ').ok_or(Error::MissingWhitespace)?;
 
-    let fmtp = split[1].to_string();
-
-    let split: Vec<&str> = split[0].split(':').collect();
-    if split.len() != 2 {
-        return Err(Error::MissingColon);
-    }
-    let payload_type = split[1].parse::<u8>()?;
+    let (_, payload_type) = split_exactly_two(head, ':').ok_or(Error::MissingColon)?;
+    let payload_type = parse_u8(payload_type)?;
 
     Ok(Codec {
         payload_type,
-        fmtp,
+        fmtp: format_params.to_string(),
         ..Default::default()
     })
 }
 
-pub(crate) fn parse_rtcp_fb(rtcp_fb: &str) -> Result<Codec> {
-    // a=ftcp-fb:<payload type> <RTCP feedback type> [<RTCP feedback parameter>]
-    let split: Vec<&str> = rtcp_fb.splitn(2, ' ').collect();
-    if split.len() != 2 {
-        return Err(Error::MissingWhitespace);
-    }
+/// Parses `a=rtcp-fb:<payload type> <type> [<parameter>]`. The payload type may be the wildcard
+/// `*`, in which case the second value is `true` and the codec's payload type is meaningless.
+pub(crate) fn parse_rtcp_fb(rtcp_fb: &str) -> Result<(Codec, bool)> {
+    let (head, feedback) = rtcp_fb.split_once(' ').ok_or(Error::MissingWhitespace)?;
 
-    let pt_split: Vec<&str> = split[0].split(':').collect();
-    if pt_split.len() != 2 {
-        return Err(Error::MissingColon);
-    }
+    let (_, payload_type) = split_exactly_two(head, ':').ok_or(Error::MissingColon)?;
 
-    Ok(Codec {
-        payload_type: pt_split[1].parse::<u8>()?,
-        rtcp_feedback: vec![split[1].to_string()],
-        ..Default::default()
-    })
+    let is_wildcard = payload_type == "*";
+    let payload_type = if is_wildcard {
+        0
+    } else {
+        parse_u8(payload_type)?
+    };
+
+    Ok((
+        Codec {
+            payload_type,
+            rtcp_feedback: vec![feedback.to_string()],
+            ..Default::default()
+        },
+        is_wildcard,
+    ))
 }
 
 pub(crate) fn merge_codecs(mut codec: Codec, codecs: &mut HashMap<u8, Codec>) {
-    if let Some(saved_codec) = codecs.get_mut(&codec.payload_type) {
-        if saved_codec.payload_type == 0 {
-            saved_codec.payload_type = codec.payload_type
+    let saved_codec = codecs.entry(codec.payload_type).or_default();
+    if saved_codec.payload_type == 0 {
+        saved_codec.payload_type = codec.payload_type
+    }
+    if saved_codec.name.is_empty() {
+        saved_codec.name = codec.name
+    }
+    if saved_codec.clock_rate == 0 {
+        saved_codec.clock_rate = codec.clock_rate
+    }
+    if saved_codec.encoding_parameters.is_empty() {
+        saved_codec.encoding_parameters = codec.encoding_parameters
+    }
+    if saved_codec.fmtp.is_empty() {
+        saved_codec.fmtp = codec.fmtp
+    }
+    saved_codec.rtcp_feedback.append(&mut codec.rtcp_feedback);
+}
+
+impl Codec {
+    /// Adds a feedback type unless it is already listed.
+    pub(crate) fn append_rtcp_feedback(&mut self, rtcp_feedback: &str) {
+        if !self.rtcp_feedback.iter().any(|f| f == rtcp_feedback) {
+            self.rtcp_feedback.push(rtcp_feedback.to_owned());
         }
-        if saved_codec.name.is_empty() {
-            saved_codec.name = codec.name
-        }
-        if saved_codec.clock_rate == 0 {
-            saved_codec.clock_rate = codec.clock_rate
-        }
-        if saved_codec.encoding_parameters.is_empty() {
-            saved_codec.encoding_parameters = codec.encoding_parameters
-        }
-        if saved_codec.fmtp.is_empty() {
-            saved_codec.fmtp = codec.fmtp
-        }
-        saved_codec.rtcp_feedback.append(&mut codec.rtcp_feedback);
-    } else {
-        codecs.insert(codec.payload_type, codec);
     }
 }
 

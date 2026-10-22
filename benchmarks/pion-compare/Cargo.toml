@@ -1,0 +1,38 @@
+[package]
+name = "pion-compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Micro-benchmarks run side by side against pion; see README.md"
+
+# Standalone workspace on purpose: this is a measurement tool, not part of the rtc build, and
+# keeping it out of the main workspace keeps `cargo test --workspace` from compiling it.
+[workspace]
+
+[[bin]]
+name = "pion-compare"
+path = "src/main.rs"
+
+[features]
+# Also build the aws-lc-rs provider, selectable with `--backend aws-lc-rs`.
+aws-lc-rs = ["crypto/crypto-aws-lc-rs"]
+# Run the Rust side on mimalloc instead of the system allocator. Several benchmarks here are
+# dominated by small allocations (an RTCP compound packet makes nine), and the system allocator's
+# cost varies a great deal by platform; many Rust servers deploy mimalloc or jemalloc.
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+rtc-rtp = { path = "../../rtc-rtp" }
+rtc-rtcp = { path = "../../rtc-rtcp" }
+rtc-srtp = { path = "../../rtc-srtp" }
+rtc-stun = { path = "../../rtc-stun" }
+rtc-sdp = { path = "../../rtc-sdp" }
+crypto = { package = "rtc-crypto", path = "../../rtc-crypto", features = ["crypto-ring"] }
+shared = { package = "rtc-shared", path = "../../rtc-shared", features = ["marshal"] }
+bytes = "1"
+mimalloc = { version = "0.1", default-features = false, optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

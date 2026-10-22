@@ -42,6 +42,7 @@ use crate::queue::{
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
+use rack::RackState;
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
 use stream::{Stream, StreamEvent, StreamId, StreamState};
@@ -59,6 +60,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+pub(crate) mod rack;
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
@@ -259,6 +261,12 @@ pub struct Association {
 
     pub(crate) stats: AssociationStats,
     ack_state: AckState,
+    /// The receiver window credit (`a_rwnd`) most recently put on the wire in a SACK, i.e. what
+    /// the peer believes it may still send. Compared with the live credit when the application
+    /// drains the receive buffer, to decide whether the peer needs telling the window reopened.
+    last_advertised_credit: u32,
+    /// RACK-TLP loss detection state; see `rack.rs`.
+    pub(crate) rack: RackState,
 
     // for testing
     pub(crate) ack_mode: AckMode,
@@ -354,6 +362,8 @@ impl Default for Association {
 
             stats: AssociationStats::default(),
             ack_state: AckState::default(),
+            last_advertised_credit: 0,
+            rack: RackState::default(),
 
             // for testing
             ack_mode: AckMode::default(),
@@ -410,6 +420,9 @@ impl Association {
             recv_zero_checksum,
             send_zero_checksum: false,
             max_receive_buffer_size: config.max_receive_buffer_size(),
+            // INIT / INIT ACK advertised the whole buffer.
+            last_advertised_credit: config.max_receive_buffer_size(),
+            rack: RackState::new(config.enable_rack()),
             max_message_size: config.max_message_size(),
             my_max_num_outbound_streams: config.max_num_outbound_streams(),
             my_max_num_inbound_streams: config.max_num_inbound_streams(),
@@ -542,7 +555,20 @@ impl Association {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
+        // RACK's timers are not retransmission timers: they have no backoff and no failure
+        // count, and they run ahead of T3-rtx, which they exist to beat.
+        if self.timers.get(Timer::Rack).is_some_and(|due| due <= now) {
+            self.timers.set(Timer::Rack, None);
+            self.on_rack_timeout(now);
+        }
+        if self.timers.get(Timer::Pto).is_some_and(|due| due <= now) {
+            self.timers.set(Timer::Pto, None);
+            self.on_probe_timeout(now);
+        }
         for &timer in &Timer::VALUES {
+            if matches!(timer, Timer::Rack | Timer::Pto) {
+                continue;
+            }
             let (expired, failure, n_rtos) = self.timers.is_expired(timer, now);
             if !expired {
                 continue;
@@ -1564,6 +1590,7 @@ impl Association {
         }
 
         self.process_fast_retransmission(d.cumulative_tsn_ack, htna, cum_tsn_ack_point_advanced)?;
+        self.rack_after_sack(d, now);
 
         if self.use_forward_tsn {
             // RFC 3758 Sec 3.5 C1
@@ -1835,8 +1862,14 @@ impl Association {
         //log::debug!("[{}] i={} d={}", self.name, i, d.cumulative_tsn_ack);
         while sna32lte(i, d.cumulative_tsn_ack) {
             if let Some(mut c) = self.inflight_queue.pop(i) {
+                self.rack.forget(c.tsn);
                 if c.acknowledge() {
                     newly_acked_data |= c.nsent > 0;
+                    if c.nsent == 1
+                        && let Some(since) = c.since
+                    {
+                        self.rack.on_delivered(c.tsn, since, now);
+                    }
 
                     let n_bytes_acked = c.user_data.len() as i64;
                     total_bytes_acked += n_bytes_acked;
@@ -1902,6 +1935,12 @@ impl Association {
 
                 if let Some(c) = self.inflight_queue.get(tsn) {
                     if newly_acknowledged {
+                        self.rack.forget(tsn);
+                        if c.nsent == 1
+                            && let Some(since) = c.since
+                        {
+                            self.rack.on_delivered(tsn, since, now);
+                        }
                         newly_acked_data |= c.nsent > 0;
                         total_bytes_acked += n_bytes_acked;
                         if self.is_current_stream_data(c) {
@@ -2326,6 +2365,33 @@ impl Association {
             .any(|s| s.reassembly_queue.is_readable())
     }
 
+    /// Called when the application has taken data out of a receive queue.
+    ///
+    /// A sender that has been told the window is (nearly) closed stops, and a stopped sender
+    /// has nothing left to elicit a SACK from us: it learns the window reopened only from its
+    /// next zero-window probe, which RFC 9260 §6.3 spaces by the retransmission timeout — one
+    /// second at minimum. That stall hits exactly when the receiver is slower than the sender,
+    /// including at the start of every transfer while the application's reader spins up.
+    /// So when the window was advertised below two MTUs and is now at least that wide again,
+    /// report it straight away (RFC 9260 §6.2: a receiver SHOULD send a SACK when its window
+    /// opens). Requiring two MTUs rather than any growth avoids announcing a sliver that the
+    /// sender could not use (silly-window syndrome).
+    pub(crate) fn note_receive_buffer_drained(&mut self) {
+        let usable = self
+            .mtu
+            .saturating_mul(2)
+            .min(self.max_receive_buffer_size / 2);
+        if self.last_advertised_credit >= usable
+            || self.get_my_receiver_window_credit() < usable
+            || self.ack_state == AckState::Immediate
+        {
+            return;
+        }
+        self.ack_state = AckState::Immediate;
+        self.timers.stop(Timer::Ack);
+        self.awake_write_loop();
+    }
+
     pub(crate) fn get_my_receiver_window_credit(&self) -> u32 {
         let mut bytes_queued = 0;
         for s in self.streams.values() {
@@ -2424,6 +2490,7 @@ impl Association {
             trace!("[{}] T3-rtx timer start (pt1)", self.side);
             self.timers
                 .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
+            self.schedule_probe(now);
 
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
@@ -3204,9 +3271,11 @@ impl Association {
     }
 
     fn create_selective_ack_chunk(&mut self) -> ChunkSelectiveAck {
+        let credit = self.get_my_receiver_window_credit();
+        self.last_advertised_credit = credit;
         ChunkSelectiveAck {
             cumulative_tsn_ack: self.peer_last_tsn,
-            advertised_receiver_window_credit: self.get_my_receiver_window_credit(),
+            advertised_receiver_window_credit: credit,
             gap_ack_blocks: self.payload_queue.get_gap_ack_blocks(self.peer_last_tsn),
             duplicate_tsn: self.payload_queue.pop_duplicates(),
         }
@@ -3297,7 +3366,7 @@ impl Association {
             trace!(
                 "[{}] sending ppi={} tsn={} ssn={} sent={} len={} ({},{})",
                 self.side,
-                c.payload_type as u32,
+                c.payload_type.0,
                 c.tsn,
                 c.stream_sequence_number,
                 c.nsent,
@@ -3307,6 +3376,7 @@ impl Association {
             );
 
             self.inflight_queue.push_no_check(c.clone());
+            self.rack_on_first_send(c.tsn);
 
             Some(c)
         } else {

@@ -74,13 +74,13 @@ impl Setter for ErrorCodeAttribute {
 impl Getter for ErrorCodeAttribute {
     // GetFrom decodes ERROR-CODE from m. Reason is valid until m.Raw is valid.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let v = m.get(ATTR_ERROR_CODE)?;
+        let v = m.get_value(ATTR_ERROR_CODE)?;
 
         if v.len() < ERROR_CODE_REASON_START {
             return Err(Error::ErrUnexpectedEof);
         }
 
-        let class = v[ERROR_CODE_CLASS_BYTE] as u16;
+        let class = (v[ERROR_CODE_CLASS_BYTE] & 0x7) as u16; // the class is 3 bits; the rest is reserved
         let number = v[ERROR_CODE_NUMBER_BYTE] as u16;
         let code = class * ERROR_CODE_MODULO + number;
         self.code = ErrorCode(code);

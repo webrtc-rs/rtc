@@ -202,6 +202,9 @@ struct Pair {
     client: TestEndpoint,
     time: Instant,
     latency: Duration, // One-way
+    /// Decides, from the index of each datagram the client sends, whether the network drops it.
+    client_loss: Option<Box<dyn FnMut(usize) -> bool>>,
+    client_datagrams: usize,
 }
 
 impl Pair {
@@ -238,6 +241,8 @@ impl Pair {
             client: TestEndpoint::new(client, client_addr),
             time: Instant::now(),
             latency: Duration::new(0, 0),
+            client_loss: None,
+            client_datagrams: 0,
         }
     }
 
@@ -281,6 +286,15 @@ impl Pair {
         for x in self.client.outbound.drain(..) {
             if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
+                    let index = self.client_datagrams;
+                    self.client_datagrams += 1;
+                    if self
+                        .client_loss
+                        .as_mut()
+                        .is_some_and(|dropped| dropped(index))
+                    {
+                        continue;
+                    }
                     if let Some(ref socket) = self.client.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }
@@ -1737,8 +1751,7 @@ fn test_assoc_timed_reliability_does_not_fast_retransmit_after_lifetime() -> Res
 /// expired message until a ForwardTSN tells it to skip, so the sender has to notice
 /// the expiry on the same T3 that decided not to retransmit — not on the next,
 /// backed-off one.
-#[test]
-fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() -> Result<()> {
+fn timed_reliability_forwards_past_expired(rack: bool) -> Result<(usize, Duration, u64, u64)> {
     let si: u16 = 11;
     let lifetime_ms: u32 = 100;
     let stale = Bytes::from_static(b"AAAA");
@@ -1746,6 +1759,7 @@ fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() ->
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    pair.client_conn_mut(client_ch).rack.enabled = rack;
 
     // Ordered, so the peer is head-of-line blocked behind the expired message.
     pair.client_stream(client_ch, si)?.set_reliability_params(
@@ -1798,13 +1812,40 @@ fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() ->
         len,
         "the expired message must not be delivered; only the fresh one may be"
     );
+    let mut stats = pair.client_conn_mut(client_ch).stats;
+    Ok((
+        len,
+        at,
+        stats.get_num_t3timeouts(),
+        stats.get_num_pto_probes(),
+    ))
+}
+
+/// With only T3-rtx to recover (RACK off), the ForwardTSN that unblocks the stream must be sent by
+/// the T3 that skipped the expired message, not by the next one.
+#[test]
+fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() -> Result<()> {
+    let (_, at, t3, _) = timed_reliability_forwards_past_expired(false)?;
     assert_eq!(
-        1,
-        pair.client_conn_mut(client_ch).stats.get_num_t3timeouts(),
+        1, t3,
         "the ForwardTSN that unblocks the stream must be sent by the T3 that skipped \
          the expired message, not by the next one; the fresh message arrived at {at:?}"
     );
+    Ok(())
+}
 
+/// With RACK-TLP the same stall ends at the tail-loss probe, long before any retransmission
+/// timeout: the probe re-sends the newest outstanding chunk, which is expired, so the sender
+/// forwards past it instead and the fresh message is delivered.
+#[test]
+fn test_assoc_timed_reliability_forwards_past_expired_at_the_tail_loss_probe() -> Result<()> {
+    let (_, at, t3, probes) = timed_reliability_forwards_past_expired(true)?;
+    assert_eq!(0, t3, "no retransmission timeout should have been needed");
+    assert!(probes >= 1, "the probe is what unblocked it");
+    assert!(
+        at < Duration::from_millis(900),
+        "the fresh message must not wait for a one-second timeout: arrived at {at:?}"
+    );
     Ok(())
 }
 
@@ -3792,8 +3833,11 @@ fn test_association_stats_count_payload_and_expose_congestion_state() -> Result<
 
     let payload = Bytes::from(vec![0xABu8; 1024]);
     let now = pair.time;
-    pair.client_stream(client_ch, si)?
-        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     pair.drive();
 
     // Read it out so the server's reassembly delivers; counters are recorded at
@@ -3857,9 +3901,7 @@ fn zero_checksum_pair(
         },
     );
     let (client_ch, server_ch) = pair.connect_with(ClientConfig {
-        transport: Arc::new(
-            TransportConfig::default().with_enable_zero_checksum(enable_on_client),
-        ),
+        transport: Arc::new(TransportConfig::default().with_enable_zero_checksum(enable_on_client)),
     });
     pair.client_conn_mut(client_ch).ack_mode = AckMode::NoDelay;
     pair.server_conn_mut(server_ch).ack_mode = AckMode::NoDelay;
@@ -3904,8 +3946,11 @@ fn test_zero_checksum_negotiated_pair_sends_and_receives() -> Result<()> {
 
     let payload = Bytes::from(vec![0xCDu8; 512]);
     let now = pair.time;
-    pair.client_stream(client_ch, 1)?
-        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.client_stream(client_ch, 1)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     pair.drive_client();
 
     // The packets now queued for the server are exactly what went on the wire.
@@ -3939,8 +3984,11 @@ fn test_zero_checksum_disabled_by_default() -> Result<()> {
 
     let payload = Bytes::from_static(b"still crc'd");
     let now = pair.time;
-    pair.client_stream(client_ch, 1)?
-        .write_sctp(now, &payload, PayloadProtocolIdentifier::Binary)?;
+    pair.client_stream(client_ch, 1)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     pair.drive_client();
 
     let in_flight = checksums_in_flight_to_server(&pair);
@@ -4027,6 +4075,68 @@ fn test_zero_checksum_parse_strict_and_lenient() -> Result<()> {
     assert!(
         PartialDecode::unmarshal_lenient(&tampered).is_err(),
         "lenient is not lenient about a broken nonzero checksum"
+    );
+    Ok(())
+}
+
+/// Sends a few hundred messages across a 10 ms round trip that loses two datagrams in every 23,
+/// and reports how long (virtual time) the server needs to receive all of them, plus how many
+/// retransmission timeouts the client hit.
+fn lossy_bulk_transfer(rack: bool) -> Result<(Duration, u64)> {
+    let si: u16 = 7;
+    let total = 300;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    pair.latency = Duration::from_millis(5);
+    pair.client_conn_mut(client_ch).rack.enabled = rack;
+    pair.server_conn_mut(server_ch).rack.enabled = rack;
+    pair.client_loss = Some(Box::new(|n| n % 23 == 5 || n % 23 == 6));
+
+    let started = pair.time;
+    let payload = Bytes::from(vec![0x42; 1000]);
+    for _ in 0..total {
+        let now = pair.time;
+        pair.client_stream(client_ch, si)?.write_sctp(
+            now,
+            &payload,
+            PayloadProtocolIdentifier::Binary,
+        )?;
+    }
+
+    let mut received = 0;
+    for _ in 0..100_000 {
+        pair.step();
+        while pair.server_stream(server_ch, si)?.read_sctp()?.is_some() {
+            received += 1;
+        }
+        if received == total {
+            break;
+        }
+    }
+    assert_eq!(
+        total, received,
+        "every message must arrive despite the loss"
+    );
+    let mut stats = pair.client_conn_mut(client_ch).stats;
+    Ok((
+        pair.time.duration_since(started),
+        stats.get_num_t3timeouts(),
+    ))
+}
+
+/// The point of RACK-TLP: a lossy path costs round trips, not retransmission timeouts. The same
+/// transfer over the same lossy path finishes several times faster with it, and without any T3.
+#[test]
+fn test_assoc_lossy_transfer_recovers_in_round_trips_with_rack() -> Result<()> {
+    let (with_rack, t3_with_rack) = lossy_bulk_transfer(true)?;
+    let (without_rack, t3_without_rack) = lossy_bulk_transfer(false)?;
+    assert!(
+        t3_with_rack < t3_without_rack || t3_without_rack == 0,
+        "RACK must not need more retransmission timeouts: {t3_with_rack} vs {t3_without_rack}"
+    );
+    assert!(
+        with_rack * 2 <= without_rack,
+        "with RACK-TLP {with_rack:?} (T3 x{t3_with_rack}), without {without_rack:?} (T3 x{t3_without_rack})"
     );
     Ok(())
 }

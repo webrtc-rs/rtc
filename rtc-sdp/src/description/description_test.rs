@@ -4,7 +4,6 @@ use super::session::*;
 use shared::error::{Error, Result};
 
 use std::io::Cursor;
-use url::Url;
 
 const CANONICAL_MARSHAL_SDP: &str = "v=0\r\n\
      o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5\r\n\
@@ -57,7 +56,7 @@ fn test_marshal() -> Result<()> {
         },
         session_name: "SDP Seminar".to_string(),
         session_information: Some("A Seminar on the session description protocol".to_string()),
-        uri: Some(Url::parse("http://www.example.com/seminars/sdp.pdf")?),
+        uri: Some("http://www.example.com/seminars/sdp.pdf".to_owned()),
         email_address: Some("j.doe@example.com (Jane Doe)".to_string()),
         phone_number: Some("+1 617 555-6011".to_string()),
         connection_information: Some(ConnectionInformation {

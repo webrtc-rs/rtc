@@ -218,9 +218,22 @@ impl Unmarshal for ReceiverEstimatedMaximumBitrate {
         */
         let header = Header::unmarshal(raw_packet)?;
 
+        // pion: the padding bit must be clear.
+        if header.padding {
+            return Err(Error::WrongPadding);
+        }
+
         if header.packet_type != PacketType::PayloadSpecificFeedback || header.count != FORMAT_REMB
         {
             return Err(Error::WrongType);
+        }
+
+        let size = (header.length as usize + 1) * 4;
+        if size < SSRC_ENTRY_OFFSET {
+            return Err(Error::HeaderTooSmall);
+        }
+        if raw_packet_len < size {
+            return Err(Error::PacketTooShort);
         }
 
         let sender_ssrc = raw_packet.get_u32();
@@ -245,8 +258,9 @@ impl Unmarshal for ReceiverEstimatedMaximumBitrate {
 
         // The next byte is the number of SSRC entries at the end.
         let ssrcs_len = raw_packet.get_u8() as usize;
-        if raw_packet_len < SSRC_ENTRY_OFFSET + ssrcs_len * 4 {
-            return Err(Error::PacketTooShort);
+        // The declared length must be exactly what the SSRC entries need.
+        if size != SSRC_ENTRY_OFFSET + ssrcs_len * 4 {
+            return Err(Error::SsrcNumAndLengthMismatch);
         }
 
         // Get the 6-bit exponent value.

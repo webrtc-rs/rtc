@@ -149,7 +149,7 @@ impl DataChannel {
         buf: &[u8],
     ) -> Result<Self> {
         if ppi != PayloadProtocolIdentifier::Dcep {
-            return Err(Error::InvalidPayloadProtocolIdentifier(ppi as u8));
+            return Err(Error::InvalidPayloadProtocolIdentifier(ppi.0 as u8));
         }
 
         let mut read_buf = buf;

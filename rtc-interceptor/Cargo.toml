@@ -3,6 +3,7 @@ name = "rtc-interceptor"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC Interceptor in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-interceptor"
