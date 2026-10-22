@@ -224,7 +224,7 @@ impl DtlsTransport {
                                 .hash(HashAlgorithm::Sha256, &certs[0])
                                 .map_err(|error| Error::Crypto(error.to_string()))?;
                             let values: Vec<String> =
-                                hashed.iter().map(|x| format! {"{x:02x}"}).collect();
+                                hashed.iter().map(|x| format!("{x:02x}")).collect();
                             let remote_value = values.join(":").to_lowercase();
 
                             if remote_value == fp.value.to_lowercase() {

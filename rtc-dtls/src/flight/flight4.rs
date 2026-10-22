@@ -856,14 +856,18 @@ mod tests {
         ];
 
         let mut cache = HandshakeCache::new();
-        cache.push(raw_certificate, 0, 0, HandshakeType::Certificate, true);
-        cache.push(
-            raw_client_key_exchange,
-            0,
-            1,
-            HandshakeType::ClientKeyExchange,
-            true,
-        );
+        cache
+            .push(raw_certificate, 0, 0, HandshakeType::Certificate, true)
+            .unwrap();
+        cache
+            .push(
+                raw_client_key_exchange,
+                0,
+                1,
+                HandshakeType::ClientKeyExchange,
+                true,
+            )
+            .unwrap();
 
         let cfg = HandshakeConfig::new(
             crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),

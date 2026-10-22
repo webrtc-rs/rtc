@@ -112,18 +112,18 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: rustfmt
-        run: cargo fmt --all -- --check
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo fmt --all -- --check
       # Library and binary code is held to a clean slate.
       - name: clippy (library code, warnings are errors)
-        run: cargo clippy --workspace --lib --bins -- -D warnings
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo clippy --workspace --lib --bins -- -D warnings
       # Tests, examples and benches carry style lints inherited from before this gate existed;
       # `correctness` (code that is wrong or useless) is nonetheless a hard failure everywhere.
       - name: clippy (all targets, correctness lints are errors)
-        run: cargo clippy --workspace --all-targets -- -A clippy::all -D clippy::correctness
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo clippy --workspace --all-targets -- -A clippy::all -D clippy::correctness
       - name: rustdoc (warnings are errors)
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo doc --workspace --no-deps
 
   # musl libc: static Linux binaries (containers, Alpine). Built and tested for real, not just
   # type-checked, since libc differences show up at run time (sockets, resolver, threads).
@@ -150,7 +150,7 @@ jobs:
       - name: Test workspace
         env:
           CC: musl-gcc
-        run: cargo test --workspace --no-fail-fast --target ${{ matrix.target }} --no-default-features --features rtc/crypto-ring --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast --target ${{ matrix.target }} --no-default-features --features rtc/crypto-ring --verbose
 
   # The workspace must keep building on the oldest compiler it claims to support.
   msrv:
@@ -171,7 +171,7 @@ jobs:
           # Cargo.lock is not committed, so a fresh resolve would otherwise pick dependency
           # versions newer than the MSRV compiler can build; prefer ones that declare support.
           CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
-        run: cargo check --workspace --all-targets --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo check --workspace --all-targets --verbose
 
   # Performance is a feature: re-measure against pion on every runner type and fail if the
   # allocation counts regress or the time ratio leaves its envelope. See benchmarks/pion-compare.
@@ -194,7 +194,7 @@ jobs:
         with:
           workspaces: benchmarks/pion-compare
       - name: Compare
-        run: python3 benchmarks/pion-compare/compare.py --summary "$GITHUB_STEP_SUMMARY" --json pion-compare.json
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh python3 benchmarks/pion-compare/compare.py --summary "$GITHUB_STEP_SUMMARY" --json pion-compare.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -224,6 +224,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny

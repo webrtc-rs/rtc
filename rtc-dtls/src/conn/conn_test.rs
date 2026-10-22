@@ -2706,3 +2706,39 @@ fn test_old_epoch_alert_honoured_until_handshake_completes() {
         "a discarded alert was answered"
     );
 }
+
+/// pion `TestApplicationDataQueueLimited`: records from the next epoch are held until the cipher
+/// for them exists, but only a bounded number, because nothing about them is authenticated yet.
+#[test]
+fn test_next_epoch_packet_queue_is_bounded() {
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    assert!(!conn.is_handshake_completed());
+
+    for i in 0..(MAX_ENCRYPTED_PACKET_QUEUE_SIZE * 10) {
+        let record: Vec<u8> = vec![
+            0x17, // content_type: ApplicationData
+            0xfe,
+            0xfd, // protocol_version: DTLS 1.2
+            0x00,
+            0x01, // epoch: 1, one ahead of the 0 we have
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            (i >> 8) as u8,
+            i as u8, // sequence_number
+            0x00,
+            0x04, // content_len
+            0xde,
+            0xad,
+            0xbe,
+            0xef,
+        ];
+        let _ = conn.read(&record);
+        assert!(conn.incoming_encrypted_packets.len() <= MAX_ENCRYPTED_PACKET_QUEUE_SIZE);
+    }
+    assert_eq!(
+        conn.incoming_encrypted_packets.len(),
+        MAX_ENCRYPTED_PACKET_QUEUE_SIZE
+    );
+}

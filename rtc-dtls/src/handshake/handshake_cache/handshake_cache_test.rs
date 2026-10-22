@@ -322,7 +322,7 @@ fn test_handshake_cache_single_push() -> Result<()> {
     for (name, inputs, rules, expected) in tests {
         let mut h = HandshakeCache::new();
         for i in inputs {
-            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client);
+            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client)?;
         }
         let verify_data = h.pull_and_merge(&rules);
         assert_eq!(
@@ -641,7 +641,7 @@ fn test_handshake_cache_session_hash() -> Result<()> {
     for (name, inputs, expected) in tests {
         let mut h = HandshakeCache::new();
         for i in inputs {
-            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client);
+            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client)?;
         }
 
         let provider = crypto::default_provider().map_err(|e| Error::Crypto(e.to_string()))?;
@@ -653,5 +653,86 @@ fn test_handshake_cache_session_hash() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// pion `TestHandshakeCacheLimits`, "duplicates preserve original transcript": a message already
+/// held keeps its original bytes however often it is sent again, and the same sequence number in
+/// another epoch or direction is a different message.
+#[test]
+fn test_handshake_cache_duplicates_preserve_original_transcript() -> Result<()> {
+    let mut cache = HandshakeCache::new();
+    assert!(cache.push(vec![1, 2, 3], 1, 4, HandshakeType::Finished, true)?);
+    for _ in 0..=HANDSHAKE_CACHE_MAX_COUNT {
+        assert!(!cache.push(vec![4], 1, 4, HandshakeType::Certificate, true)?);
+    }
+    assert_eq!(cache.cache.len(), 1);
+    assert_eq!(cache.cache[0].data, vec![1, 2, 3]);
+    assert_eq!(cache.size, 3);
+
+    assert!(cache.push(vec![4], 1, 4, HandshakeType::Finished, false)?);
+    assert!(cache.push(vec![4], 2, 4, HandshakeType::Finished, true)?);
+    assert_eq!(cache.cache.len(), 3);
+    Ok(())
+}
+
+/// pion `TestHandshakeCacheLimits`, "empty messages have a count limit"
+#[test]
+fn test_handshake_cache_empty_messages_have_a_count_limit() -> Result<()> {
+    let mut cache = HandshakeCache::new();
+    for i in 0..HANDSHAKE_CACHE_MAX_COUNT as u16 {
+        cache.push(vec![], 0, i, HandshakeType::ServerHelloDone, false)?;
+    }
+    assert_eq!(
+        cache
+            .push(
+                vec![],
+                0,
+                HANDSHAKE_CACHE_MAX_COUNT as u16,
+                HandshakeType::ServerHelloDone,
+                false
+            )
+            .unwrap_err(),
+        Error::ErrHandshakeCacheOverflow
+    );
+    assert_eq!(cache.cache.len(), HANDSHAKE_CACHE_MAX_COUNT);
+    Ok(())
+}
+
+/// pion `TestHandshakeCacheLimits`, "payload bytes have a limit"
+#[test]
+fn test_handshake_cache_payload_bytes_have_a_limit() -> Result<()> {
+    let mut cache = HandshakeCache::new();
+    cache.push(
+        vec![0; HANDSHAKE_CACHE_MAX_SIZE],
+        0,
+        0,
+        HandshakeType::Certificate,
+        false,
+    )?;
+    assert_eq!(
+        cache
+            .push(vec![1], 0, 1, HandshakeType::Certificate, true)
+            .unwrap_err(),
+        Error::ErrHandshakeCacheOverflow
+    );
+    assert_eq!(cache.cache.len(), 1);
+    assert_eq!(cache.size, HANDSHAKE_CACHE_MAX_SIZE);
+    Ok(())
+}
+
+/// Once the handshake has finished the transcript is kept for retransmissions but nothing is
+/// added to it (pion `TestHandshakeCachePostHandshakeFlood`).
+#[test]
+fn test_handshake_cache_finish_stops_growth_but_keeps_transcript() -> Result<()> {
+    let mut cache = HandshakeCache::new();
+    cache.push(vec![1], 1, 0, HandshakeType::Finished, false)?;
+    cache.finish();
+    for seq in 0..=(HANDSHAKE_CACHE_MAX_COUNT as u16 * 2) {
+        assert!(!cache.push(vec![2], 1, seq + 1, HandshakeType::Finished, false)?);
+    }
+    assert_eq!(cache.cache.len(), 1);
+    assert_eq!(cache.cache[0].data, vec![1]);
+    assert_eq!(cache.size, 1);
     Ok(())
 }

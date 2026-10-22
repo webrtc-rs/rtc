@@ -1194,6 +1194,9 @@ pub enum Error {
         /// The configured maximum.
         max_size: usize,
     },
+    /// The handshake cache holds as many messages, or bytes, as it is allowed to.
+    #[error("handshake cache overflow")]
+    ErrHandshakeCacheOverflow,
     /// Client transport is not set yet.
     #[error("Client transport is not set yet")]
     ErrClientTransportNotSet,
