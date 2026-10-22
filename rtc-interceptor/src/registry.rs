@@ -18,12 +18,22 @@ use std::collections::BTreeMap;
 #[non_exhaustive]
 #[repr(usize)]
 pub enum Slot {
+    /// `PacketDump` — writes a line per RTP and RTCP packet, to a pluggable sink.
+    ///
+    /// **Both legs, observation only.** Forwards every packet unchanged while dumping it.
+    ///
+    /// **Why here — the wire-most slot of all.** A dump is only as honest as the vantage point:
+    /// this sees a departing packet *after* the pacer held it and the TWCC sender numbered it —
+    /// what actually goes on the wire — and an arriving one *before* the FEC decoder rebuilds
+    /// anything or the jitter buffer re-stamps it. Anywhere else in the chain, the dump would
+    /// describe an intermediate state and quietly disagree with a capture taken on the wire.
+    PacketDump = 0,
     /// `CongestionControlInterceptor` — the send history, and the ingest of returning feedback.
     ///
     /// **Both legs.** *Read:* ingests inbound TWCC or CCFB and hands the reports to the estimator.
     /// *Write:* records every departing RTP packet in the send history.
     ///
-    /// **Why here — wire-most.** The write walk runs from the application down to the wire, so the
+    /// **Why here — wire-most among the shapers.** The write walk runs from the application down to the wire, so the
     /// lowest slot is the *last* thing a departing packet meets. Two facts depend on that. The
     /// departure instant it records is the moment the packet actually left, after the pacer held
     /// it; recording at enqueue instead would charge the pacer's own queueing delay to the network
@@ -188,6 +198,7 @@ impl Slot {
     /// The named slots are the thousands; a custom one is whatever it was built from.
     pub const fn slot(self) -> usize {
         match self {
+            Self::PacketDump => 0,
             Self::CongestionControl => 1_000,
             Self::TwccSender => 2_000,
             Self::Pacer => 3_000,

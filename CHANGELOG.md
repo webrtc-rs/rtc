@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rtc-interceptor`: `PacketDump`, the belt-shaped port of pion's `interceptor/pkg/packetdump`:
+  one interceptor sees both directions and forwards every packet unchanged, while writing a
+  line per RTP/RTCP packet through pluggable filters, formatters and a `PacketDumpSink`
+  (default: the packet's `Display` plus a newline, to `log::debug!`). New `Slot::PacketDump`
+  (0), the wire-most slot: the dump sees departures after pacing and numbering, and arrivals
+  before recovery and re-stamping. The nine pion packetdump tests are ported, plus forwarding,
+  filter-cost, ordering and registry-placement tests.
+
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
 - `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
