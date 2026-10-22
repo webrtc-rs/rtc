@@ -1,10 +1,7 @@
 name: coverage
 
 on:
-  push:
-    branches: [ master, v0.20.x, v0.21.x, v1.x ]
-  pull_request:
-    branches: [ master, v0.20.x, v0.21.x, v1.x ]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
