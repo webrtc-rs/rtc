@@ -1632,6 +1632,12 @@ pub enum Error {
     /// IVF version unknown, parser may not parse correctly.
     #[error("IVF version unknown, parser may not parse correctly")]
     ErrUnknownIVFVersion,
+    /// Malformed rtpdump data.
+    #[error("malformed rtpdump")]
+    ErrRtpDumpMalformed,
+    /// An rtpdump packet does not fit the format's 16-bit record length.
+    #[error("rtpdump packet too large for the 16-bit record length")]
+    ErrRtpDumpPacketTooLarge,
 
     /// File not opened.
     #[error("file not opened")]

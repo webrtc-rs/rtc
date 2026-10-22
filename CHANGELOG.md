@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+
+### Added
+- `rtc-media`: rtpdump reader and writer (`io::rtpdump`), byte-compatible with pion's
+  `pkg/media/rtpdump` (preamble, binary header, packet records). New public items:
+  `rtpdump::{Header, Packet, Reader, Writer}`; two `ErrRtpDump*` variants in `rtc-shared`.
+  Two strictnesses beyond pion, both from the issue: records whose `plen` exceeds their length
+  and records with empty payloads are rejected.
+
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
 - `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
