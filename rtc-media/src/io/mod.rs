@@ -11,6 +11,8 @@ pub mod ivf_writer;
 pub mod ogg_reader;
 /// Writes Ogg files carrying Opus audio.
 pub mod ogg_writer;
+/// Reads and writes the RTPDump file format of the classic rtptools.
+pub mod rtpdump;
 /// Reassembles inbound RTP packets into complete media samples.
 pub mod sample_builder;
 

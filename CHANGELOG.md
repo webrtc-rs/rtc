@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+
+### Added
+- `rtc-media`: rtpdump reader and writer (`io::rtpdump`), byte-compatible with pion's
+  `pkg/media/rtpdump` (preamble, binary header, packet records). New public items:
+  `rtpdump::{Header, Packet, Reader, Writer}`; two `ErrRtpDump*` variants in `rtc-shared`.
+  Two strictnesses beyond pion, both from the issue: records whose `plen` exceeds their length
+  and records with empty payloads are rejected.
 ### Added
 - `rtc-rtp`: H.266/VVC payloader and depacketizer ([RFC 9328]), byte-compatible with pion's
   `H266Packetizer`/`H266Depacketizer` (aggregation packets, fragmentation units, DONL handling).
