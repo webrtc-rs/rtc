@@ -952,6 +952,7 @@ mod tests {
     use crate::peer_connection::transport::{RTCTransportId, TransportKind};
     use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
+    use datachannel::message::message_channel_ack::DataChannelAck;
     use datachannel::message::message_channel_open::{
         CHANNEL_PRIORITY_NORMAL, ChannelType, DataChannelOpen,
     };
@@ -2233,6 +2234,15 @@ mod tests {
         )
     }
 
+    /// A well-formed DCEP message that is not a `DATA_CHANNEL_OPEN`.
+    fn dcep_ack() -> Bytes {
+        Bytes::from(
+            Message::DataChannelAck(DataChannelAck)
+                .marshal()
+                .expect("DCEP ACK"),
+        )
+    }
+
     /// Queue `messages` on the server's `stream_id`, creating the stream on its first use, and
     /// return the datagrams the server sends for them.
     fn server_send(
@@ -2867,6 +2877,62 @@ mod tests {
         assert!(!probe.unordered(), "the stream keeps its ordered default");
         let after = lose_probe(&mut ctx, probe, now);
         assert_recovery(&after, probe, now, Recovery::Retransmit);
+    }
+
+    /// The first message of a peer-created stream can carry the DCEP PPI without being a
+    /// `DATA_CHANNEL_OPEN`: a `DATA_CHANNEL_ACK`, or bytes that do not parse. The stream keeps
+    /// the ordered, fully reliable default, the message is still delivered, and the record ends,
+    /// so a later OPEN cannot configure it either.
+    #[test]
+    fn a_dcep_first_message_that_is_not_an_open_leaves_the_stream_unchanged() {
+        for (label, first) in [
+            ("ACK", dcep_ack()),
+            ("unparsed", Bytes::from_static(&[0xff])),
+        ] {
+            let now = Instant::now();
+            let e = establish();
+            let mut server_conn = e.server_conn;
+            let messages = server_send(
+                &mut server_conn,
+                PEER_STREAM,
+                &[
+                    (PayloadProtocolIdentifier::Dcep, first),
+                    (
+                        PayloadProtocolIdentifier::Dcep,
+                        dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+                    ),
+                ],
+                now,
+            );
+            let ch = e.client_ch;
+            let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+            client_read(&mut ctx, 0, messages, now);
+            assert_eq!(
+                ctx.read_outs.len(),
+                2,
+                "{label}: both messages are delivered"
+            );
+            assert!(
+                matches!(
+                    ctx.read_outs.front().map(|m| &m.message),
+                    Some(RTCMessageInternal::Dtls(DTLSMessage::Sctp(m)))
+                        if m.ppi == PayloadProtocolIdentifier::Dcep && m.stream_id == PEER_STREAM
+                ),
+                "{label}: the non-OPEN DCEP message is still delivered"
+            );
+            assert!(
+                ctx.peer_opened_streams.is_empty(),
+                "{label}: the first message ends the record"
+            );
+
+            let probe = send_probe(&mut ctx, ch, PEER_STREAM, now);
+            assert!(
+                !probe.unordered(),
+                "{label}: the stream keeps its ordered default"
+            );
+            let after = lose_probe(&mut ctx, probe, now);
+            assert_recovery(&after, probe, now, Recovery::Retransmit);
+        }
     }
 
     #[test]
