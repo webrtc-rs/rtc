@@ -165,6 +165,59 @@ impl Cipher for CipherAesCmHmacSha1 {
             as usize
     }
 
+    fn authenticates_wire_layout(&self) -> bool {
+        true
+    }
+
+    fn apply_rtp_keystream(
+        &mut self,
+        buf: &mut [u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        if header.header_len > buf.len() {
+            return Err(Error::ErrTooShortRtp);
+        }
+        let counter = generate_counter(
+            header.sequence_number,
+            roc,
+            header.ssrc,
+            &self.srtp_session_salt,
+        );
+        self.srtp_cipher
+            .apply_keystream(&counter, &mut buf[header.header_len..])
+            .map_err(crypto_error)
+    }
+
+    fn append_rtp_auth_tag(&mut self, buf: &mut BytesMut, start: usize, roc: u32) -> Result<()> {
+        let full_auth_tag = self.generate_srtp_auth_tag(&buf[start..], roc)?;
+        buf.extend_from_slice(&full_auth_tag[..self.rtp_auth_tag_len()]);
+        Ok(())
+    }
+
+    fn verify_and_strip_rtp_auth_tag(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        roc: u32,
+    ) -> Result<()> {
+        let tag_len = self.rtp_auth_tag_len();
+        let encrypted_len = buf.len() - start;
+        if encrypted_len < tag_len {
+            return Err(Error::SrtpTooSmall(encrypted_len, tag_len));
+        }
+        let body_end = buf.len() - tag_len;
+
+        // Generate the auth tag we expect to see from the ciphertext, and compare in constant
+        // time to prevent timing attacks. Nothing is decrypted until it matches.
+        let full_expected_tag = self.generate_srtp_auth_tag(&buf[start..body_end], roc)?;
+        if !constant_time_eq(&buf[body_end..], &full_expected_tag[..tag_len]) {
+            return Err(Error::RtpFailedToVerifyAuthTag);
+        }
+        buf.truncate(body_end);
+        Ok(())
+    }
+
     fn encrypt_rtp_in_place(
         &mut self,
         buf: &mut BytesMut,
@@ -175,22 +228,8 @@ impl Cipher for CipherAesCmHmacSha1 {
         if header.header_len > buf.len() - start {
             return Err(Error::ErrTooShortRtp);
         }
-
-        // Encrypt the payload
-        let counter = generate_counter(
-            header.sequence_number,
-            roc,
-            header.ssrc,
-            &self.srtp_session_salt,
-        );
-        self.srtp_cipher
-            .apply_keystream(&counter, &mut buf[start + header.header_len..])
-            .map_err(crypto_error)?;
-
-        // Generate the auth tag over the encrypted packet and append it.
-        let full_auth_tag = self.generate_srtp_auth_tag(&buf[start..], roc)?;
-        buf.extend_from_slice(&full_auth_tag[..self.rtp_auth_tag_len()]);
-        Ok(())
+        self.apply_rtp_keystream(&mut buf[start..], header, roc)?;
+        self.append_rtp_auth_tag(buf, start, roc)
     }
 
     fn decrypt_rtp_in_place(
@@ -208,28 +247,8 @@ impl Cipher for CipherAesCmHmacSha1 {
         if header.header_len + tag_len > encrypted_len {
             return Err(Error::ErrTooShortRtp);
         }
-        let body_end = buf.len() - tag_len;
-
-        // Generate the auth tag we expect to see from the ciphertext, and compare in constant
-        // time to prevent timing attacks. Nothing is decrypted until it matches.
-        let full_expected_tag = self.generate_srtp_auth_tag(&buf[start..body_end], roc)?;
-        if !constant_time_eq(&buf[body_end..], &full_expected_tag[..tag_len]) {
-            return Err(Error::RtpFailedToVerifyAuthTag);
-        }
-
-        buf.truncate(body_end);
-
-        // Decrypt the ciphertext for the payload.
-        let counter = generate_counter(
-            header.sequence_number,
-            roc,
-            header.ssrc,
-            &self.srtp_session_salt,
-        );
-        self.srtp_cipher
-            .apply_keystream(&counter, &mut buf[start + header.header_len..])
-            .map_err(crypto_error)?;
-        Ok(())
+        self.verify_and_strip_rtp_auth_tag(buf, start, roc)?;
+        self.apply_rtp_keystream(&mut buf[start..], header, roc)
     }
 
     fn encrypt_rtcp(

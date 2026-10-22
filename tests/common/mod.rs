@@ -28,24 +28,44 @@ pub fn install_crypto_provider() {
 /// Tests that need it call this first and say so when they skip.
 #[allow(dead_code)]
 pub fn multicast_loopback_works() -> bool {
-    use std::net::{Ipv4Addr, UdpSocket};
+    use socket2::{Domain, Protocol, Socket, Type};
+    use std::net::{Ipv4Addr, SocketAddr};
     let group = Ipv4Addr::new(224, 0, 0, 251);
+    // Exactly what multicast DNS does: the well-known port, shared with whoever else listens on it,
+    // joined on the loopback interface.
     let probe = || -> std::io::Result<bool> {
-        let rx = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+        let rx = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        rx.set_reuse_address(true)?;
+        #[cfg(all(unix, not(any(target_os = "solaris", target_os = "illumos"))))]
+        rx.set_reuse_port(true)?;
+        rx.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, 5353)).into())?;
         rx.join_multicast_v4(&group, &Ipv4Addr::LOCALHOST)?;
         rx.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
-        let port = rx.local_addr()?.port();
-        let tx = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        )?;
-        tx.bind(&std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())?;
+
+        let tx = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        tx.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())?;
         tx.set_multicast_if_v4(&Ipv4Addr::LOCALHOST)?;
         tx.set_multicast_loop_v4(true)?;
-        tx.send_to(b"probe", &std::net::SocketAddr::from((group, port)).into())?;
-        let mut buf = [0u8; 16];
-        Ok(rx.recv_from(&mut buf).is_ok())
+        tx.send_to(b"probe", &SocketAddr::from((group, 5353)).into())?;
+
+        // Anything else listening on 5353 may be heard too; only our own datagram counts.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut buf = [std::mem::MaybeUninit::<u8>::uninit(); 512];
+        while std::time::Instant::now() < deadline {
+            match rx.recv_from(&mut buf) {
+                Ok((n, _)) => {
+                    let got: Vec<u8> = buf[..n]
+                        .iter()
+                        .map(|b| unsafe { b.assume_init() })
+                        .collect();
+                    if got == b"probe" {
+                        return Ok(true);
+                    }
+                }
+                Err(_) => return Ok(false),
+            }
+        }
+        Ok(false)
     };
     probe().unwrap_or(false)
 }

@@ -5,6 +5,7 @@ use crate::peer_connection::handler::demuxer::DemuxerHandlerContext;
 use crate::peer_connection::handler::endpoint::EndpointHandlerContext;
 use crate::peer_connection::handler::interceptor::InterceptorHandlerContext;
 use crate::peer_connection::handler::srtp::SrtpHandlerContext;
+use crate::peer_connection::sdp::cryptex::{cryptex_mode_from_sdp, cryptex_negotiated_in_sdp};
 use crate::peer_connection::sdp::{
     MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
     get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
@@ -26,6 +27,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverDirection, RTCRtpTran
 use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use ::srtp::context::cryptex::CryptexMode;
 use rand::RngExt;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -251,6 +253,7 @@ impl RTCPeerConnection {
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
+            cryptex_at_session_level: self.configuration.rtp_header_encryption_policy.enabled(),
         };
         RTCPeerConnection::populate_sdp(
             d,
@@ -281,6 +284,28 @@ impl RTCPeerConnection {
         let mut media_sections = vec![];
         let mut already_have_application_media_section = false;
         let is_extmap_allow_mixed = is_ext_map_allow_mixed_set(self.remote_description());
+
+        // Cryptex (RFC 9335). Offers carry it at the session level, so there is no per-section
+        // mixture to negotiate; an answer mirrors the level the offer used.
+        let (cryptex_at_session_level, cryptex_at_media_level) =
+            if !self.configuration.rtp_header_encryption_policy.enabled() {
+                (false, false)
+            } else if include_unmatched {
+                (true, false)
+            } else if let Some(parsed) = self
+                .remote_description()
+                .as_ref()
+                .and_then(|r| r.parsed.as_ref())
+            {
+                let (negotiated_for_any, _) = cryptex_negotiated_in_sdp(parsed);
+                let offer_has_session_cryptex = parsed.has_attribute(ATTR_KEY_CRYPTEX);
+                (
+                    negotiated_for_any && offer_has_session_cryptex,
+                    negotiated_for_any && !offer_has_session_cryptex,
+                )
+            } else {
+                (false, false)
+            };
 
         // Extract media descriptions to avoid borrowing conflicts
         let media_descriptions = self
@@ -328,6 +353,7 @@ impl RTCPeerConnection {
                             transceiver_index: i,
                             match_extensions: extensions,
                             rid_map: get_rids(media),
+                            cryptex: cryptex_at_media_level,
                             ..Default::default()
                         });
                     } else {
@@ -396,6 +422,7 @@ impl RTCPeerConnection {
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
+            cryptex_at_session_level,
         };
         RTCPeerConnection::populate_sdp(
             d,
@@ -451,6 +478,72 @@ impl RTCPeerConnection {
     }
 
     // 4.4.1.6 Set the SessionDescription
+    /// The Cryptex modes (RFC 9335) to run SRTP with once `remote` is accepted: `(send, receive)`.
+    ///
+    /// `a=cryptex` declares what its sender can *receive*, so the peer's description decides how
+    /// this side may *send*, and this side's own latest description decides what it still has to
+    /// accept. Before there is a local description (answering a first offer) the answer to come
+    /// mirrors the offer, so both are the same.
+    pub(super) fn cryptex_modes(
+        &self,
+        remote: &SessionDescription,
+    ) -> Result<(CryptexMode, CryptexMode)> {
+        let policy = self.configuration.rtp_header_encryption_policy;
+        let send = cryptex_mode_from_sdp(policy, remote)?;
+
+        let local = self
+            .pending_local_description
+            .as_ref()
+            .or(self.current_local_description.as_ref())
+            .and_then(|d| d.parsed.as_ref());
+        let receive = match local {
+            None => send,
+            // Our own earlier description cannot fail the check; if it somehow does, do not
+            // let that fail the peer's.
+            Some(local) => cryptex_mode_from_sdp(policy, local).unwrap_or(send),
+        };
+        Ok((send, receive))
+    }
+
+    /// Notes, on each transceiver, whether `answer` negotiated Cryptex for it.
+    pub(super) fn record_rtp_header_encryption(&mut self, answer: &SessionDescription) {
+        use crate::peer_connection::sdp::cryptex::{
+            bundle_group_mids, bundle_tag_media, media_section_cryptex_state,
+        };
+        let session_level = answer.has_attribute(ATTR_KEY_CRYPTEX);
+        let tag = bundle_tag_media(answer);
+        let mids = bundle_group_mids(answer);
+        for media in &answer.media_descriptions {
+            if media.is_webrtc_datachannel() {
+                continue;
+            }
+            let Some(mid) = get_mid_value(media) else {
+                continue;
+            };
+            let Some(i) = RTCPeerConnection::find_by_mid(mid, &self.rtp_transceivers) else {
+                continue;
+            };
+            let (_, _, has_cryptex) = media_section_cryptex_state(media, tag, &mids);
+            self.rtp_transceivers[i]
+                .set_rtp_header_encryption_negotiated(session_level || has_cryptex);
+        }
+    }
+
+    /// Applies Cryptex modes to the SRTP contexts that exist now and to those created later.
+    pub(super) fn apply_cryptex_modes(&mut self, send: CryptexMode, receive: CryptexMode) {
+        let dtls = self.dtls_transport_mut();
+        dtls.cryptex_send_mode = send;
+        dtls.cryptex_receive_mode = receive;
+
+        let srtp = &mut self.pipeline_context.srtp_handler_context;
+        if let Some(context) = srtp.local_srtp_context.as_mut() {
+            context.set_cryptex_mode(send);
+        }
+        if let Some(context) = srtp.remote_srtp_context.as_mut() {
+            context.set_cryptex_mode(receive);
+        }
+    }
+
     pub(super) fn set_description(
         &mut self,
         sd: &RTCSessionDescription,

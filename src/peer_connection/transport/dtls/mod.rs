@@ -46,6 +46,12 @@ pub(crate) struct DtlsTransport {
     pub(crate) state: RTCDtlsTransportState,
     pub(crate) certificates: Vec<RTCCertificate>,
 
+    /// Cryptex (RFC 9335) for the SRTP contexts: `send` is how outgoing RTP is protected (decided
+    /// by what the peer can receive), `receive` what incoming RTP may be (decided by what we
+    /// declared we can receive).
+    pub(crate) cryptex_send_mode: ::srtp::context::cryptex::CryptexMode,
+    pub(crate) cryptex_receive_mode: ::srtp::context::cryptex::CryptexMode,
+
     // The peer's certificate chain in DER form, retained at handshake completion so
     // `get_remote_certificates()` has something to return. Previously the bytes reached
     // `update_dtls_stats_from_profile`, were hex-encoded into `RTCCertificateStats`, and then
@@ -121,6 +127,8 @@ impl DtlsTransport {
             dtls_endpoint: None,
             state: RTCDtlsTransportState::New,
             certificates,
+            cryptex_send_mode: Default::default(),
+            cryptex_receive_mode: Default::default(),
             remote_certificates: vec![],
 
             answering_dtls_role,

@@ -61,6 +61,8 @@ pub const ATTR_KEY_SEND_RECV: &str = "sendrecv";
 pub const ATTR_KEY_EXT_MAP: &str = "extmap";
 /// `a=extmap-allow-mixed`: one- and two-byte header extensions may be mixed.
 pub const ATTR_KEY_EXTMAP_ALLOW_MIXED: &str = "extmap-allow-mixed";
+/// `a=cryptex`: the sender can receive RTP with encrypted header extensions and CSRCs (RFC 9335).
+pub const ATTR_KEY_CRYPTEX: &str = "cryptex";
 /// `a=max-message-size`: the largest SCTP message this endpoint accepts.
 pub const ATTR_KEY_MAX_MESSAGE_SIZE: &str = "max-message-size";
 

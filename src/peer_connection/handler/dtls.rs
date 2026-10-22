@@ -14,6 +14,7 @@ use dtls::state::State;
 use log::{debug, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
+use srtp::context::cryptex::CryptexMode;
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 use std::collections::VecDeque;
@@ -255,6 +256,10 @@ impl<'a>
                                     state,
                                     &self.ctx.dtls_transport.replay_protection,
                                     &self.ctx.dtls_transport.crypto_provider,
+                                    (
+                                        self.ctx.dtls_transport.cryptex_send_mode,
+                                        self.ctx.dtls_transport.cryptex_receive_mode,
+                                    ),
                                 )?;
                             srtp_contexts = Some((local_srtp_context, remote_srtp_context));
                         } else {
@@ -469,6 +474,7 @@ impl<'a> DtlsHandler<'a> {
         state: &State,
         replay_protection: &ReplayProtection,
         crypto_provider: &Arc<dyn RTCCryptoProvider>,
+        (cryptex_send_mode, cryptex_receive_mode): (CryptexMode, CryptexMode),
     ) -> Result<(srtp::context::Context, srtp::context::Context)> {
         let profile = match state.srtp_protection_profile() {
             SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
@@ -505,7 +511,7 @@ impl<'a> DtlsHandler<'a> {
         srtp_config
             .set_session_keys_from_keying_material(keying_material.as_ref(), state.is_client())?;
 
-        let local_context = srtp::context::Context::new(
+        let mut local_context = srtp::context::Context::new(
             &srtp_config.keys.local_master_key,
             &srtp_config.keys.local_master_salt,
             srtp_config.profile,
@@ -514,7 +520,7 @@ impl<'a> DtlsHandler<'a> {
             crypto_provider.crypto(),
         )?;
 
-        let remote_context = srtp::context::Context::new(
+        let mut remote_context = srtp::context::Context::new(
             &srtp_config.keys.remote_master_key,
             &srtp_config.keys.remote_master_salt,
             srtp_config.profile,
@@ -534,6 +540,9 @@ impl<'a> DtlsHandler<'a> {
             },
             crypto_provider.crypto(),
         )?;
+
+        local_context.set_cryptex_mode(cryptex_send_mode);
+        remote_context.set_cryptex_mode(cryptex_receive_mode);
 
         Ok((local_context, remote_context))
     }

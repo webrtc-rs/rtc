@@ -1586,6 +1586,23 @@ pub enum Error {
     /// Unknow Protocol.
     #[error("Unknow Protocol")]
     UnknownProtocol,
+    /// The configuration requires RTP header extension encryption (RFC 9335) and the session
+    /// description did not negotiate it.
+    #[error("rtp header extension encryption required")]
+    ErrRtpHeaderEncryptionRequired,
+    /// The session description negotiated RTP header extension encryption for only some RTP media
+    /// sections; it is a property of the whole connection here.
+    #[error("rtp header extension encryption mixed mode not supported")]
+    ErrRtpHeaderEncryptionMixedModeNotSupported,
+    /// A Cryptex (RFC 9335) packet arrived on an SRTP context where Cryptex is disabled.
+    #[error("srtp: cryptex is disabled")]
+    ErrCryptexDisabled,
+    /// A packet with header extensions or CSRCs arrived unencrypted where Cryptex is required.
+    #[error("srtp: header extensions and CSRCs must be encrypted with Cryptex")]
+    ErrUnencryptedHeaderExtAndCsrcs,
+    /// Cryptex only protects RFC 8285 header extensions.
+    #[error("srtp: cryptex does not support this header extension format")]
+    ErrUnsupportedHeaderExtension,
     /// An RTCP packet is longer than its 16-bit word-count length field can describe.
     #[error("rtcp: invalid packet length")]
     BadLength,

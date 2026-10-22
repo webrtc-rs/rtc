@@ -147,6 +147,7 @@
 //TODO: #[cfg(test)]
 //TODO: mod sdp_test;
 
+pub(crate) mod cryptex;
 pub(crate) mod sdp_type;
 pub(crate) mod session_description;
 
@@ -662,6 +663,7 @@ impl RTCPeerConnection {
         );
 
         let transceiver = &mut transceivers[media_section.transceiver_index];
+        let cryptex = media_section.cryptex;
         let mut media =
             MediaDescription::new_jsep_media_description(transceiver.kind().to_string(), vec![])
                 .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
@@ -835,6 +837,10 @@ impl RTCPeerConnection {
                 media
             }
         };
+
+        if cryptex {
+            media = media.with_property_attribute(ATTR_KEY_CRYPTEX.to_owned());
+        }
 
         media = media.with_property_attribute(transceiver.direction().to_string());
 
@@ -1016,6 +1022,9 @@ pub(crate) struct MediaSection {
     pub(crate) data: bool,
     pub(crate) match_extensions: HashMap<String, u16>,
     pub(crate) rid_map: Vec<SimulcastRid>,
+    /// Whether to write `a=cryptex` on this section (RFC 9335), for answers that must mirror a
+    /// media-level attribute in the offer.
+    pub(crate) cryptex: bool,
 }
 
 pub(crate) struct PopulateSdpParams {
@@ -1028,6 +1037,8 @@ pub(crate) struct PopulateSdpParams {
     pub(crate) sctp_max_message_size: usize,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
+    /// Whether to write `a=cryptex` at the session level (RFC 9335), if any section is active RTP.
+    pub(crate) cryptex_at_session_level: bool,
 }
 
 impl RTCPeerConnection {
@@ -1097,6 +1108,7 @@ impl RTCPeerConnection {
 
         let mut bundle_value = "BUNDLE".to_owned();
         let mut bundle_count = 0;
+        let mut have_active_rtp_media = false;
         let append_bundle = |mid_value: &str, value: &mut String, count: &mut i32| {
             *value = value.clone() + " " + mid_value;
             *count += 1;
@@ -1155,6 +1167,15 @@ impl RTCPeerConnection {
                     }
                 }
             }
+
+            // Session-level Cryptex is only worth writing if some RTP section is in use.
+            if !m.data
+                && let Some(desc) = d.media_descriptions.last()
+                && desc.media_name.port.value != 0
+                && desc.media_name.media != "application"
+            {
+                have_active_rtp_media = true;
+            }
         }
 
         if !params.media_description_fingerprint {
@@ -1174,6 +1195,11 @@ impl RTCPeerConnection {
         if params.is_extmap_allow_mixed {
             // RFC 8285 6.
             d = d.with_property_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED.to_owned());
+        }
+
+        if params.cryptex_at_session_level && have_active_rtp_media {
+            // RFC 9335 §4
+            d = d.with_property_attribute(ATTR_KEY_CRYPTEX.to_owned());
         }
 
         if bundle_count > 0 {

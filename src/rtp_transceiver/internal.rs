@@ -35,6 +35,8 @@ pub(crate) struct RTCRtpTransceiverInternal {
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
     stopped: bool,
+    /// Whether RTP header extensions and CSRCs of this transceiver are encrypted (RFC 9335).
+    rtp_header_encryption_negotiated: bool,
     /// Whether this transceiver was implicitly created while applying a remote offer
     /// (as opposed to being created by the application via `add_track`/`add_transceiver_*`).
     /// Used by rollback (RFC 9429, Section 5.7): transceivers created by a remote offer that
@@ -86,6 +88,7 @@ impl RTCRtpTransceiverInternal {
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
+            rtp_header_encryption_negotiated: false,
             created_by_remote_description: false,
         }
     }
@@ -279,6 +282,14 @@ impl RTCRtpTransceiverInternal {
     pub(crate) fn disassociate(&mut self) {
         self.mid = None;
         self.current_direction = RTCRtpTransceiverDirection::Unspecified;
+    }
+
+    pub(crate) fn rtp_header_encryption_negotiated(&self) -> bool {
+        self.rtp_header_encryption_negotiated
+    }
+
+    pub(crate) fn set_rtp_header_encryption_negotiated(&mut self, negotiated: bool) {
+        self.rtp_header_encryption_negotiated = negotiated;
     }
 
     pub(crate) fn set_current_direction(&mut self, d: RTCRtpTransceiverDirection) {

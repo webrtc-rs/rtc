@@ -324,6 +324,14 @@ impl RTCRtpTransceiver<'_> {
         self.peer_connection.rtp_transceivers[self.id].current_direction()
     }
 
+    /// Whether the RTP header extensions and CSRCs of this transceiver's media are encrypted
+    /// ([RFC 9335], "Cryptex"), as negotiated by the latest answer.
+    ///
+    /// [RFC 9335]: https://www.rfc-editor.org/rfc/rfc9335
+    pub fn rtp_header_encryption_negotiated(&self) -> bool {
+        self.peer_connection.rtp_transceivers[self.id].rtp_header_encryption_negotiated()
+    }
+
     /// Irreversibly stops the transceiver.
     ///
     /// After calling this method, the transceiver will no longer send or receive media.

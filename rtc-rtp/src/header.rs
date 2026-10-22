@@ -37,6 +37,13 @@ pub const EXTENSION_SHIFT: u8 = 4;
 pub const EXTENSION_MASK: u8 = 0x1;
 /// Extension profile `0xBEDE`, which selects one-byte header extension ids ([RFC 8285]).
 pub const EXTENSION_PROFILE_ONE_BYTE: u16 = 0xBEDE;
+/// Extension profile `0xC0DE`: a one-byte-id header extension block that has been encrypted
+/// together with the CSRCs ([RFC 9335], "Cryptex"). Only ever seen on the wire.
+///
+/// [RFC 9335]: https://www.rfc-editor.org/rfc/rfc9335
+pub const CRYPTEX_PROFILE_ONE_BYTE: u16 = 0xC0DE;
+/// Extension profile `0xC2DE`: the two-byte-id form of [`CRYPTEX_PROFILE_ONE_BYTE`].
+pub const CRYPTEX_PROFILE_TWO_BYTE: u16 = 0xC2DE;
 /// Extension profile `0x1000`, which selects two-byte header extension ids, allowing ids
 /// above 14.
 pub const EXTENSION_PROFILE_TWO_BYTE: u16 = 0x1000;

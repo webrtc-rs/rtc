@@ -142,6 +142,42 @@ pub(crate) trait Cipher: Send {
         Ok(dst)
     }
 
+    /// Whether the RTP authentication tag is a MAC over the packet as it is sent (AES-CM with
+    /// HMAC), as opposed to coming out of a single sealing operation over the header and payload
+    /// (AEAD). Cryptex needs to know: it rearranges the packet to encrypt it, but the MAC covers
+    /// the packet as sent.
+    fn authenticates_wire_layout(&self) -> bool {
+        false
+    }
+
+    /// Applies the payload keystream to `buf[header.header_len..]`. Encrypting and decrypting are
+    /// the same operation. Only for ciphers where [`authenticates_wire_layout`] is true.
+    ///
+    /// [`authenticates_wire_layout`]: Self::authenticates_wire_layout
+    fn apply_rtp_keystream(
+        &mut self,
+        _buf: &mut [u8],
+        _header: &rtp::header::HeaderSummary,
+        _roc: u32,
+    ) -> Result<()> {
+        Err(Error::Other("not a counter-mode cipher".to_owned()))
+    }
+
+    /// Appends the authentication tag of the packet at `buf[start..]`.
+    fn append_rtp_auth_tag(&mut self, _buf: &mut BytesMut, _start: usize, _roc: u32) -> Result<()> {
+        Err(Error::Other("not a MAC-authenticated cipher".to_owned()))
+    }
+
+    /// Checks the authentication tag at the end of the packet at `buf[start..]` and removes it.
+    fn verify_and_strip_rtp_auth_tag(
+        &mut self,
+        _buf: &mut BytesMut,
+        _start: usize,
+        _roc: u32,
+    ) -> Result<()> {
+        Err(Error::Other("not a MAC-authenticated cipher".to_owned()))
+    }
+
     /// Encrypt RTCP payload.
     fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;
 

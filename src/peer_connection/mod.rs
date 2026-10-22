@@ -1207,6 +1207,8 @@ impl RTCPeerConnection {
                 self.rtp_transceivers[i].set_current_direction(direction);
             }
 
+            self.record_rtp_header_encryption(parsed_local_description);
+
             if let Some(remote_description) = self.remote_description().cloned()
                 && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
             {
@@ -1242,6 +1244,17 @@ impl RTCPeerConnection {
                 }
                 self.start_rtp(remote_description)?;
             }
+        }
+
+        // What this side declared it can receive decides what it must still accept.
+        if let Some(parsed) = local_description.parsed.as_ref()
+            && let Ok(receive) = crate::peer_connection::sdp::cryptex::cryptex_mode_from_sdp(
+                self.configuration.rtp_header_encryption_policy,
+                parsed,
+            )
+        {
+            let send = self.dtls_transport().cryptex_send_mode;
+            self.apply_cryptex_modes(send, receive);
         }
 
         self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Gathering;
@@ -1313,6 +1326,45 @@ impl RTCPeerConnection {
         self.can_trickle_ice_candidates
     }
 
+    /// Returns the signaling state: where the offer/answer exchange stands.
+    ///
+    /// Also reported through [`RTCPeerConnectionEvent::OnSignalingStateChange`](crate::peer_connection::event::RTCPeerConnectionEvent)
+    /// as it changes; this reads it at any moment.
+    ///
+    /// # Specification
+    ///
+    /// See [signalingState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-signalingstate)
+    pub fn signaling_state(&self) -> RTCSignalingState {
+        self.signaling_state
+    }
+
+    /// Returns the aggregate connection state of the peer connection.
+    ///
+    /// # Specification
+    ///
+    /// See [connectionState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-connectionstate)
+    pub fn connection_state(&self) -> RTCPeerConnectionState {
+        self.peer_connection_state
+    }
+
+    /// Returns the state of the ICE connection.
+    ///
+    /// # Specification
+    ///
+    /// See [iceConnectionState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-iceconnectionstate)
+    pub fn ice_connection_state(&self) -> RTCIceConnectionState {
+        self.ice_transport().ice_connection_state
+    }
+
+    /// Returns the state of ICE candidate gathering.
+    ///
+    /// # Specification
+    ///
+    /// See [iceGatheringState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-icegatheringstate)
+    pub fn ice_gathering_state(&self) -> RTCIceGatheringState {
+        self.ice_transport().ice_gathering_state
+    }
+
     /// Sets the remote description as part of the offer/answer negotiation.
     ///
     /// This changes the remote description associated with the connection. This description
@@ -1347,6 +1399,14 @@ impl RTCPeerConnection {
         if remote_description.sdp_type != RTCSdpType::Rollback {
             remote_description.parsed = Some(remote_description.unmarshal()?);
         }
+
+        // Cryptex (RFC 9335) is checked before anything is committed, so a description that breaks
+        // the header-encryption policy leaves the signaling state as it was.
+        let cryptex_modes = match remote_description.parsed.as_ref() {
+            Some(parsed) => Some(self.cryptex_modes(parsed)?),
+            None => None,
+        };
+
         self.set_description(&remote_description, StateChangeOp::SetRemote)?;
 
         if let Some(parsed_remote_description) = &remote_description.parsed {
@@ -1539,6 +1599,10 @@ impl RTCPeerConnection {
                 }
             }
 
+            if we_offer {
+                self.record_rtp_header_encryption(parsed_remote_description);
+            }
+
             let (remote_ufrag, remote_pwd, candidates) =
                 extract_ice_details(parsed_remote_description)?;
 
@@ -1643,6 +1707,10 @@ impl RTCPeerConnection {
                 }
                 self.start_rtp(remote_description)?;
             }
+        }
+
+        if let Some((send, receive)) = cryptex_modes {
+            self.apply_cryptex_modes(send, receive);
         }
 
         Ok(())

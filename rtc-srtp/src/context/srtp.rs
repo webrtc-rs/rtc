@@ -3,6 +3,9 @@ use shared::error::{Error, Result};
 
 use bytes::BytesMut;
 
+use super::cryptex::{self, CryptexMode};
+use crate::cipher::Cipher;
+
 /// Pairs an already-parsed header with its true length on the wire in `packet`.
 fn summarize(packet: &[u8], header: &rtp::Header) -> Result<rtp::header::HeaderSummary> {
     Ok(rtp::header::HeaderSummary {
@@ -32,8 +35,9 @@ impl Context {
     ) -> Result<BytesMut> {
         let summary = summarize(encrypted, header)?;
         let mut dst = BytesMut::with_capacity(encrypted.len());
+        let mode = self.cryptex_mode;
         self.decrypt_rtp_summary(encrypted.len(), &summary, |cipher, roc| {
-            cipher.decrypt_rtp_into(&mut dst, encrypted, &summary, roc)
+            decrypt_into(cipher, mode, &mut dst, encrypted, &summary, roc)
         })?;
         Ok(dst)
     }
@@ -102,8 +106,9 @@ impl Context {
     /// As [`Context::decrypt_rtp`].
     pub fn decrypt_rtp_into(&mut self, dst: &mut BytesMut, encrypted: &[u8]) -> Result<()> {
         let header = rtp::Header::peek(encrypted)?;
+        let mode = self.cryptex_mode;
         self.decrypt_rtp_summary(encrypted.len(), &header, |cipher, roc| {
-            cipher.decrypt_rtp_into(dst, encrypted, &header, roc)
+            decrypt_into(cipher, mode, dst, encrypted, &header, roc)
         })
     }
 
@@ -120,8 +125,9 @@ impl Context {
     /// As [`Context::decrypt_rtp`].
     pub fn decrypt_rtp_in_place(&mut self, packet: &mut BytesMut) -> Result<()> {
         let header = rtp::Header::peek(packet)?;
+        let mode = self.cryptex_mode;
         self.decrypt_rtp_summary(packet.len(), &header, |cipher, roc| {
-            cipher.decrypt_rtp_in_place(packet, 0, &header, roc)
+            cryptex::decrypt_in_place(cipher, mode, packet, 0, &header, roc)
         })
     }
 
@@ -139,9 +145,10 @@ impl Context {
         header: &rtp::Header,
     ) -> Result<BytesMut> {
         let summary = summarize(plaintext, header)?;
-        let mut dst = BytesMut::with_capacity(plaintext.len() + self.rtp_overhead());
+        let mut dst = BytesMut::with_capacity(plaintext.len() + self.rtp_overhead() + 4);
+        let cryptex = self.cryptex_mode != CryptexMode::Disabled;
         self.encrypt_rtp_summary(&summary, |cipher, roc| {
-            cipher.encrypt_rtp_into(&mut dst, plaintext, &summary, roc)
+            encrypt_into(cipher, cryptex, &mut dst, plaintext, &summary, roc)
         })?;
         Ok(dst)
     }
@@ -196,8 +203,9 @@ impl Context {
     /// As [`Context::encrypt_rtp`].
     pub fn encrypt_rtp_into(&mut self, dst: &mut BytesMut, plaintext: &[u8]) -> Result<()> {
         let header = rtp::Header::peek(plaintext)?;
+        let cryptex = self.cryptex_mode != CryptexMode::Disabled;
         self.encrypt_rtp_summary(&header, |cipher, roc| {
-            cipher.encrypt_rtp_into(dst, plaintext, &header, roc)
+            encrypt_into(cipher, cryptex, dst, plaintext, &header, roc)
         })
     }
 
@@ -214,8 +222,13 @@ impl Context {
     /// As [`Context::encrypt_rtp`].
     pub fn encrypt_rtp_in_place(&mut self, packet: &mut BytesMut) -> Result<()> {
         let header = rtp::Header::peek(packet)?;
+        let cryptex = self.cryptex_mode != CryptexMode::Disabled;
         self.encrypt_rtp_summary(&header, |cipher, roc| {
-            cipher.encrypt_rtp_in_place(packet, 0, &header, roc)
+            if cryptex {
+                cryptex::encrypt_in_place(cipher, packet, 0, &header, roc)
+            } else {
+                cipher.encrypt_rtp_in_place(packet, 0, &header, roc)
+            }
         })
     }
 
@@ -225,4 +238,41 @@ impl Context {
             .rtp_auth_tag_len()
             .max(self.cipher.aead_auth_tag_len())
     }
+}
+
+/// [`Cipher::decrypt_rtp_into`], going through Cryptex when it is in play.
+fn decrypt_into(
+    cipher: &mut dyn Cipher,
+    mode: CryptexMode,
+    dst: &mut BytesMut,
+    encrypted: &[u8],
+    summary: &rtp::header::HeaderSummary,
+    roc: u32,
+) -> Result<()> {
+    if mode == CryptexMode::Disabled && !cryptex_packet_possible(encrypted) {
+        return cipher.decrypt_rtp_into(dst, encrypted, summary, roc);
+    }
+    cryptex::decrypt_into(cipher, mode, dst, encrypted, summary, roc)
+}
+
+/// [`Cipher::encrypt_rtp_into`], going through Cryptex when it is on.
+fn encrypt_into(
+    cipher: &mut dyn Cipher,
+    cryptex: bool,
+    dst: &mut BytesMut,
+    plaintext: &[u8],
+    summary: &rtp::header::HeaderSummary,
+    roc: u32,
+) -> Result<()> {
+    if cryptex {
+        cryptex::encrypt_into(cipher, dst, plaintext, summary, roc)
+    } else {
+        cipher.encrypt_rtp_into(dst, plaintext, summary, roc)
+    }
+}
+
+/// Whether a packet could be Cryptex-protected: it has a header extension block. The only
+/// packets a disabled context must look at.
+fn cryptex_packet_possible(packet: &[u8]) -> bool {
+    packet.first().is_some_and(|b| b & 0x10 != 0)
 }

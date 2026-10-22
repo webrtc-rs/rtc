@@ -225,6 +225,7 @@ pub mod interceptor_registry;
 pub mod media_engine;
 pub(crate) mod offer_answer_options;
 pub(crate) mod rtcp_mux_policy;
+pub(crate) mod rtp_header_encryption_policy;
 pub(crate) mod sdp_semantics;
 pub mod setting_engine;
 
@@ -232,6 +233,7 @@ pub use bundle_policy::RTCBundlePolicy;
 pub use ice_transport_policy::{ICEGatherPolicy, RTCIceTransportPolicy};
 pub use offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 pub use rtcp_mux_policy::RTCRtcpMuxPolicy;
+pub use rtp_header_encryption_policy::RTCRtpHeaderEncryptionPolicy;
 pub use sdp_semantics::RTCSdpSemantics;
 
 pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
@@ -264,6 +266,10 @@ pub struct RTCConfiguration {
     /// rtcp_mux_policy indicates which rtcp-mux policy to use when gathering ICE
     /// candidates.
     pub(crate) rtcp_mux_policy: RTCRtcpMuxPolicy,
+
+    /// rtp_header_encryption_policy indicates whether RTP header extensions and CSRCs are
+    /// encrypted (RFC 9335, "Cryptex") and what to do if the peer cannot.
+    pub(crate) rtp_header_encryption_policy: RTCRtpHeaderEncryptionPolicy,
 
     /// peer_identity sets the target peer identity for the PeerConnection.
     /// The PeerConnection will not establish a connection to a remote peer
@@ -315,6 +321,11 @@ impl RTCConfiguration {
     /// This indicates which RTCP-mux policy to use when gathering ICE candidates.
     pub fn rtcp_mux_policy(&self) -> RTCRtcpMuxPolicy {
         self.rtcp_mux_policy
+    }
+
+    /// Returns the RTP header extension encryption (Cryptex, RFC 9335) policy.
+    pub fn rtp_header_encryption_policy(&self) -> RTCRtpHeaderEncryptionPolicy {
+        self.rtp_header_encryption_policy
     }
 
     /// Returns the peer identity.
@@ -619,6 +630,17 @@ impl RTCConfigurationBuilder {
     /// ```
     pub fn with_rtcp_mux_policy(mut self, rtcp_mux_policy: RTCRtcpMuxPolicy) -> Self {
         self.0.rtcp_mux_policy = rtcp_mux_policy;
+        self
+    }
+
+    /// Sets whether RTP header extensions and CSRCs are encrypted with Cryptex (RFC 9335).
+    ///
+    /// The default offers Cryptex and uses it when the peer supports it.
+    pub fn with_rtp_header_encryption_policy(
+        mut self,
+        rtp_header_encryption_policy: RTCRtpHeaderEncryptionPolicy,
+    ) -> Self {
+        self.0.rtp_header_encryption_policy = rtp_header_encryption_policy;
         self
     }
 
