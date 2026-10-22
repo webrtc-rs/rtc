@@ -11,6 +11,7 @@ use rtc_rtp::codec::av1::{Av1Depacketizer, Av1Payloader};
 use rtc_rtp::codec::g7xx::G7xxPayloader;
 use rtc_rtp::codec::h264::{H264Packet, H264Payloader};
 use rtc_rtp::codec::h265::{H265Depacketizer, HevcPayloader};
+use rtc_rtp::codec::h266::{H266Depacketizer, H266Payloader};
 use rtc_rtp::codec::opus::{OpusPacket, OpusPayloader};
 use rtc_rtp::codec::vp8::{Vp8Packet, Vp8Payloader};
 use rtc_rtp::codec::vp9::{Vp9Packet, Vp9Payloader};
@@ -95,6 +96,9 @@ fn run(kind: &str, op: &str, mtu: usize, input: Vec<u8>) -> Outcome {
         ("unmarshal", "H265Depacketizer") => {
             depacketize(H265Depacketizer::default(), &bytes, false)
         }
+        ("unmarshal", "H266Depacketizer") => {
+            depacketize(H266Depacketizer::default(), &bytes, false)
+        }
         ("unmarshal", "AV1Depacketizer") => depacketize(Av1Depacketizer::default(), &bytes, false),
         ("payload", "H264Payloader") => payload(H264Payloader::default(), mtu, &bytes),
         ("payload", "VP8Payloader") => payload(
@@ -118,6 +122,7 @@ fn run(kind: &str, op: &str, mtu: usize, input: Vec<u8>) -> Outcome {
         ("payload", "OpusPayloader") => payload(OpusPayloader, mtu, &bytes),
         ("payload", "G711Payloader" | "G722Payloader") => payload(G7xxPayloader, mtu, &bytes),
         ("payload", "H265Payloader") => payload(HevcPayloader::default(), mtu, &bytes),
+        ("payload", "H266Packetizer") => payload(H266Payloader::default(), mtu, &bytes),
         // The AV1 packetization strategy differs from pion's (this crate follows libwebrtc), so
         // payloads are not compared byte for byte: see `av1_semantic`.
         ("payload", "AV1Payloader") => Outcome::Skip,

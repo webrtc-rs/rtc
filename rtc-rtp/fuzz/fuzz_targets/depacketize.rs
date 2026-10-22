@@ -8,6 +8,7 @@ use libfuzzer_sys::fuzz_target;
 use rtc_rtp::codec::av1::Av1Depacketizer;
 use rtc_rtp::codec::h264::H264Packet;
 use rtc_rtp::codec::h265::H265Depacketizer;
+use rtc_rtp::codec::h266::H266Depacketizer;
 use rtc_rtp::codec::opus::OpusPacket;
 use rtc_rtp::codec::vp8::Vp8Packet;
 use rtc_rtp::codec::vp9::Vp9Packet;
@@ -38,6 +39,7 @@ fuzz_target!(|data: &[u8]| {
     drive(&mut Vp9Packet::default(), &chunks);
     drive(&mut H264Packet::default(), &chunks);
     drive(&mut H265Depacketizer::default(), &chunks);
+    drive(&mut H266Depacketizer::default(), &chunks);
     drive(&mut Av1Depacketizer::default(), &chunks);
     drive(&mut OpusPacket, &chunks);
 });
