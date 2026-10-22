@@ -113,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest ]
+        os: [ ubuntu-latest, macos-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -155,7 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest ]
+        os: [ ubuntu-latest, macos-latest ]
         backend: [ ring, aws-lc-rs ]
     steps:
       - uses: actions/checkout@v4

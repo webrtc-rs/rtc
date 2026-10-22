@@ -12,6 +12,9 @@
 //!
 //! * [`client`] — the Sans-I/O client: allocate a relayed address, create permissions,
 //!   bind channels, and send or receive through the allocation. It owns no sockets.
+//! * [`server`] — the Sans-I/O server: authenticates clients with long-term credentials, asks the
+//!   application to bind a relay socket per allocation, and moves data between clients and peers.
+//!   It owns no sockets and reads no clock; `examples/turn_server_udp.rs` drives it with tokio.
 //! * [`proto`] — the TURN-specific STUN attributes and methods (`ALLOCATE`,
 //!   `CREATE-PERMISSION`, `CHANNEL-BIND`, `XOR-RELAYED-ADDRESS`, ChannelData framing),
 //!   built on [`rtc-stun`].
@@ -60,3 +63,5 @@ pub use crypto;
 pub mod client;
 /// The TURN-specific STUN attributes, methods and ChannelData framing.
 pub mod proto;
+/// The Sans-I/O TURN server.
+pub mod server;

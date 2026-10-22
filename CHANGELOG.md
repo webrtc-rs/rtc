@@ -15,10 +15,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (0), the wire-most slot: the dump sees departures after pacing and numbering, and arrivals
   before recovery and re-stamping. The nine pion packetdump tests are ported, plus forwarding,
   filter-cost, ordering and registry-placement tests.
+- `rtc-media`: rtpdump reader and writer (`io::rtpdump`), byte-compatible with pion's
+  `pkg/media/rtpdump` (preamble, binary header, packet records). New public items:
+  `rtpdump::{Header, Packet, Reader, Writer}`; two `ErrRtpDump*` variants in `rtc-shared`.
+  Two strictnesses beyond pion, both from the issue: records whose `plen` exceeds their length
+  and records with empty payloads are rejected.
+- `rtc-rtp`: H.266/VVC payloader and depacketizer ([RFC 9328]), byte-compatible with pion's
+  `H266Packetizer`/`H266Depacketizer` (aggregation packets, fragmentation units, DONL handling).
+  The 320 H.266 rows of the pion golden corpus now run, and pion's 13 `TestH266*` unit tests
+  are ported. New public items: `codec::h266::{H266Payloader, H266Depacketizer, H266NALUHeader}`.
+- `rtc-shared`: H.266 error variants (`ErrH266*`).
+
+[RFC 9328]: https://datatracker.ietf.org/doc/html/rfc9328
 
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
 - `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
+
+### Added
+- `rtc-turn`: a Sans-I/O **TURN server** (`rtc_turn::server`). Long-term credentials with
+  verifiable nonces (stale-nonce `438`), allocations over UDP with IPv4 and IPv6 relays, Refresh,
+  CreatePermission (all-or-nothing), ChannelBind, Send/Data indications and ChannelData, quotas,
+  permission filtering, time-limited shared-secret credentials, `420` for unknown
+  comprehension-required attributes, and an idempotent answer to a retransmitted Allocate. The
+  application binds the relay sockets (`ServerEvent::BindRelay`). `proto::framing::frame_length`
+  delimits messages on TCP and TLS streams. Interoperates with pion in both directions
+  (`interop/run-turn.sh`).
+- `rtc-mdns`: `MulticastSocket` joins the group on every local IPv4 interface, and
+  `multicast_interfaces` / `is_route_error` / `set_multicast_interface` let a driver retry a send
+  that the default multicast route refuses (a virtual NIC with no multicast route).
+- `rtc-turn`: `EvenPort::new` and `EvenPort::reserve_port`.
+
+### Fixed
+- `rtc-rtp`: `Packet::unmarshal` of a `Bytes` takes one handle on the datagram instead of two
+  extra reference counts.
 
 ### Security / hardening (ported from pion's tests)
 - DTLS: the handshake fragment buffer is bounded in fragment count and bytes and reassembles

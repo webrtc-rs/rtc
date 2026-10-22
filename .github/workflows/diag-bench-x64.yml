@@ -1,0 +1,32 @@
+# Diagnostic, run by hand (workflow_dispatch): the micro-benchmarks against pion on a plain x86-64
+# runner, with the CPU model, many runs, and no gating. For tuning where only a real x86-64 machine
+# gives the answer.
+name: diag-bench-x64
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: runs per implementation
+        default: "15"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: benchmarks/pion-compare/go/go.mod
+          cache-dependency-path: benchmarks/pion-compare/go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: benchmarks/pion-compare
+      - name: Machine
+        run: |
+          lscpu | grep -E 'Model name|MHz|Flags' | cut -c1-200
+          rustc -vV | head -3; go version
+      - name: Compare
+        run: python3 benchmarks/pion-compare/compare.py --runs "${{ inputs.runs }}" --no-gate

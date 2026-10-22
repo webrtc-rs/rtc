@@ -26,6 +26,8 @@ crypto.workspace = true
 
 bytes.workspace = true
 log.workspace = true
+rand.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
@@ -35,6 +37,7 @@ clap.workspace = true
 criterion.workspace = true
 crossbeam-channel.workspace = true
 ctrlc.workspace = true
+tokio.workspace = true
 
 [[bench]]
 name = "bench"
@@ -43,4 +46,14 @@ harness = false
 [[example]]
 name = "turn_client_udp"
 path = "examples/turn_client_udp.rs"
+bench = false
+
+[[example]]
+name = "turn_server_udp"
+path = "examples/turn_server_udp.rs"
+bench = false
+
+[[example]]
+name = "turn_echo_check"
+path = "examples/turn_echo_check.rs"
 bench = false

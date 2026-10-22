@@ -200,4 +200,4 @@ pub use proto::{MDNS_DEST_ADDR, MDNS_MULTICAST_IPV4, MDNS_PORT, Mdns, MdnsEvent,
 
 // Re-export socket utilities for convenience
 pub use shared::ifaces;
-pub use socket::MulticastSocket;
+pub use socket::{MulticastSocket, is_route_error, multicast_interfaces, set_multicast_interface};
