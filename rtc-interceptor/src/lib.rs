@@ -326,7 +326,10 @@ pub use pacing::sender::{
     PacerBuilder, PacerInterceptor,
 };
 pub use packet::{Attribute, AttributedPacket, Packet, TaggedPacket};
-pub use packetdump::{LogSink, PacketDump, PacketDumpBuilder, PacketDumpSink};
+pub use packetdump::{
+    LogSink, PacketDump, PacketDumpBuilder, PacketDumpSink, RtcpBinaryFormatter,
+    RtcpCompoundFilter, RtpBinaryFormatter,
+};
 pub use registry::{Registry, Slot};
 pub use report::receiver::{ReceiverReportBuilder, ReceiverReportInterceptor};
 pub use report::sender::{SenderReportBuilder, SenderReportInterceptor};

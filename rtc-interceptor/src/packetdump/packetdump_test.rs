@@ -14,6 +14,7 @@ use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtcp::receiver_report::ReceiverReport;
 use sansio::Protocol;
 use shared::TransportContext;
+use shared::marshal::Marshal;
 
 use super::*;
 use crate::Slot;
@@ -388,5 +389,124 @@ fn test_packetdump_sits_wire_most_in_the_registry() {
             (Slot::NackGenerator, "NackGeneratorInterceptor".to_owned()),
         ],
         "the dump sees what really goes out and comes in: wire-most of everything"
+    );
+}
+
+/// A sink that keeps the bytes of `write_bytes` apart from the text lines.
+#[derive(Clone, Default)]
+struct ByteSink {
+    lines: Arc<Mutex<Vec<String>>>,
+    bytes: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl PacketDumpSink for ByteSink {
+    fn write(&mut self, line: &str) {
+        self.lines.lock().unwrap().push(line.to_owned());
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.bytes.lock().unwrap().push(bytes.to_vec());
+    }
+}
+
+/// pion's `TestReceiverCustomBinaryFormatter` and `TestSenderCustomBinaryFormatter`: a binary
+/// formatter's bytes reach the sink as they are, and the default text line is off.
+#[test]
+fn test_packetdump_binary_formatters_write_raw_bytes() {
+    for leg in ["read", "write"] {
+        let sink = ByteSink::default();
+        let mut dump = PacketDumpBuilder::new()
+            .rtp_binary_formatter(|p| Ok(p.marshal()?.to_vec()))
+            .rtcp_binary_formatter(|p| Ok(p.marshal()?.to_vec()))
+            .sink(Box::new(sink.clone()))
+            .build();
+
+        let rtp = rtp_packet(77);
+        let want_rtp = rtp.marshal().unwrap().to_vec();
+        let want_pli = PictureLossIndication {
+            sender_ssrc: 1,
+            media_ssrc: 2,
+        }
+        .marshal()
+        .unwrap()
+        .to_vec();
+
+        for packet in [Packet::Rtp(rtp), pli(1, 2)] {
+            let message = AttributedPacket::new(packet);
+            if leg == "read" {
+                read_one(&mut dump, message);
+            } else {
+                write_one(&mut dump, message);
+            }
+        }
+
+        assert_eq!(
+            *sink.bytes.lock().unwrap(),
+            vec![want_rtp, want_pli],
+            "{leg}"
+        );
+        assert!(sink.lines.lock().unwrap().is_empty(), "{leg}: no text line");
+    }
+}
+
+/// A binary formatter that fails skips its packet and the packet still passes through.
+#[test]
+fn test_packetdump_binary_formatter_error_skips_the_packet() {
+    let sink = ByteSink::default();
+    let mut dump = PacketDumpBuilder::new()
+        .rtp_binary_formatter(|_| Err(Error::ErrBufferShort))
+        .sink(Box::new(sink.clone()))
+        .build();
+    let out = read_one(&mut dump, AttributedPacket::new(Packet::Rtp(rtp_packet(5))));
+    assert!(out.is_some(), "forwarded despite the failed format");
+    assert!(sink.bytes.lock().unwrap().is_empty());
+    assert!(sink.lines.lock().unwrap().is_empty());
+}
+
+/// Setting both a text and a binary formatter writes both, binary first, as pion does.
+#[test]
+fn test_packetdump_text_and_binary_formatters_both_write() {
+    let sink = ByteSink::default();
+    let mut dump = PacketDumpBuilder::new()
+        .rtp_formatter(|_| "text".to_owned())
+        .rtp_binary_formatter(|_| Ok(vec![1, 2, 3]))
+        .sink(Box::new(sink.clone()))
+        .build();
+    read_one(&mut dump, AttributedPacket::new(Packet::Rtp(rtp_packet(5))));
+    assert_eq!(*sink.bytes.lock().unwrap(), vec![vec![1, 2, 3]]);
+    assert_eq!(*sink.lines.lock().unwrap(), vec!["text".to_owned()]);
+}
+
+/// pion's `RTCPFilter`: a compound filter decides on the whole compound, before the per-packet
+/// filter sees any of it.
+#[test]
+fn test_packetdump_rtcp_compound_filter_runs_before_per_packet_filter() {
+    let sink = RecordingSink::default();
+    let mut dump = PacketDumpBuilder::new()
+        // Only compounds of exactly two packets.
+        .rtcp_compound_filter(|pkts| pkts.len() == 2)
+        .rtcp_formatter(|p| format!("{:?}\n", p.header().packet_type))
+        .sink(Box::new(sink.clone()))
+        .build();
+
+    let pair = || {
+        Packet::Rtcp(vec![
+            Box::new(PictureLossIndication {
+                sender_ssrc: 1,
+                media_ssrc: 2,
+            }),
+            Box::new(ReceiverReport {
+                ssrc: 3,
+                ..Default::default()
+            }),
+        ])
+    };
+    read_one(&mut dump, AttributedPacket::new(pli(1, 2)));
+    assert!(sink.lines().is_empty(), "a lone PLI is rejected whole");
+    read_one(&mut dump, AttributedPacket::new(pair()));
+    assert_eq!(
+        sink.lines().len(),
+        2,
+        "both packets of the accepted compound"
     );
 }

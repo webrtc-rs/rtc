@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (0), the wire-most slot: the dump sees departures after pacing and numbering, and arrivals
   before recovery and re-stamping. The nine pion packetdump tests are ported, plus forwarding,
   filter-cost, ordering and registry-placement tests.
+- `rtc-interceptor`: `PacketDumpBuilder::rtcp_compound_filter` (pion's `RTCPFilter`), `rtp_binary_formatter` / `rtcp_binary_formatter` and `PacketDumpSink::write_bytes` (pion's binary format callbacks); a binary formatter turns the default text line off, as in pion.
 - `rtc-media`: rtpdump reader and writer (`io::rtpdump`), byte-compatible with pion's
   `pkg/media/rtpdump` (preamble, binary header, packet records). New public items:
   `rtpdump::{Header, Packet, Reader, Writer}`; two `ErrRtpDump*` variants in `rtc-shared`.
