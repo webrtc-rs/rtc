@@ -1673,6 +1673,33 @@ pub enum Error {
     /// Unsupported channel mapping family.
     #[error("unsupported channel mapping family")]
     ErrUnsupportedChannelMappingFamily,
+    /// Invalid channel count.
+    #[error("invalid channel count")]
+    ErrInvalidChannelCount,
+    /// Invalid channel mapping.
+    #[error("invalid channel mapping")]
+    ErrInvalidChannelMap,
+    /// Invalid OpusTags.
+    #[error("invalid OpusTags")]
+    ErrInvalidOpusTags,
+    /// Duplicate Ogg track SSRC.
+    #[error("duplicate Ogg track SSRC")]
+    ErrDuplicateTrackSSRC,
+    /// Duplicate Ogg track serial.
+    #[error("duplicate Ogg track serial")]
+    ErrDuplicateTrackSerial,
+    /// Cannot add Ogg tracks after writing has started.
+    #[error("cannot add Ogg tracks after writing has started")]
+    ErrTracksStarted,
+    /// RTP packet SSRC does not match Ogg track SSRC.
+    #[error("RTP packet SSRC does not match Ogg track SSRC")]
+    ErrPacketSSRCMismatch,
+    /// Invalid Opus packet.
+    #[error("invalid Opus packet")]
+    ErrInvalidOpusPacket,
+    /// Output not opened (the writer was closed).
+    #[error("output not opened")]
+    ErrOutputNotOpened,
 
     /// Data is not a H264 bitstream.
     #[error("data is not a H264 bitstream")]

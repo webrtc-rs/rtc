@@ -120,6 +120,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the new `ErrNackInvalidSize` where the infallible `build` stays inert.
 - `rtc-rtp`: `Header::get_extension_payload`, the borrowed form of
   `Header::get_extension`.
+- `rtc-rtp`: RFC 8285 header-extension API parity with pion v1.10.6. `Header` gains
+  `clear_extensions` (pion `ClearExtensions`) and `set_extension_with_profile` (pion
+  `SetExtensionWithProfile`: profile upgrade/downgrade with re-encoding, refusing downgrades an
+  existing extension cannot fit); `Packetizer` gains `generate_padding` (pion `GeneratePadding`:
+  payload-less, 255-octet-padding packets at the latest timestamp). pion's
+  `header_extension_test.go` (13 tests), the missing `packet_test.go` rows (14: ClearExtensions,
+  padding-with-size termination, extension-without-payload, clones, marshal funcs, padding
+  initialization, panic regressions), `sequencer_test.go` (6, incl. concurrency), the missing
+  `packetizer_test.go` rows (roundtrip, generate-padding, empty payload) and the missing
+  extension-helper tests (MarshalTo, playout-delay edge cases) are ported. Fixed: deleting the
+  last extension now clears the extension flag and profile (pion behaviour); a raw-profile
+  header with no extensions marshals as an empty block instead of erroring (pion issue #315);
+  `new_random_sequencer` draws its start from the lower half of the sequence space (pion's
+  `maxInitialRandomSequenceNumber`, needed for SRTP after loss).
+- `rtc-media`: Ogg writer/reader parity with pion v4.2.24's `pkg/media/oggwriter`/`oggreader`.
+  The writer gains the multiplexed API: `MultiTrackOggWriter`/`SeekableMultiTrackOggWriter`
+  (pion's `Writer` + `WithSeekableOutput`) with per-track SSRC routing, duplicate-SSRC/serial
+  rejection, lazy header start, `TrackOptions` (serial, sample rate, channel count/mapping,
+  OpusTags overrides), `SeekableOggWriter` (pion's file-backed writer: close rewrites the last
+  page with EOS), explicit channel-mapping families 1/2/255 with pion's validation,
+  `OpusTags`/`UserComment` with vendor/user-comment validation, and Opus-duration granule
+  positions (pion's `opusPacketSampleCount`) instead of RTP timestamp deltas. The reader
+  gains exact per-family payload-length validation, the comment-count bound and
+  missing-`=` rejection in `parse_opus_tags`, and `bytes_read` tracking. All 45 pion
+  oggwriter/oggreader tests are ported. Fixed: payloads over 255*255 bytes corrupted the
+  page segment count (`u8` overflow); the reader accepted OpusTags with an impossible comment
+  count (unbounded allocation) and silently dropped comments without `=`.
+- `rtc-media`: `fuzz/` with `ogg_reader`, `opus_head` and `opus_tags` targets (cargo-fuzz).
+- `rtc-shared`: Ogg writer/reader error variants (`ErrInvalidChannelCount`, `ErrInvalidChannelMap`,
+  `ErrInvalidOpusTags`, `ErrDuplicateTrackSSRC`, `ErrDuplicateTrackSerial`, `ErrTracksStarted`,
+  `ErrPacketSSRCMismatch`, `ErrInvalidOpusPacket`, `ErrOutputNotOpened`).
 - `rtc-sctp` + `rtc`: four SCTP congestion/timer tuning knobs, mirroring pion's
   `SettingEngine.SetSCTPRTOMax` / `SetSCTPMinCwnd` / `SetSCTPFastRtxWnd` / `SetSCTPCwndCAStep`.
   `TransportConfig::{with_rto_max, with_min_cwnd, with_fast_rtx_wnd, with_cwnd_ca_step}`
@@ -163,6 +194,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
 - `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
+- `rtc-media`: `OggWriter::new` takes `channel_count: u16` (pion rejects counts that wrap `u8`);
+  granule positions advance by each packet's Opus duration (pion parity) instead of RTP timestamp
+  deltas; `close` on an append-only output no longer duplicates the last payload as an EOS page
+  (that corrupted streams; a proper EOS needs the seekable writers); `ogg_reader::UserComment`
+  and `OpusTags` implement `PartialEq`/`Eq`.
 
 ### Added
 - `rtc-turn`: a Sans-I/O **TURN server** (`rtc_turn::server`). Long-term credentials with
