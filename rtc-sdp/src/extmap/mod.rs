@@ -124,6 +124,13 @@ impl ExtMap {
             }
         }
 
+        // pion's `url.Parse` rejects invalid percent escapes (`%zz`); the
+        // `url` crate accepts them as literals, so validate them here to keep
+        // the same inputs out.
+        if !has_valid_percent_escapes(fields[1]) {
+            return Err(Error::ParseExtMap(line));
+        }
+
         let uri = Some(Url::parse(fields[1])?);
 
         let ext_attr = if fields.len() == 3 {
@@ -144,4 +151,16 @@ impl ExtMap {
     pub fn marshal(&self) -> String {
         "extmap:".to_string() + self.to_string().as_str()
     }
+}
+
+/// Whether every `%` in `s` starts a well-formed percent escape (two hex
+/// digits), as pion's `url.Parse` requires.
+fn has_valid_percent_escapes(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    (0..bytes.len()).all(|i| {
+        bytes[i] != b'%'
+            || bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|h| h[0].is_ascii_hexdigit() && h[1].is_ascii_hexdigit())
+    })
 }
