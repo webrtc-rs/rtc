@@ -1852,6 +1852,11 @@ pub enum Error {
     #[error("ice candidate pool size cannot be modified")]
     ErrModifyingICECandidatePoolSize,
 
+    /// ErrModifyingRTPHeaderEncryptionPolicy indicates that an attempt to modify
+    /// RTPHeaderEncryptionPolicy was made after PeerConnection has been initialized.
+    #[error("rtp header encryption policy cannot be modified")]
+    ErrModifyingRTPHeaderEncryptionPolicy,
+
     /// ErrStringSizeLimit indicates that the character size limit of string is
     /// exceeded. The limit is hardcoded to 65535 according to specifications.
     #[error("data channel label exceeds size limit")]

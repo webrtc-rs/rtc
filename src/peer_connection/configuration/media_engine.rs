@@ -995,6 +995,12 @@ impl MediaEngine {
                 }
             }
 
+            // A data-channel section lists no RTP payload types: its format is `webrtc-datachannel`
+            // or, in a legacy `DTLS/SCTP 5000` offer, the SCTP port, which is not a `u8`.
+            if media.is_webrtc_datachannel() {
+                continue;
+            }
+
             let mut codecs = codecs_from_media_description(media)?;
 
             let add_if_new = |existing_codecs: &mut Vec<RTCRtpCodecParameters>,

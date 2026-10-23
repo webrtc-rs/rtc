@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `rtc`, found by porting pion's `peerconnection_test.go`: `set_configuration` applied part of a
+  rejected call (it now validates everything first and changes nothing on error), accepted a
+  change of the RTP header encryption policy (`ErrModifyingRTPHeaderEncryptionPolicy` now), and
+  treated an unspecified bundle / RTCP-mux policy as a change; unspecified policies take their
+  defaults at construction, so `get_configuration` reports what is in effect. Every description
+  after the first got a random SDP origin version instead of the previous one plus one
+  (RFC 9429 §5.2.2). A legacy `m=application ... DTLS/SCTP 5000` offer with `a=sctpmap` failed
+  `set_remote_description` (the SCTP port was parsed as an RTP payload type) and was not treated
+  as a data channel.
 - `rtc-dtls`, found by porting pion's `conn_test.go` onto the new handshake harness: an empty PSK
   client identity was rejected; hellos without an extension block were rejected, a ClientHello's
   session id was ignored (the parse went wrong when one was sent), trailing bytes after the
@@ -49,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wrapping the index - and with it an already-spent keystream - back to 0.
 
 ### Added
+- `rtc`: `RTCConfigurationBuilder::with_always_negotiate_data_channels` (pion's
+  `AlwaysNegotiateDataChannels`): offer an `m=application` section before any data channel
+  exists, so the first channel created later needs no renegotiation. `set_configuration` can
+  turn it on, never off, as in pion.
 - `rtc-srtp`: the pion/srtp test suite is ported (issue #9): RFC 3711 appendix B.2 and
   RFC 6188 section 7.1 AES-CM keystream vectors, RFC 7714 sections 16/17 AEAD vectors
   (RTP and RTCP, both key sizes), rollover-counter and replay behaviour (replay windows,

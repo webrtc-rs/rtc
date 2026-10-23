@@ -1342,8 +1342,12 @@ pub(crate) trait MediaDescriptionExt {
 
 impl MediaDescriptionExt for MediaDescription {
     fn is_webrtc_datachannel(&self) -> bool {
+        // `UDP/DTLS/SCTP webrtc-datachannel` (RFC 8841) and the legacy `DTLS/SCTP 5000` with
+        // `a=sctpmap` (draft-ietf-mmusic-sctp-sdp-05) are both data channels; an application
+        // section carried over RTP (e.g. SMPTE 336M) is not.
         self.media_name.media == MEDIA_SECTION_APPLICATION
-            && self.media_name.formats == ["webrtc-datachannel"]
+            && (self.media_name.formats == ["webrtc-datachannel"]
+                || self.media_name.protos.iter().any(|proto| proto == "SCTP"))
     }
 }
 
@@ -1520,8 +1524,9 @@ pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription)
         d.origin.session_id = origin.session_id;
 
         //d.Origin.SessionVersion = atomic.AddUint64(&origin.SessionVersion, 1)
+        // The description's own version is a fresh value; it must continue the saved one.
         origin.session_version += 1;
-        d.origin.session_version += 1;
+        d.origin.session_version = origin.session_version;
     }
 }
 

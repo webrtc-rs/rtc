@@ -230,7 +230,7 @@ impl RTCPeerConnection {
             }
         }
 
-        if !self.data_channels.is_empty() {
+        if !self.data_channels.is_empty() || self.configuration.always_negotiate_data_channels {
             media_sections.push(MediaSection {
                 mid: format!("{}", media_sections.len()),
                 transceiver_index: usize::MAX,
@@ -390,7 +390,9 @@ impl RTCPeerConnection {
                 }
             }
 
-            if !self.data_channels.is_empty() && !already_have_application_media_section {
+            if (!self.data_channels.is_empty() || self.configuration.always_negotiate_data_channels)
+                && !already_have_application_media_section
+            {
                 media_sections.push(MediaSection {
                     mid: format!("{}", media_sections.len()),
                     transceiver_index: usize::MAX,

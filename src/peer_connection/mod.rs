@@ -1916,6 +1916,9 @@ impl RTCPeerConnection {
     /// - The peer connection is closed (`ErrConnectionClosed`)
     /// - The peer identity differs from the one already set (`ErrModifyingPeerIdentity`)
     /// - The number of certificates differs from the one already set (`ErrModifyingCertificates`)
+    /// - The bundle policy, RTCP mux policy or RTP header encryption policy differ
+    ///
+    /// A rejected call changes nothing.
     ///
     /// # Specification
     ///
@@ -1926,57 +1929,79 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
+        // Every check runs before anything is applied, so a rejected call leaves the
+        // configuration untouched (pion `TestPeerConnection_SetConfiguration_RejectsBeforeMutating`).
+
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #3)
-        if !configuration.peer_identity.is_empty() {
-            if configuration.peer_identity != self.configuration.peer_identity {
-                return Err(Error::ErrModifyingPeerIdentity);
-            }
-            self.configuration.peer_identity = configuration.peer_identity;
+        if !configuration.peer_identity.is_empty()
+            && configuration.peer_identity != self.configuration.peer_identity
+        {
+            return Err(Error::ErrModifyingPeerIdentity);
         }
 
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #4)
-        if !configuration.certificates.is_empty() {
-            if configuration.certificates.len() != self.configuration.certificates.len() {
-                return Err(Error::ErrModifyingCertificates);
-            }
-
-            self.configuration.certificates = configuration.certificates;
+        if !configuration.certificates.is_empty()
+            && configuration.certificates.len() != self.configuration.certificates.len()
+        {
+            return Err(Error::ErrModifyingCertificates);
         }
 
+        // An unspecified policy means "leave as is", as in pion.
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #5)
-
-        if configuration.bundle_policy != self.configuration.bundle_policy {
+        if configuration.bundle_policy != configuration::bundle_policy::RTCBundlePolicy::Unspecified
+            && configuration.bundle_policy != self.configuration.bundle_policy
+        {
             return Err(Error::ErrModifyingBundlePolicy);
         }
-        self.configuration.bundle_policy = configuration.bundle_policy;
 
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #6)
-        if configuration.rtcp_mux_policy != self.configuration.rtcp_mux_policy {
+        if configuration.rtcp_mux_policy
+            != configuration::rtcp_mux_policy::RTCRtcpMuxPolicy::Unspecified
+            && configuration.rtcp_mux_policy != self.configuration.rtcp_mux_policy
+        {
             return Err(Error::ErrModifyingRTCPMuxPolicy);
         }
-        self.configuration.rtcp_mux_policy = configuration.rtcp_mux_policy;
 
-        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #7)
-        if configuration.ice_candidate_pool_size != 0 {
-            if self.configuration.ice_candidate_pool_size != configuration.ice_candidate_pool_size
-                && self.local_description().is_some()
-            {
-                return Err(Error::ErrModifyingICECandidatePoolSize);
-            }
-            self.configuration.ice_candidate_pool_size = configuration.ice_candidate_pool_size;
+        // Immutable after construction, like the two policies above.
+        if configuration.rtp_header_encryption_policy
+            != configuration::rtp_header_encryption_policy::RTCRtpHeaderEncryptionPolicy::Unspecified
+            && configuration.rtp_header_encryption_policy
+                != self.configuration.rtp_header_encryption_policy
+        {
+            return Err(Error::ErrModifyingRTPHeaderEncryptionPolicy);
         }
 
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #7)
+        if configuration.ice_candidate_pool_size != 0
+            && self.configuration.ice_candidate_pool_size != configuration.ice_candidate_pool_size
+            && self.local_description().is_some()
+        {
+            return Err(Error::ErrModifyingICECandidatePoolSize);
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3)
+        for server in &configuration.ice_servers {
+            server.validate()?;
+        }
+
+        // Nothing can fail from here on.
+        if !configuration.peer_identity.is_empty() {
+            self.configuration.peer_identity = configuration.peer_identity;
+        }
+        if !configuration.certificates.is_empty() {
+            self.configuration.certificates = configuration.certificates;
+        }
+        if configuration.ice_candidate_pool_size != 0 {
+            self.configuration.ice_candidate_pool_size = configuration.ice_candidate_pool_size;
+        }
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #8)
-
         self.configuration.ice_transport_policy = configuration.ice_transport_policy;
-
-        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11)
+        // Like other zero-value fields, only `true` changes the existing setting.
+        if configuration.always_negotiate_data_channels {
+            self.configuration.always_negotiate_data_channels = true;
+        }
         if !configuration.ice_servers.is_empty() {
-            // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3)
-            for server in &configuration.ice_servers {
-                server.validate()?;
-            }
-            self.configuration.ice_servers = configuration.ice_servers
+            self.configuration.ice_servers = configuration.ice_servers;
         }
 
         Ok(())
