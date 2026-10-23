@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod context_test;
 #[cfg(test)]
+mod rfc_vectors_test;
+#[cfg(test)]
 mod srtcp_test;
 #[cfg(test)]
 mod srtp_test;
@@ -238,5 +240,22 @@ impl Context {
     /// set_index sets SRTCP index value of specified SSRC.
     fn set_index(&mut self, ssrc: u32, index: usize) {
         self.get_srtcp_ssrc_state(ssrc).srtcp_index = index % (MAX_SRTCP_INDEX + 1);
+    }
+
+    /// Test-only: a context around an already-built cipher, replay protection off.
+    ///
+    /// The RFC known-answer vectors key the cipher with session keys stated in the RFC itself,
+    /// bypassing the derivation [`Context::new`] performs. pion's test suite reaches the same
+    /// place with `createContextWithCipher`.
+    #[cfg(test)]
+    pub(crate) fn new_with_cipher(cipher: Box<dyn Cipher>) -> Context {
+        Context {
+            cipher,
+            srtp_ssrc_states: HashMap::new(),
+            srtcp_ssrc_states: HashMap::new(),
+            new_srtp_replay_detector: srtp_no_replay_protection(),
+            new_srtcp_replay_detector: srtcp_no_replay_protection(),
+            cryptex_mode: cryptex::CryptexMode::Disabled,
+        }
     }
 }

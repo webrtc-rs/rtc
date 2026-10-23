@@ -234,6 +234,47 @@ impl CipherAeadAesGcm {
         })
     }
 
+    /// Test-only: a cipher keyed with session keys that were derived elsewhere.
+    ///
+    /// The RFC 7714 known-answer vectors state the *session* key and salt directly, bypassing the
+    /// key derivation [`new`](Self::new) performs; pion reaches the same place with
+    /// `newSrtpCipherAeadAesGcmWithDerivedKeys`.
+    #[cfg(test)]
+    pub(crate) fn new_with_session_keys(
+        profile: ProtectionProfile,
+        srtp_session_key: &[u8],
+        srtcp_session_key: &[u8],
+        srtp_session_salt: &[u8],
+        srtcp_session_salt: &[u8],
+        crypto: &dyn RTCCrypto,
+    ) -> Result<CipherAeadAesGcm> {
+        let algorithm = match profile {
+            ProtectionProfile::AeadAes128Gcm => AeadAlgorithm::Aes128Gcm,
+            ProtectionProfile::AeadAes256Gcm => AeadAlgorithm::Aes256Gcm,
+            _ => unreachable!(),
+        };
+
+        let build_cipher = |key: &[u8]| -> Result<Box<dyn AeadCipher>> {
+            let cipher = crypto.new_aead(algorithm, key).map_err(crypto_error)?;
+            if cipher.tag_len() != CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN {
+                return Err(Error::Crypto(format!(
+                    "SRTP AES-GCM requires a {}-byte tag, provider returned {}",
+                    CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN,
+                    cipher.tag_len()
+                )));
+            }
+            Ok(cipher)
+        };
+
+        Ok(CipherAeadAesGcm {
+            profile,
+            srtp_cipher: build_cipher(srtp_session_key)?,
+            srtcp_cipher: build_cipher(srtcp_session_key)?,
+            srtp_session_salt: srtp_session_salt.to_vec(),
+            srtcp_session_salt: srtcp_session_salt.to_vec(),
+        })
+    }
+
     /// The 12-octet IV used by AES-GCM SRTP is formed by first concatenating
     /// 2 octets of zeroes, the 4-octet SSRC, the 4-octet rollover counter
     /// (ROC), and the 2-octet sequence number (SEQ).  The resulting 12-octet

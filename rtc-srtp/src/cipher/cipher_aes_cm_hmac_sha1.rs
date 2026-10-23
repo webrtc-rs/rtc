@@ -121,6 +121,59 @@ impl CipherAesCmHmacSha1 {
         })
     }
 
+    /// Test-only: a cipher keyed with the session key and salt stated by a known-answer vector.
+    ///
+    /// The RFC vectors (RFC 3711 appendix B.2, RFC 6188 section 7.1) state the *session* key and
+    /// salt directly, bypassing the key derivation [`new`](Self::new) performs; pion reaches the
+    /// same place with `newSrtpCipherAesCmHmacSha1WithDerivedKeys`. Those vectors carry no auth
+    /// key, so both MACs are keyed with zeros — the tag is produced but never asserted against.
+    #[cfg(test)]
+    pub(crate) fn new_with_session_keys(
+        profile: ProtectionProfile,
+        srtp_session_key: &[u8],
+        srtcp_session_key: &[u8],
+        srtp_session_salt: &[u8],
+        srtcp_session_salt: &[u8],
+        crypto: &dyn RTCCrypto,
+    ) -> Result<Self> {
+        let algorithm = match profile {
+            ProtectionProfile::Aes128CmHmacSha1_32 | ProtectionProfile::Aes128CmHmacSha1_80 => {
+                StreamCipherAlgorithm::Aes128Ctr
+            }
+            ProtectionProfile::Aes256CmHmacSha1_80 | ProtectionProfile::Aes256CmHmacSha1_32 => {
+                StreamCipherAlgorithm::Aes256Ctr
+            }
+            _ => {
+                return Err(Error::Other(String::from(
+                    "no AES protection profile passed to CipherAesCmHmacSha1",
+                )));
+            }
+        };
+
+        let srtp_cipher = crypto
+            .new_stream_cipher(algorithm, srtp_session_key)
+            .map_err(crypto_error)?;
+        let srtcp_cipher = crypto
+            .new_stream_cipher(algorithm, srtcp_session_key)
+            .map_err(crypto_error)?;
+        let srtp_session_auth = crypto
+            .new_hmac(HmacAlgorithm::Sha1, &[0u8; 20])
+            .map_err(crypto_error)?;
+        let srtcp_session_auth = crypto
+            .new_hmac(HmacAlgorithm::Sha1, &[0u8; 20])
+            .map_err(crypto_error)?;
+
+        Ok(Self {
+            profile,
+            srtp_session_salt: srtp_session_salt.to_vec(),
+            srtp_session_auth,
+            srtcp_session_salt: srtcp_session_salt.to_vec(),
+            srtcp_session_auth,
+            srtp_cipher,
+            srtcp_cipher,
+        })
+    }
+
     /// Generate the SRTP HMAC-SHA1 authentication tag described by RFC 3711, section 4.2.
     ///
     /// Takes `&mut self` so the pre-keyed [`Mac`] can be used directly; the key schedule was

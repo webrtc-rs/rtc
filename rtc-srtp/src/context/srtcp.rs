@@ -63,10 +63,17 @@ impl Context {
 
         let index = {
             let state = self.get_srtcp_ssrc_state(ssrc);
-            state.srtcp_index += 1;
-            if state.srtcp_index > MAX_SRTCP_INDEX {
-                state.srtcp_index = 0;
+            if state.srtcp_index >= MAX_SRTCP_INDEX {
+                // ... when 2^48 SRTP packets or 2^31 SRTCP packets have been secured with the same
+                // key (whichever occurs before), the key management MUST be called to provide new
+                // master key(s) (previously stored and used keys MUST NOT be used again), or the
+                // session MUST be terminated. https://www.rfc-editor.org/rfc/rfc3711#section-9.2
+                // Wrapping the index back to 0 instead would reuse an index — and with it a
+                // keystream — the session has already spent.
+                return Err(Error::ErrExceededMaxPackets);
             }
+            // We roll over early because MSB is used for marking as encrypted.
+            state.srtcp_index += 1;
             state.srtcp_index
         };
 

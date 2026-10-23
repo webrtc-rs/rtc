@@ -63,11 +63,16 @@ impl Context {
         // for it authenticates: the SSRC is read from an unauthenticated header, so allocating
         // per-SSRC state (a replay window, a map slot) before the tag is checked would let anyone
         // grow this context's memory without bound by spraying random SSRCs.
+        // Replay detection, as in pion, runs over the full 48-bit packet index `roc << 16 | seq`
+        // the RFC assigns the packet, not the bare sequence number: after a rollover the same
+        // `seq` belongs to a different index, and a replay from a previous rollover must stay
+        // "too old" rather than look new again.
         let (roc, diff) = match self.srtp_ssrc_states.get_mut(&ssrc) {
             Some(state) => {
                 let (roc, diff, _) = state.next_rollover_count(sequence_number);
+                let index = (roc as u64) << 16 | sequence_number as u64;
                 if let Some(replay_detector) = &mut state.replay_detector
-                    && !replay_detector.check(sequence_number as u64)
+                    && !replay_detector.check(index)
                 {
                     return Err(Error::SrtpSsrcDuplicated(ssrc, sequence_number));
                 }
@@ -80,8 +85,9 @@ impl Context {
 
         let state = self.get_srtp_ssrc_state(ssrc);
         if let Some(replay_detector) = &mut state.replay_detector {
-            // A new SSRC's detector has not been asked about this packet yet.
-            replay_detector.check(sequence_number as u64);
+            // A new SSRC's detector has not been asked about this packet yet (roc 0 here, as
+            // the guess above for a stream with no history).
+            replay_detector.check((roc as u64) << 16 | sequence_number as u64);
             replay_detector.accept();
         }
         state.update_rollover_count(sequence_number, diff);

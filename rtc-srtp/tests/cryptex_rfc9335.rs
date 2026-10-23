@@ -21,15 +21,6 @@ struct Case {
     vectors: &'static [(&'static str, &'static str, &'static str)],
 }
 
-const NAMES: [&str; 6] = [
-    "one-byte extension",
-    "two-byte extension",
-    "one-byte extension and CSRCs",
-    "two-byte extension and CSRCs",
-    "empty one-byte extension and CSRCs",
-    "empty two-byte extension and CSRCs",
-];
-
 static CASES: &[Case] = &[
     Case {
         profile: ProtectionProfile::Aes128CmHmacSha1_80,
@@ -284,5 +275,180 @@ fn a_forged_cryptex_packet_is_rejected_and_left_alone() {
                 );
             }
         }
+    }
+}
+
+/// pion's `TestUpdateOptionsCryptexRuntime`: the Cryptex mode may be flipped on a context that
+/// is already in use — a renegotiation does exactly that. After each flip the packets on the
+/// wire show it: the extension profile of an encrypted packet is `0xC0DE` while Cryptex is on,
+/// the ordinary `0xBEDE` while it is off.
+#[test]
+fn cryptex_mode_can_be_flipped_at_runtime() {
+    use rtp::header::{CRYPTEX_PROFILE_ONE_BYTE, EXTENSION_PROFILE_ONE_BYTE, Header};
+    use shared::marshal::{Marshal, Unmarshal};
+
+    let profiles = [
+        ProtectionProfile::Aes128CmHmacSha1_32,
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::Aes256CmHmacSha1_32,
+        ProtectionProfile::Aes256CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+        ProtectionProfile::AeadAes256Gcm,
+    ];
+
+    let packet_bytes = |sequence_number: u16| {
+        let mut header = rtp::Header {
+            version: 2,
+            sequence_number,
+            ..Default::default()
+        };
+        header.extension = true;
+        header.extension_profile = EXTENSION_PROFILE_ONE_BYTE;
+        header
+            .set_extension(1, bytes::Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]))
+            .unwrap();
+        rtp::Packet {
+            header,
+            payload: bytes::Bytes::new(),
+        }
+        .marshal()
+        .unwrap()
+        .to_vec()
+    };
+
+    let extension_profile_of = |packet: &[u8]| {
+        let mut buf = packet;
+        Header::unmarshal(&mut buf).unwrap().extension_profile
+    };
+
+    for profile in profiles {
+        let crypto = rtc_srtp::crypto::default_provider().unwrap();
+        let key = vec![0u8; profile.key_len()];
+        let salt = vec![0u8; profile.salt_len()];
+        let mut ctx = Context::new(&key, &salt, profile, None, None, crypto.crypto()).unwrap();
+        ctx.set_cryptex_mode(CryptexMode::Disabled);
+
+        let encrypted = ctx.encrypt_rtp(&packet_bytes(0)).unwrap();
+        assert_eq!(
+            extension_profile_of(&encrypted),
+            EXTENSION_PROFILE_ONE_BYTE,
+            "{profile:?}: Cryptex off must leave the profile byte alone"
+        );
+
+        ctx.set_cryptex_mode(CryptexMode::Enabled);
+        let encrypted = ctx.encrypt_rtp(&packet_bytes(1)).unwrap();
+        assert_eq!(
+            extension_profile_of(&encrypted),
+            CRYPTEX_PROFILE_ONE_BYTE,
+            "{profile:?}: Cryptex on must mark the extension profile"
+        );
+
+        ctx.set_cryptex_mode(CryptexMode::Disabled);
+        let encrypted = ctx.encrypt_rtp(&packet_bytes(2)).unwrap();
+        assert_eq!(
+            extension_profile_of(&encrypted),
+            EXTENSION_PROFILE_ONE_BYTE,
+            "{profile:?}: flipping Cryptex back off must be honoured"
+        );
+    }
+}
+
+/// pion's `TestUpdateOptionsCryptexRuntimeDecrypt`: the receive side honours the same runtime
+/// flip. After switching to Required, a packet whose header extensions are not Cryptex-protected
+/// is refused; a Cryptex-protected one is accepted; switching back to Disabled accepts both.
+#[test]
+fn cryptex_mode_flip_applies_to_decrypt() {
+    use rtp::header::{CRYPTEX_PROFILE_ONE_BYTE, EXTENSION_PROFILE_ONE_BYTE, Header};
+    use shared::marshal::{Marshal, Unmarshal};
+
+    let profiles = [
+        ProtectionProfile::Aes128CmHmacSha1_32,
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::Aes256CmHmacSha1_32,
+        ProtectionProfile::Aes256CmHmacSha1_80,
+        ProtectionProfile::AeadAes128Gcm,
+        ProtectionProfile::AeadAes256Gcm,
+    ];
+
+    let packet_bytes = |sequence_number: u16| {
+        let mut header = rtp::Header {
+            version: 2,
+            sequence_number,
+            ..Default::default()
+        };
+        header.extension = true;
+        header.extension_profile = EXTENSION_PROFILE_ONE_BYTE;
+        header
+            .set_extension(1, bytes::Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]))
+            .unwrap();
+        rtp::Packet {
+            header,
+            payload: bytes::Bytes::new(),
+        }
+        .marshal()
+        .unwrap()
+        .to_vec()
+    };
+
+    let extension_profile_of = |packet: &[u8]| {
+        let mut buf = packet;
+        Header::unmarshal(&mut buf).unwrap().extension_profile
+    };
+
+    for profile in profiles {
+        let crypto = rtc_srtp::crypto::default_provider().unwrap();
+        let key = vec![0u8; profile.key_len()];
+        let salt = vec![0u8; profile.salt_len()];
+        let make = |mode| {
+            let mut ctx = Context::new(&key, &salt, profile, None, None, crypto.crypto()).unwrap();
+            ctx.set_cryptex_mode(mode);
+            ctx
+        };
+
+        let srtp_no_cryptex = make(CryptexMode::Disabled)
+            .encrypt_rtp(&packet_bytes(10))
+            .unwrap();
+        let srtp_cryptex = make(CryptexMode::Enabled)
+            .encrypt_rtp(&packet_bytes(11))
+            .unwrap();
+        assert_eq!(
+            extension_profile_of(&srtp_no_cryptex),
+            EXTENSION_PROFILE_ONE_BYTE
+        );
+        assert_eq!(
+            extension_profile_of(&srtp_cryptex),
+            CRYPTEX_PROFILE_ONE_BYTE
+        );
+
+        let mut ctx = make(CryptexMode::Disabled);
+        ctx.set_cryptex_mode(CryptexMode::Required);
+
+        assert_eq!(
+            ctx.decrypt_rtp(&srtp_no_cryptex).unwrap_err(),
+            shared::error::Error::ErrUnencryptedHeaderExtAndCsrcs
+        );
+        assert!(
+            ctx.decrypt_rtp(&srtp_cryptex).is_ok(),
+            "{profile:?}: a Cryptex packet must be accepted while Required"
+        );
+
+        // Flipping back to Disabled: ordinary packets are accepted again, Cryptex-protected
+        // ones are refused — as pion's test asserts with errCryptexDisabled.
+        let srtp_no_cryptex = make(CryptexMode::Disabled)
+            .encrypt_rtp(&packet_bytes(12))
+            .unwrap();
+        let srtp_cryptex = make(CryptexMode::Enabled)
+            .encrypt_rtp(&packet_bytes(13))
+            .unwrap();
+        ctx.set_cryptex_mode(CryptexMode::Disabled);
+        assert!(
+            ctx.decrypt_rtp(&srtp_no_cryptex).is_ok(),
+            "{profile:?}: an ordinary packet must be accepted once Cryptex is off"
+        );
+        assert_eq!(
+            ctx.decrypt_rtp(&srtp_cryptex).unwrap_err(),
+            shared::error::Error::ErrCryptexDisabled,
+            "{profile:?}: a Cryptex packet must be refused once Cryptex is off"
+        );
     }
 }

@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the peer-connection demuxer now read the new borrowed `Header::get_extension_payload`
   instead (found by porting pion's `TestRecordDoesNotAllocateInSteadyState`; TWCC recording is
   now allocation-free in steady state).
+- `rtc-srtp`: three pion-parity fixes found by porting pion's test suite (issue #9).
+  - SRTP replay protection now windows over the full 48-bit packet index
+    `roc << 16 | seq`, as pion's does, not the bare 16-bit sequence number: a replayed
+    packet from a previous rollover used to look "new" again after the sequence number
+    wrapped past it. `srtcp_replay_protection` likewise uses the plain sliding window over
+    the 31-bit SRTCP index, so a long-behind index is too old rather than a wrap-around.
+  - `Context::encrypt_rtcp` returns `ErrExceededMaxPackets` once an SSRC's SRTCP index
+    reaches 2^31-1 (RFC 3711 section 9.2: rekey or end the session) instead of silently
+    wrapping the index - and with it an already-spent keystream - back to 0.
+
+### Added
+- `rtc-srtp`: the pion/srtp test suite is ported (issue #9): RFC 3711 appendix B.2 and
+  RFC 6188 section 7.1 AES-CM keystream vectors, RFC 7714 sections 16/17 AEAD vectors
+  (RTP and RTCP, both key sizes), rollover-counter and replay behaviour (replay windows,
+  custom detector factories, `SetROC` burst-loss recovery, the 2^48/2^31 packet limits),
+  truncated and crafted packets on both legs, the all-profiles `TestSrtpCipher` vector
+  table, DTLS keying-material order, and Cryptex runtime flips on both legs.
 
 ### Added
 - `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
