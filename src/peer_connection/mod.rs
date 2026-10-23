@@ -2651,6 +2651,9 @@ impl RTCPeerConnection {
 }
 
 #[cfg(test)]
+mod pion_cryptex_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::data_channel::state::RTCDataChannelState;
