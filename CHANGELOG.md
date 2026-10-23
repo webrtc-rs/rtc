@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wrapping the index - and with it an already-spent keystream - back to 0.
 
 ### Added
+- `rtc`: `RTCTrackEvent::OnClosing` and `OnClose` are now reported (they were defined and never
+  sent): when a renegotiation stops announcing a receive track, its streams leave the
+  interceptor chain, both events fire, and the transceiver can receive a later track with a
+  fresh `OnTrack`.
 - `rtc`: `RTCConfigurationBuilder::with_always_negotiate_data_channels` (pion's
   `AlwaysNegotiateDataChannels`): offer an `m=application` section before any data channel
   exists, so the first channel created later needs no renegotiation. `set_configuration` can

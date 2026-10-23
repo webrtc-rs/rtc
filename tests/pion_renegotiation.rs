@@ -161,3 +161,132 @@ fn test_add_track_multiple_each_fires_once() {
     }
     assert_eq!(sim.b.tracks_opened(), 3);
 }
+
+/// Whether the media section with `mid` in `sdp` declares `ssrc` (pion `sdpMidHasSsrc`).
+fn sdp_mid_has_ssrc(sdp: &str, mid: &str, ssrc: u32) -> bool {
+    sdp.split("\r\nm=").skip(1).any(|section| {
+        section.lines().any(|l| l == format!("a=mid:{mid}"))
+            && section
+                .lines()
+                .any(|l| l.starts_with(&format!("a=ssrc:{ssrc} ")))
+    })
+}
+
+fn media_sections(sdp: &str) -> usize {
+    sdp.matches("\r\nm=").count()
+}
+
+/// `TestPeerConnection_Transceiver_Mid`: a section keeps its mid and its sender's SSRC across
+/// offers, and a track added after another was removed reuses the freed transceiver.
+#[test]
+fn test_transceiver_mid_is_stable_and_reused() {
+    let mut offerer = pc();
+    let mut answerer = pc();
+    let ssrc1 = 0xa0a0_0001;
+    let ssrc2 = 0xa0a0_0002;
+    let ssrc3 = 0xa0a0_0003;
+    let sender1 = offerer.add_track(vp8_track("pion1", ssrc1)).unwrap();
+    let _sender2 = offerer.add_track(vp8_track("pion2", ssrc2)).unwrap();
+
+    let offer = offerer.create_offer(None).unwrap();
+    offerer
+        .set_local_description(Instant::now(), offer.clone())
+        .unwrap();
+    answerer
+        .set_remote_description(Instant::now(), offer.clone())
+        .unwrap();
+    let answer = answerer.create_answer(None).unwrap();
+    answerer
+        .set_local_description(Instant::now(), answer.clone())
+        .unwrap();
+    offerer
+        .set_remote_description(Instant::now(), answer)
+        .unwrap();
+
+    assert_eq!(media_sections(&offer.sdp), 2, "two video sections");
+    assert!(sdp_mid_has_ssrc(&offer.sdp, "0", ssrc1), "{}", offer.sdp);
+
+    // Removing the first track keeps both sections and the second track's mid and SSRC.
+    offerer.remove_track(sender1).unwrap();
+    let offer = offerer.create_offer(None).unwrap();
+    offerer
+        .set_local_description(Instant::now(), offer.clone())
+        .unwrap();
+    assert_eq!(media_sections(&offer.sdp), 2);
+    assert!(sdp_mid_has_ssrc(&offer.sdp, "1", ssrc2), "{}", offer.sdp);
+
+    // The answerer is still in a stable state and cannot answer an offer it has not seen.
+    assert!(answerer.create_answer(None).is_err());
+
+    answerer
+        .set_remote_description(Instant::now(), offer)
+        .unwrap();
+    let answer = answerer.create_answer(None).unwrap();
+    offerer
+        .set_remote_description(Instant::now(), answer)
+        .unwrap();
+
+    // A new track reuses the transceiver that no longer sends.
+    offerer.add_track(vp8_track("pion3", ssrc3)).unwrap();
+    let offer = offerer.create_offer(None).unwrap();
+    assert_eq!(
+        media_sections(&offer.sdp),
+        2,
+        "the idle transceiver is reused"
+    );
+    assert!(sdp_mid_has_ssrc(&offer.sdp, "0", ssrc3), "{}", offer.sdp);
+    assert!(sdp_mid_has_ssrc(&offer.sdp, "1", ssrc2), "{}", offer.sdp);
+}
+
+/// `TestPeerConnection_Renegotiation_RemoveTrack`: removing the track closes it on the remote.
+#[test]
+fn test_remove_track_closes_the_remote_track() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    sim.negotiate(true);
+    sim.b
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    let ssrc = 0xa0a0_0001;
+    let sender = sim.a.pc.add_track(vp8_track("foo", ssrc)).unwrap();
+    sim.negotiate(true);
+    sim.send_video(true, sender, ssrc, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() == 1));
+
+    sim.a.pc.remove_track(sender).unwrap();
+    sim.negotiate(true);
+    assert!(
+        sim.run_until(Duration::from_secs(2), |s| s.b.tracks_closed() == 1),
+        "the remote track is closed once the sender is gone"
+    );
+}
+
+/// `TestPeerConnection_RoleSwitch`: after the first side offered, the other side can offer, with
+/// its new track going to the transceiver the first offer created.
+#[test]
+fn test_role_switch_second_offerer_adds_a_track() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    sim.negotiate(true);
+
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    let ssrc = 0xb0b0_0001;
+    let sender = sim.b.pc.add_track(vp8_track("foo", ssrc)).unwrap();
+
+    sim.negotiate(false);
+    sim.send_video(false, sender, ssrc, 10);
+    assert!(
+        sim.run_until(Duration::from_secs(2), |s| s.a.tracks_opened() == 1),
+        "the first offerer receives the second offerer's track"
+    );
+}

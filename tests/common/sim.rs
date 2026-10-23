@@ -219,6 +219,19 @@ impl Side {
             .count()
     }
 
+    /// How many `OnTrack(OnClose)` events this side has reported.
+    pub fn tracks_closed(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnClose(_))
+                )
+            })
+            .count()
+    }
+
     /// How many RTP packets this side has received.
     pub fn rtp_received(&self) -> usize {
         self.messages

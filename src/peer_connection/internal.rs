@@ -1,5 +1,7 @@
 use super::*;
-use crate::peer_connection::event::{RTCPeerConnectionEvent, RTCPeerConnectionIceEvent};
+use crate::peer_connection::event::{
+    RTCPeerConnectionEvent, RTCPeerConnectionIceEvent, RTCTrackEvent,
+};
 use crate::peer_connection::handler::datachannel::DataChannelHandlerContext;
 use crate::peer_connection::handler::demuxer::DemuxerHandlerContext;
 use crate::peer_connection::handler::endpoint::EndpointHandlerContext;
@@ -945,6 +947,35 @@ impl RTCPeerConnection {
             vec![]
         };
 
+        // A track the remote no longer announces on this transceiver has ended (pion stops the
+        // receiver, and its `TrackRemote` reads EOF).
+        let ended: Vec<usize> = self
+            .rtp_transceivers
+            .iter()
+            .enumerate()
+            .filter(|(_, transceiver)| {
+                let Some(receiver) = transceiver.receiver().as_ref() else {
+                    return false;
+                };
+                let track = receiver.track();
+                if !Self::track_is_open(track) {
+                    return false;
+                }
+                let announced = transceiver.direction().has_recv()
+                    && incoming_tracks.iter().any(|incoming| {
+                        transceiver.mid().as_ref() == Some(&incoming.mid)
+                            && incoming
+                                .ssrc
+                                .is_none_or(|ssrc| track.ssrcs().any(|open| open == ssrc))
+                    });
+                !announced
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in ended {
+            self.close_remote_track(index);
+        }
+
         let only_one_rtp_transceiver = self.rtp_transceivers.len() == 1;
 
         for incoming_track in incoming_tracks.into_iter() {
@@ -1049,6 +1080,53 @@ impl RTCPeerConnection {
         }
 
         Ok(())
+    }
+
+    /// Whether `track` has settled on a codec for any of its streams, which is when `OnTrack`
+    /// fired for it.
+    fn track_is_open(track: &MediaStreamTrack) -> bool {
+        track.ssrcs().any(|ssrc| {
+            track
+                .get_codec_by_ssrc(ssrc)
+                .is_some_and(|codec| !codec.mime_type.is_empty())
+        })
+    }
+
+    /// Ends the open track of the receiver of transceiver `index`: its streams leave the
+    /// interceptor chain, `OnClosing` and `OnClose` are reported, and the receiver goes back to
+    /// having no track, so the same transceiver can receive a later one with a fresh `OnTrack`.
+    pub(super) fn close_remote_track(&mut self, index: usize) {
+        let Some(receiver) = self.rtp_transceivers[index].receiver_mut() else {
+            return;
+        };
+        if !Self::track_is_open(receiver.track()) {
+            return;
+        }
+        let track_id = receiver.track().track_id().clone();
+        let stream_id = receiver.track().stream_id().to_owned();
+        let kind = receiver.track().kind();
+
+        if let Some(receiver) = self.rtp_transceivers[index].receiver_mut() {
+            // Unbinds every stream of the track from the interceptor chain.
+            let _ = receiver.stop(&self.media_engine, &mut self.interceptor);
+            receiver.set_track(MediaStreamTrack::new(
+                stream_id,
+                track_id.clone(),
+                format!("remote-{kind}-{}", math_rand_alpha(16)),
+                kind,
+                vec![],
+            ));
+            receiver.set_coding_parameters(vec![]);
+        }
+
+        for event in [
+            RTCTrackEvent::OnClosing(track_id.clone()),
+            RTCTrackEvent::OnClose(track_id),
+        ] {
+            self.pipeline_context
+                .event_outs
+                .push_back(RTCPeerConnectionEvent::OnTrack(event));
+        }
     }
 
     /// Update the PeerConnectionState given the state of relevant transports
