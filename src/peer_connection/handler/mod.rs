@@ -27,6 +27,7 @@ use crate::peer_connection::message::{
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
+use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Packet;
 use log::warn;
@@ -443,6 +444,12 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet)))
             }
             RTCMessage::RtcpPacket(_track_id, rtcp_packet) => {
+                // As pion's PeerConnection.WriteRTCP: there is no SRTCP session to protect the
+                // packets with until DTLS has connected, so say so now instead of letting the
+                // pipeline drop them later.
+                if self.dtls_transport().state() != RTCDtlsTransportState::Connected {
+                    return Err(Error::ErrDtlsTransportNotStarted);
+                }
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packet)))
             }
         };

@@ -1007,7 +1007,18 @@ impl RTCPeerConnection {
             connection_role,
             ConnectionRole::Unspecified | ConnectionRole::Actpass
         ) {
-            connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
+            // RFC 5763 §5 / RFC 4145: take the complement of an explicit `active` or `passive`
+            // in the offer; only an `actpass` offer leaves the choice to us.
+            let offered_role = self
+                .remote_description()
+                .and_then(|d| d.parsed.as_ref().map(RTCDtlsRole::from))
+                .unwrap_or(RTCDtlsRole::Auto);
+            connection_role = match offered_role {
+                RTCDtlsRole::Client => RTCDtlsRole::Server,
+                RTCDtlsRole::Server => RTCDtlsRole::Client,
+                _ => DEFAULT_DTLS_ROLE_ANSWER,
+            }
+            .to_connection_role();
 
             if let Some(remote_description) = self.remote_description()
                 && let Some(parsed) = remote_description.parsed.as_ref()
@@ -1015,6 +1026,30 @@ impl RTCPeerConnection {
                 && !self.setting_engine.candidates.ice_lite
             {
                 connection_role = RTCDtlsRole::Server.to_connection_role();
+            }
+        }
+
+        // Renegotiation reuses the DTLS association, including across ICE restarts: "the
+        // answerer MUST insert an SDP "setup" attribute with an attribute value that does not
+        // change the previously negotiated DTLS roles" (RFC 8842 §5.3).
+        if let (Some(local), Some(remote)) = (
+            self.current_local_description.as_ref(),
+            self.current_remote_description.as_ref(),
+        ) {
+            if local.sdp_type == RTCSdpType::Answer {
+                if let Some(parsed) = local.parsed.as_ref() {
+                    connection_role = RTCDtlsRole::from(parsed).to_connection_role();
+                }
+            } else if let Some(parsed) = remote.parsed.as_ref() {
+                match RTCDtlsRole::from(parsed) {
+                    RTCDtlsRole::Client => {
+                        connection_role = RTCDtlsRole::Server.to_connection_role();
+                    }
+                    RTCDtlsRole::Server => {
+                        connection_role = RTCDtlsRole::Client.to_connection_role();
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -3519,5 +3554,40 @@ a=mid:data\r
         pc.set_local_description(Instant::now(), answer).unwrap();
         assert_eq!(pc.ice_transport().role(), RTCIceRole::Controlling);
         pc.close().unwrap();
+    }
+    /// pion `TestPeerConnectionState`: the connection state derived from the ICE and DTLS
+    /// transport states, through to `Closed`.
+    #[test]
+    fn connection_state_follows_ice_and_dtls_transport_states() {
+        use RTCDtlsTransportState as D;
+        use RTCIceConnectionState as I;
+        use RTCPeerConnectionState as P;
+        use sansio::Protocol;
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        assert_eq!(pc.connection_state(), P::New);
+
+        let steps = [
+            (I::Checking, D::New, P::Connecting),
+            (I::Connected, D::New, P::Connecting),
+            (I::Connected, D::Connecting, P::Connecting),
+            (I::Connected, D::Connected, P::Connected),
+            (I::Completed, D::Connected, P::Connected),
+            (I::Connected, D::Closed, P::Connected),
+            (I::Disconnected, D::Connected, P::Disconnected),
+            (I::Failed, D::Connected, P::Failed),
+            (I::Connected, D::Failed, P::Failed),
+        ];
+        for (ice, dtls, want) in steps {
+            pc.ice_transport_mut().ice_connection_state = ice;
+            pc.dtls_transport_mut().state = dtls;
+            pc.update_connection_state(false);
+            assert_eq!(pc.connection_state(), want, "ice={ice:?} dtls={dtls:?}");
+        }
+
+        pc.close().unwrap();
+        assert_eq!(pc.connection_state(), P::Closed);
     }
 }

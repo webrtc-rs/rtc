@@ -311,3 +311,181 @@ fn a_bundle_only_audio_section_counts_as_active_rtp() {
     let answer = negotiate.create_answer(None).unwrap();
     assert!(!has_media_cryptex(&answer.sdp, "audio"), "{}", answer.sdp);
 }
+
+/// Gives the offer to `answerer` (after `edit`), applies the offerer's local description and
+/// returns the answerer's answer, leaving the answer unapplied on the offerer.
+fn offer_and_answer(
+    offerer: &mut RTCPeerConnection,
+    answerer: &mut RTCPeerConnection,
+    edit_offer: impl FnOnce(String) -> String,
+) -> Result<RTCSessionDescription> {
+    let offer = offerer.create_offer(None)?;
+    offerer.set_local_description(Instant::now(), offer.clone())?;
+    let delivered = RTCSessionDescription::offer(edit_offer(offer.sdp.clone()))?;
+    answerer.set_remote_description(Instant::now(), delivered)?;
+    let answer = answerer.create_answer(None)?;
+    answerer.set_local_description(Instant::now(), answer.clone())?;
+    Ok(answer)
+}
+
+fn first_bundle_mid(sdp: &str) -> String {
+    sdp.lines()
+        .find_map(|l| l.strip_prefix("a=group:BUNDLE "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("a BUNDLE group")
+        .to_owned()
+}
+
+/// Moves cryptex from the session level to the media section whose mid is `mid` only.
+fn cryptex_on_media_section_only(sdp: &str, mid: &str) -> String {
+    let mut sections: Vec<Vec<String>> = vec![vec![]];
+    for line in sdp.split("\r\n").filter(|l| !l.is_empty()) {
+        if line.starts_with("m=") {
+            sections.push(vec![]);
+        }
+        sections.last_mut().unwrap().push(line.to_owned());
+    }
+    sections[0].retain(|l| l != "a=cryptex");
+    for section in sections.iter_mut().skip(1) {
+        if section.iter().any(|l| l == &format!("a=mid:{mid}")) {
+            section.push("a=cryptex".to_owned());
+        }
+    }
+    let mut out = sections
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    out.push_str("\r\n");
+    out
+}
+
+/// `TestCryptexAnswerWithTagOnlyCryptexIsAccepted`: cryptex declared only on the BUNDLE tag
+/// section is inherited by the other bundled sections (RFC 9143 section 7.1.3), not rejected as
+/// mixed mode.
+#[test]
+fn an_answer_with_cryptex_only_on_the_bundle_tag_is_accepted() {
+    let mut offerer = peer(Policy::Negotiate);
+    let mut answerer = peer(Policy::Negotiate);
+    add(&mut offerer, RtpCodecKind::Audio);
+    add(&mut offerer, RtpCodecKind::Video);
+    exchange(&mut offerer, &mut answerer, |sdp| {
+        let tag = first_bundle_mid(&sdp);
+        cryptex_on_media_section_only(&sdp, &tag)
+    })
+    .unwrap();
+    assert_eq!(modes(&offerer).0, CryptexMode::Enabled);
+}
+
+/// `TestRTPHeaderEncryptionNegotiatedInheritsFromBundleTag`: a section that only inherits cryptex
+/// from the BUNDLE tag section still counts as negotiated on its transceiver.
+#[test]
+fn a_section_inheriting_cryptex_from_the_bundle_tag_is_negotiated() {
+    let mut offerer = peer(Policy::Negotiate);
+    let mut answerer = peer(Policy::Negotiate);
+    add(&mut offerer, RtpCodecKind::Audio);
+    add(&mut offerer, RtpCodecKind::Video);
+    exchange(&mut offerer, &mut answerer, |sdp| {
+        let tag = first_bundle_mid(&sdp);
+        cryptex_on_media_section_only(&sdp, &tag)
+    })
+    .unwrap();
+    let ids: Vec<_> = offerer.get_transceivers().collect();
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        assert!(
+            offerer
+                .rtp_transceiver(id)
+                .unwrap()
+                .rtp_header_encryption_negotiated(),
+            "both transceivers, the tag section's and the inheriting one"
+        );
+    }
+}
+
+/// `TestCryptexReceiveModeUpdatedOnNewLocalAnswer`: when a renegotiation offer newly carries
+/// cryptex and our regenerated answer mirrors it, applying that answer updates the receive mode.
+#[test]
+fn applying_a_new_local_answer_updates_the_receive_mode() {
+    let mut offerer = peer(Policy::Negotiate);
+    let mut answerer = peer(Policy::Negotiate);
+    add(&mut offerer, RtpCodecKind::Audio);
+
+    // The first offer reaches the answerer with cryptex stripped (JSEP section 5.4 lets
+    // signaling filter capabilities), so the first answer omits it too.
+    let answer = offer_and_answer(&mut offerer, &mut answerer, strip_session_cryptex).unwrap();
+    assert!(!has_session_cryptex(&answer.sdp));
+    offerer
+        .set_remote_description(Instant::now(), answer)
+        .unwrap();
+    assert_eq!(modes(&answerer).1, CryptexMode::Disabled);
+
+    // The renegotiation offer arrives intact and the answer mirrors it.
+    let answer2 = offer_and_answer(&mut offerer, &mut answerer, |sdp| sdp).unwrap();
+    assert!(has_session_cryptex(&answer2.sdp), "{}", answer2.sdp);
+    assert_eq!(
+        modes(&answerer).1,
+        CryptexMode::Enabled,
+        "applying the new local answer must update the receive mode"
+    );
+    offerer
+        .set_remote_description(Instant::now(), answer2)
+        .unwrap();
+}
+
+/// `TestCryptexPreservedWhenDescriptionRejected`: a description refused for an invalid signaling
+/// transition leaves the active modes alone.
+#[test]
+fn a_rejected_description_leaves_the_modes_alone() {
+    let mut offerer = peer(Policy::Negotiate);
+    let mut answerer = peer(Policy::Negotiate);
+    add(&mut offerer, RtpCodecKind::Audio);
+    let answer = offer_and_answer(&mut offerer, &mut answerer, |sdp| sdp).unwrap();
+    offerer
+        .set_remote_description(Instant::now(), answer.clone())
+        .unwrap();
+    let before = modes(&offerer);
+    assert_eq!(before, (CryptexMode::Enabled, CryptexMode::Enabled));
+    assert_eq!(offerer.signaling_state(), RTCSignalingState::Stable);
+
+    // Stable already: another answer, even one with cryptex removed, is an invalid transition.
+    let stripped = RTCSessionDescription::answer(strip_session_cryptex(answer.sdp)).unwrap();
+    assert!(
+        offerer
+            .set_remote_description(Instant::now(), stripped)
+            .is_err()
+    );
+    assert_eq!(modes(&offerer), before);
+}
+
+/// `TestCryptexPreservedWhenLateStageRejectsRenegotiationOffer`: an offer that fails deep inside
+/// `set_remote_description` (a media section without a mid) does not apply the cryptex change
+/// it also carries.
+#[test]
+fn a_late_failure_does_not_apply_the_cryptex_change() {
+    let mut offerer = peer(Policy::Negotiate);
+    let mut answerer = peer(Policy::Negotiate);
+    add(&mut offerer, RtpCodecKind::Audio);
+    exchange(&mut offerer, &mut answerer, |sdp| sdp).unwrap();
+    let before = modes(&answerer);
+    assert_eq!(before, (CryptexMode::Enabled, CryptexMode::Enabled));
+
+    let offer = offerer.create_offer(None).unwrap();
+    let mut in_audio = false;
+    let stripped = strip_session_cryptex(offer.sdp.clone());
+    let broken: Vec<&str> = stripped
+        .split("\r\n")
+        .filter(|line| {
+            if line.starts_with("m=") {
+                in_audio = line.starts_with("m=audio");
+            }
+            !(in_audio && line.starts_with("a=mid:"))
+        })
+        .collect();
+    let result = answerer.set_remote_description(
+        Instant::now(),
+        RTCSessionDescription::offer(broken.join("\r\n")).unwrap(),
+    );
+    assert!(result.is_err(), "the broken offer is refused");
+    assert_eq!(modes(&answerer), before);
+}

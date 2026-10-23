@@ -8,6 +8,8 @@ fn test_generic_fmtp_parse() {
             "key-name=value",
             Box::new(GenericFmtp {
                 mime_type: "generic".to_owned(),
+                clock_rate: 0,
+                channels: 0,
                 parameters: [("key-name".to_owned(), "value".to_owned())]
                     .iter()
                     .cloned()
@@ -19,6 +21,8 @@ fn test_generic_fmtp_parse() {
             "\tkey-name=value ",
             Box::new(GenericFmtp {
                 mime_type: "generic".to_owned(),
+                clock_rate: 0,
+                channels: 0,
                 parameters: [("key-name".to_owned(), "value".to_owned())]
                     .iter()
                     .cloned()
@@ -30,6 +34,8 @@ fn test_generic_fmtp_parse() {
             "key-name=value;key2=value2",
             Box::new(GenericFmtp {
                 mime_type: "generic".to_owned(),
+                clock_rate: 0,
+                channels: 0,
                 parameters: [
                     ("key-name".to_owned(), "value".to_owned()),
                     ("key2".to_owned(), "value2".to_owned()),
@@ -44,6 +50,8 @@ fn test_generic_fmtp_parse() {
             "key-name=value;  \n\tkey2=value2 ",
             Box::new(GenericFmtp {
                 mime_type: "generic".to_owned(),
+                clock_rate: 0,
+                channels: 0,
                 parameters: [
                     ("key-name".to_owned(), "value".to_owned()),
                     ("key2".to_owned(), "value2".to_owned()),
@@ -56,7 +64,7 @@ fn test_generic_fmtp_parse() {
     ];
 
     for (name, input, expected) in tests {
-        let f = parse("generic", input);
+        let f = parse("generic", 0, 0, input);
         assert_eq!(&f, &expected, "{name} failed");
 
         assert_eq!(f.mime_type(), "generic");
@@ -114,8 +122,8 @@ fn test_generic_fmtp_compare() {
 
     for (name, a, b, consist) in tests {
         let check = |a, b| {
-            let aa = parse("", a);
-            let bb = parse("", b);
+            let aa = parse("", 0, 0, a);
+            let bb = parse("", 0, 0, b);
 
             // test forward case here
             let c = aa.match_fmtp(&*bb);
@@ -150,11 +158,50 @@ fn test_generic_fmtp_compare() {
 
 #[test]
 fn test_generic_fmtp_compare_mime_type_case_mismatch() {
-    let a = parse("video/vp8", "");
-    let b = parse("video/VP8", "");
+    let a = parse("video/vp8", 0, 0, "");
+    let b = parse("video/VP8", 0, 0, "");
 
     assert!(
         b.match_fmtp(&*a),
         "fmtp lines should match even if they use different casing"
     );
+}
+
+#[test]
+fn test_generic_fmtp_clock_rate_and_channels() {
+    // pion `TestMatch`: an omitted channel count is inferred, different clock rates or channel
+    // counts never match, and the parameters must still agree.
+    let m = |a: (u32, u16, &str), b: (u32, u16, &str)| {
+        let (a, b) = (
+            parse("generic", a.0, a.1, a.2),
+            parse("generic", b.0, b.1, b.2),
+        );
+        let forward = a.match_fmtp(&*b);
+        assert_eq!(forward, b.match_fmtp(&*a));
+        forward
+    };
+    assert!(m((0, 1, "k=v"), (0, 0, "k=v")), "inferred channels");
+    assert!(!m((90000, 0, ""), (48000, 0, "")), "different clock rate");
+    assert!(!m((90000, 2, ""), (90000, 1, "")), "different channels");
+    assert!(!m((0, 0, "k=a"), (0, 0, "k=b")), "different parameters");
+    // The telephone-event clock rates are different formats.
+    let ev = |rate| parse("audio/telephone-event", rate, 0, "0-16");
+    assert!(!ev(8000).match_fmtp(&*ev(48000)));
+    assert!(ev(8000).match_fmtp(&*ev(8000)));
+}
+
+#[test]
+fn test_fmtp_defaults() {
+    // pion `TestDefaults`.
+    for (mime, clock_rate, channels) in [
+        ("audio/opus", 48000, 2),
+        ("audio/OPUS", 48000, 2),
+        ("audio/pcmu", 8000, 1),
+        ("audio/PCMA", 8000, 1),
+        ("audio/multiopus", 90000, 1),
+        ("video/vp8", 90000, 0),
+    ] {
+        assert_eq!(default_clock_rate(mime), clock_rate, "{mime}");
+        assert_eq!(default_channels(mime), channels, "{mime}");
+    }
 }

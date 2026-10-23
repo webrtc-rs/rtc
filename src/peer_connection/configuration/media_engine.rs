@@ -833,6 +833,8 @@ impl MediaEngine {
 
         let remote_fmtp = fmtp::parse(
             &remote_codec.rtp_codec.mime_type,
+            remote_codec.rtp_codec.clock_rate,
+            remote_codec.rtp_codec.channels,
             remote_codec.rtp_codec.sdp_fmtp_line.as_str(),
         );
         if let Some(apt) = remote_fmtp.parameter("apt") {

@@ -42,6 +42,8 @@ pub struct Sim {
     pub b: Side,
     pub now: Instant,
     candidates_exchanged: bool,
+    /// While set, every datagram is dropped (a dead network path, as pion's vnet chunk filter).
+    pub blackhole: bool,
 }
 
 fn host_candidate(addr: SocketAddr) -> RTCIceCandidateInit {
@@ -81,12 +83,19 @@ impl Sim {
             },
             now: Instant::now(),
             candidates_exchanged: false,
+            blackhole: false,
         }
     }
 
     /// A full offer/answer exchange from `a` to `b` (or `b` to `a`), then the candidates the
     /// first time, then ICE, DTLS and SCTP run for up to a virtual second.
     pub fn negotiate(&mut self, a_offers: bool) {
+        self.negotiate_with(a_offers, false);
+    }
+
+    /// Like [`negotiate`](Self::negotiate); with `ice_restart` the offer restarts ICE and both
+    /// sides learn each other's host candidate again for the new generation.
+    pub fn negotiate_with(&mut self, a_offers: bool, ice_restart: bool) {
         let now = self.now;
         {
             let (offerer, answerer) = if a_offers {
@@ -94,7 +103,11 @@ impl Sim {
             } else {
                 (&mut self.b, &mut self.a)
             };
-            let offer = offerer.pc.create_offer(None).expect("create_offer");
+            let options =
+                ice_restart.then_some(rtc::peer_connection::configuration::RTCOfferOptions {
+                    ice_restart: true,
+                });
+            let offer = offerer.pc.create_offer(options).expect("create_offer");
             offerer
                 .pc
                 .set_local_description(now, offer.clone())
@@ -113,7 +126,7 @@ impl Sim {
                 .set_remote_description(now, answer)
                 .expect("set remote answer");
         }
-        if !self.candidates_exchanged {
+        if !self.candidates_exchanged || ice_restart {
             self.candidates_exchanged = true;
             let (ca, cb) = (host_candidate(self.a.addr), host_candidate(self.b.addr));
             self.a.pc.add_local_candidate(ca.clone()).unwrap();
@@ -140,7 +153,7 @@ impl Sim {
                     };
                     moved = true;
                     // Datagrams for an address the other side does not own go nowhere.
-                    if msg.transport.peer_addr != dst.addr {
+                    if self.blackhole || msg.transport.peer_addr != dst.addr {
                         continue;
                     }
                     let _ = dst.pc.handle_read(TaggedBytesMut {

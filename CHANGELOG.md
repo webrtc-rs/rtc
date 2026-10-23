@@ -18,8 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CandidateRelayConfig::relay_protocol`. `Agent::set_remote_ice_lite` and a real lite selector
   (two lite agents select the best pair themselves).
 - `rtc-rtp`: the abs-capture-time header extension (`AbsCaptureTimeExtension`).
+- `rtc`: `SettingEngine` flags `with_ice_renomination` and `with_ice_trickle_advertised`; offers
+  and answers then carry `a=ice-options:trickle` / `renomination`, and candidates of an older
+  ICE generation (the `ufrag` extension) are dropped after a restart.
+- `rtc`: codec matching now covers `video/h265` (level-id ignored, W3C correction 52),
+  `video/vp9` (`profile-id`, default 0) and `video/av1` (`profile`, default 0) like pion's
+  `internal/fmtp`, and compares clock rate and channel count (with pion's defaults), so
+  `telephone-event/8000` no longer matches `telephone-event/48000`.
 
 ### Changed
+- `rtc`, fixes found by porting pion's tests: an answer takes the complement of an explicit
+  `a=setup:active` / `passive` in the offer (RFC 5763 section 5; before, two `active` peers could
+  both wait for a ClientHello) and keeps the negotiated role on renegotiation (RFC 8842
+  section 5.3); two ICE-lite peers now connect (the remote's lite flag reaches the ICE agent);
+  writing RTCP before DTLS has connected returns `ErrDtlsTransportNotStarted`; a remote offer's
+  codec order is kept for sections whose codec differs only in level, with equivalent payloads
+  keeping their identity.
 - `rtc-ice`, from pion's current behaviour: connectivity checks carry the priority of a
   peer-reflexive candidate (RFC 8445 §7.1.1), and a peer-reflexive candidate takes the `PRIORITY`
   of the request that revealed it; TCP candidates sit 27 below UDP in type preference

@@ -150,21 +150,44 @@ pub(crate) fn codec_parameters_fuzzy_search(
     needle_rtp_codec: &RTCRtpCodec,
     haystack: &[RTCRtpCodecParameters],
 ) -> (RTCRtpCodecParameters, CodecMatch) {
-    let needle_fmtp = fmtp::parse(&needle_rtp_codec.mime_type, &needle_rtp_codec.sdp_fmtp_line);
+    let needle_fmtp = fmtp::parse(
+        &needle_rtp_codec.mime_type,
+        needle_rtp_codec.clock_rate,
+        needle_rtp_codec.channels,
+        &needle_rtp_codec.sdp_fmtp_line,
+    );
 
     //TODO: add unicode case-folding equal support
 
     // First attempt to match on mime_type + sdpfmtp_line
     for c in haystack {
-        let cfmpt = fmtp::parse(&c.rtp_codec.mime_type, &c.rtp_codec.sdp_fmtp_line);
+        let cfmpt = fmtp::parse(
+            &c.rtp_codec.mime_type,
+            c.rtp_codec.clock_rate,
+            c.rtp_codec.channels,
+            &c.rtp_codec.sdp_fmtp_line,
+        );
         if needle_fmtp.match_fmtp(&*cfmpt) {
             return (c.clone(), CodecMatch::Exact);
         }
     }
 
-    // Fallback to just mime_type
+    // Fallback to just mime_type + clock rate + channels
     for c in haystack {
-        if c.rtp_codec.mime_type.to_uppercase() == needle_rtp_codec.mime_type.to_uppercase() {
+        if c.rtp_codec
+            .mime_type
+            .eq_ignore_ascii_case(&needle_rtp_codec.mime_type)
+            && fmtp::clock_rate_equal(
+                &c.rtp_codec.mime_type,
+                c.rtp_codec.clock_rate,
+                needle_rtp_codec.clock_rate,
+            )
+            && fmtp::channels_equal(
+                &c.rtp_codec.mime_type,
+                c.rtp_codec.channels,
+                needle_rtp_codec.channels,
+            )
+        {
             return (c.clone(), CodecMatch::Partial);
         }
     }

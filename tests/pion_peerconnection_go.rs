@@ -593,3 +593,68 @@ fn test_old_generation_candidates_are_dropped() {
     );
     pc.close().unwrap();
 }
+
+const DATA_OFFER: &str = "v=0\r
+o=- 4596489990601351948 2 IN IP4 127.0.0.1\r
+s=-\r
+t=0 0\r
+a=group:BUNDLE data\r
+a=msid-semantic: WMS\r
+m=application 47299 DTLS/SCTP 5000\r
+c=IN IP4 192.168.20.129\r
+a=ice-ufrag:1/MvHwjAyVf27aLu\r
+a=ice-pwd:3dBU7cFOBl120v33cynDvN1E\r
+a=fingerprint:sha-256 75:74:5A:A6:A4:E5:52:F4:A7:67:4C:01:C7:EE:91:3F:21:3D:A2:E3:53:7B:6F:30:86:F2:30:AA:65:FB:04:24\r
+a=setup:actpass\r
+a=mid:data\r
+a=sctpmap:5000 webrtc-datachannel 1024\r
+";
+
+fn answer_setup_for(offer_setup: &str) -> String {
+    let mut pc = pc();
+    let offer = DATA_OFFER.replace("actpass", offer_setup);
+    pc.set_remote_description(Instant::now(), RTCSessionDescription::offer(offer).unwrap())
+        .unwrap();
+    let answer = pc.create_answer(None).unwrap();
+    pc.close().unwrap();
+    answer
+        .sdp
+        .lines()
+        .find_map(|l| l.strip_prefix("a=setup:"))
+        .unwrap()
+        .to_owned()
+}
+
+/// `TestCreateAnswerActiveOfferPassiveAnswer`: an `active` offer is answered `passive`.
+#[test]
+fn test_create_answer_active_offer_passive_answer() {
+    assert_eq!(answer_setup_for("active"), "passive");
+}
+
+/// `TestCreateAnswerPassiveOfferActiveAnswer`: a `passive` offer is answered `active`.
+#[test]
+fn test_create_answer_passive_offer_active_answer() {
+    assert_eq!(answer_setup_for("passive"), "active");
+}
+
+/// `Test_WriteRTCP_Disconnected`: RTCP cannot be written before the connection exists.
+#[test]
+fn test_write_rtcp_disconnected() {
+    let mut pc = pc();
+    let sender = pc
+        .add_transceiver_from_track(track(RtpCodecKind::Video, "local", 1234), None)
+        .unwrap();
+    let packets: Vec<Box<dyn rtcp::Packet>> = vec![Box::new(
+        rtcp::transport_feedbacks::rapid_resynchronization_request::RapidResynchronizationRequest {
+            sender_ssrc: 5,
+            media_ssrc: 10,
+        },
+    )];
+    let sender_id = pc.rtp_transceiver(sender).unwrap().sender().unwrap();
+    let result = pc
+        .rtp_sender(sender_id)
+        .unwrap()
+        .write_rtcp(Instant::now(), packets);
+    assert!(result.is_err());
+    pc.close().unwrap();
+}
