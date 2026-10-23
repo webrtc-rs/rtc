@@ -554,6 +554,9 @@ pub enum Error {
     /// Bad UNKNOWN-ATTRIBUTES size.
     #[error("bad UNKNOWN-ATTRIBUTES size")]
     ErrBadUnknownAttrsSize,
+    /// Invalid ERROR-CODE code (the class digit exceeds the 3-bit field).
+    #[error("invalid ERROR-CODE code")]
+    ErrInvalidErrorCode,
     /// Invalid length of IP value.
     #[error("invalid length of IP value")]
     ErrBadIpLength,

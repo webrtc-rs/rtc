@@ -34,12 +34,23 @@ const ATTR_TYPE_SIZE: usize = 2;
 impl Setter for UnknownAttributes {
     // add_to adds UNKNOWN-ATTRIBUTES attribute to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        let mut v = Vec::with_capacity(ATTR_TYPE_SIZE * 20); // 20 should be enough
-        // If len(a.Types) > 20, there will be allocations.
-        for t in &self.0 {
-            v.extend_from_slice(&t.value().to_be_bytes());
+        if self.0.len() <= 20 {
+            // A stack buffer sized for the attribute's natural limit (20
+            // types, the maximum that fits one attribute): adding must not
+            // allocate (pion's TestAllocations pins zero allocations here).
+            let mut v = [0u8; ATTR_TYPE_SIZE * 20];
+            for (i, t) in self.0.iter().enumerate() {
+                v[i * ATTR_TYPE_SIZE..(i + 1) * ATTR_TYPE_SIZE]
+                    .copy_from_slice(&t.value().to_be_bytes());
+            }
+            m.add(ATTR_UNKNOWN_ATTRIBUTES, &v[..self.0.len() * ATTR_TYPE_SIZE]);
+        } else {
+            let mut v = Vec::with_capacity(ATTR_TYPE_SIZE * self.0.len());
+            for t in &self.0 {
+                v.extend_from_slice(&t.value().to_be_bytes());
+            }
+            m.add(ATTR_UNKNOWN_ATTRIBUTES, &v);
         }
-        m.add(ATTR_UNKNOWN_ATTRIBUTES, &v);
         Ok(())
     }
 }

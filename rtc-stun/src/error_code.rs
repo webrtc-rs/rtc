@@ -46,29 +46,50 @@ const ERROR_CODE_NUMBER_BYTE: usize = 3;
 const ERROR_CODE_REASON_START: usize = 4;
 const ERROR_CODE_REASON_MAX_B: usize = 763;
 const ERROR_CODE_MODULO: u16 = 100;
+/// The class field is 3 bits on the wire, so the class digit caps at 7
+/// (pion's `errorCodeClassMax`).
+const ERROR_CODE_CLASS_MAX: u16 = 7;
 
 impl Setter for ErrorCodeAttribute {
     // add_to adds ERROR-CODE to m.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        check_overflow(
-            ATTR_ERROR_CODE,
-            self.reason.len() + ERROR_CODE_REASON_START,
-            ERROR_CODE_REASON_MAX_B + ERROR_CODE_REASON_START,
-        )?;
-
-        let mut value: Vec<u8> = Vec::with_capacity(ERROR_CODE_REASON_MAX_B);
-
-        let number = (self.code.0 % ERROR_CODE_MODULO) as u8; // error code modulo 100
-        let class = (self.code.0 / ERROR_CODE_MODULO) as u8; // hundred digit
-        value.extend_from_slice(&[0, 0]);
-        value.push(class); // [ERROR_CODE_CLASS_BYTE]
-        value.push(number); //[ERROR_CODE_NUMBER_BYTE] =
-        value.extend_from_slice(&self.reason); //[ERROR_CODE_REASON_START:]
-
-        m.add(ATTR_ERROR_CODE, &value);
-
-        Ok(())
+        add_code_reason(m, self.code, &self.reason)
     }
+}
+
+/// The shared ERROR-CODE encoder, so the [`ErrorCode`](crate::error_code::ErrorCode) setter can
+/// borrow its default reason instead of cloning it (pion's `TestAllocations`
+/// pins zero allocations for both paths).
+fn add_code_reason(m: &mut Message, code: ErrorCode, reason: &[u8]) -> Result<()> {
+    // pion's errInvalidErrorCode: the class (the hundreds digit) must fit
+    // the 3-bit field, so codes above 799 (and negative ones, unraisable
+    // with u16) are rejected before encoding truncates them.
+    let class = code.0 / ERROR_CODE_MODULO;
+    if class > ERROR_CODE_CLASS_MAX {
+        return Err(Error::ErrInvalidErrorCode);
+    }
+
+    check_overflow(
+        ATTR_ERROR_CODE,
+        reason.len() + ERROR_CODE_REASON_START,
+        ERROR_CODE_REASON_MAX_B + ERROR_CODE_REASON_START,
+    )?;
+
+    // A stack buffer: adding an error code must not allocate.
+    let mut value = [0u8; ERROR_CODE_REASON_MAX_B + ERROR_CODE_REASON_START];
+
+    let number = (code.0 % ERROR_CODE_MODULO) as u8; // error code modulo 100
+    let class = class as u8; // hundred digit
+    value[ERROR_CODE_CLASS_BYTE] = class;
+    value[ERROR_CODE_NUMBER_BYTE] = number;
+    value[ERROR_CODE_REASON_START..ERROR_CODE_REASON_START + reason.len()].copy_from_slice(reason);
+
+    m.add(
+        ATTR_ERROR_CODE,
+        &value[..ERROR_CODE_REASON_START + reason.len()],
+    );
+
+    Ok(())
 }
 
 impl Getter for ErrorCodeAttribute {
@@ -100,11 +121,7 @@ impl Setter for ErrorCode {
     // is no default reason, returns ErrNoDefaultReason.
     fn add_to(&self, m: &mut Message) -> Result<()> {
         if let Some(reason) = ERROR_REASONS.get(self) {
-            let a = ErrorCodeAttribute {
-                code: *self,
-                reason: reason.clone(),
-            };
-            a.add_to(m)
+            add_code_reason(m, *self, reason)
         } else {
             Err(Error::ErrNoDefaultReason)
         }

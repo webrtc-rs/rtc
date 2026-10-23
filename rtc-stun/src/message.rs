@@ -107,8 +107,8 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 // buffering to enable zero-allocation encoding and decoding,
 // so there are some usage constraints:
 //
-// 	Message, its fields, results of m.Get or any attribute a.GetFrom
-//	are valid only until Message.Raw is not modified.
+//      Message, its fields, results of m.Get or any attribute a.GetFrom
+//      are valid only until Message.Raw is not modified.
 #[derive(Default, Debug, Clone)]
 /// A STUN message: type, transaction id, and attributes, plus the encoded bytes.
 pub struct Message {
@@ -224,7 +224,10 @@ impl Message {
             }
             return;
         }
-        self.raw.extend_from_slice(&vec![0; n - self.raw.len()]);
+        // `resize` (not `extend` of a temporary zeroed Vec): growing the
+        // buffer back after a reset must not allocate (pion's
+        // TestAllocations pins zero allocations on the reset/write path).
+        self.raw.resize(n, 0);
     }
 
     /// Add appends new attribute to message. Not goroutine-safe.
@@ -720,12 +723,12 @@ impl MessageType {
 
     /// Value returns bit representation of messageType.
     pub fn value(&self) -> u16 {
-        //	 0                 1
-        //	 2  3  4 5 6 7 8 9 0 1 2 3 4 5
-        //	+--+--+-+-+-+-+-+-+-+-+-+-+-+-+
-        //	|M |M |M|M|M|C|M|M|M|C|M|M|M|M|
-        //	|11|10|9|8|7|1|6|5|4|0|3|2|1|0|
-        //	+--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+        //       0                 1
+        //       2  3  4 5 6 7 8 9 0 1 2 3 4 5
+        //      +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+        //      |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
+        //      |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
+        //      +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
         // Figure 3: Format of STUN Message Type Field
 
         // Warning: Abandon all hope ye who enter here.

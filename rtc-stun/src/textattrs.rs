@@ -70,8 +70,18 @@ impl Setter for TextAttribute {
 
 impl Getter for TextAttribute {
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let attr = self.attr;
-        *self = TextAttribute::get_from_as(m, attr)?;
+        match self.attr {
+            ATTR_USERNAME | ATTR_REALM | ATTR_SOFTWARE | ATTR_NONCE => {}
+            _ => return Err(Error::Other(format!("Unsupported AttrType {}", self.attr))),
+        }
+        let value = m.get_value(self.attr)?;
+        // Reuse the String's allocation: steady-state reads of a message
+        // stream must not allocate (pion's TestAllocationsGetters).
+        self.text.clear();
+        // pion carries these as raw bytes; a value that is not UTF-8 is
+        // converted lossily here rather than rejected, so the rest of the
+        // message stays usable.
+        self.text.push_str(&String::from_utf8_lossy(value));
         Ok(())
     }
 }

@@ -120,6 +120,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the new `ErrNackInvalidSize` where the infallible `build` stays inert.
 - `rtc-rtp`: `Header::get_extension_payload`, the borrowed form of
   `Header::get_extension`.
+- `rtc-stun`: pion/stun v4.0.1 attribute and error tests ported, plus the allocation budget suite.
+  `tests/allocations.rs` (pion `TestAllocations`/`TestAllocationsGetters`) counts allocations
+  through a `#[global_allocator]` wrapper: header-only setters and all getters are
+  allocation-free on the steady-state path, attribute-adding setters perform exactly one
+  (rtc-stun's attribute table owns a copy of the value; pion's borrows the message buffer).
+  `tests/pion_ported.rs` ports the XORMappedAddress suite (GetFrom with UnexpectedEOF/
+  overflow/short-value subtests, invalid family, AddTo round-trips for IPv4 and IPv6,
+  String), the ERROR-CODE suite (truncated value, round-trip, no-default-reason, too-long
+  reason, invalid code, reserved bits masked on read) and the error-identity, UNKNOWN-ATTRIBUTES
+  encoding, invalid-cookie and reserved-type rows. Fixed: `Message::grow` allocated a temporary
+  zeroed Vec on every regrow after `reset` (the reset/write path is now allocation-free);
+  `XorMappedAddress::add_to_as`, `TextAttribute::get_from` (now reusing its String's capacity),
+  `UnknownAttributes::add_to` and `ErrorCodeAttribute::add_to` allocated per call;
+  ERROR-CODE codes whose class digit exceeds the 3-bit field are rejected with the new
+  `ErrInvalidErrorCode` instead of being silently truncated.
+- `rtc-sdp`: port pion/sdp v3.0.20 unit tests, malformed-input table and robustness suite
+  (origin tolerance, S1..S16 key scenarios, JSEP builders, extmap errors and round-trip,
+  codec lookups, 1 MiB line / 50k attributes / 10k m= sections / 100k CRLF lines / invalid
+  UTF-8 / missing final newline never panic). Fixed: extmap URIs with invalid percent escapes
+  (`%zz`) are rejected as in pion.
 - `rtc-rtp`: RFC 8285 header-extension API parity with pion v1.10.6. `Header` gains
   `clear_extensions` (pion `ClearExtensions`) and `set_extension_with_profile` (pion
   `SetExtensionWithProfile`: profile upgrade/downgrade with re-encoding, refusing downgrades an
