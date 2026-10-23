@@ -572,6 +572,8 @@ impl ConfigBuilder {
             }
         }
 
+        let name_to_certificate = name_to_certificate(&self.certificates);
+
         let server_cert_verifier = if self.insecure_skip_verify {
             None
         } else {
@@ -623,7 +625,7 @@ impl ConfigBuilder {
             sni_server_name: self.server_name.clone(),
             client_auth: self.client_auth,
             local_certificates: self.certificates,
-            name_to_certificate: Default::default(),
+            name_to_certificate,
             insecure_skip_verify: self.insecure_skip_verify,
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
@@ -753,6 +755,42 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     {
         rustls::RootCertStore::empty()
     }
+}
+
+/// Maps every name a certificate vouches for (its subject common name and DNS subject
+/// alternative names, lowercased) to that certificate, so a server holding several can answer a
+/// client's `server_name` with the right one. Later certificates win a shared name, as in Go's
+/// `tls.Config.BuildNameToCertificate`, which pion's selection mirrors.
+fn name_to_certificate(certificates: &[Certificate]) -> HashMap<String, Certificate> {
+    use x509_parser::extensions::GeneralName;
+    use x509_parser::prelude::{FromDer, X509Certificate};
+
+    let mut names = HashMap::new();
+    for certificate in certificates {
+        let Some(leaf) = certificate.certificate.first() else {
+            continue;
+        };
+        let Ok((_, parsed)) = X509Certificate::from_der(leaf.as_ref()) else {
+            continue;
+        };
+        if let Some(common_name) = parsed
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|cn| cn.as_str().ok())
+            .filter(|cn| !cn.is_empty())
+        {
+            names.insert(common_name.to_lowercase(), certificate.clone());
+        }
+        if let Ok(Some(san)) = parsed.subject_alternative_name() {
+            for name in &san.value.general_names {
+                if let GeneralName::DNSName(dns) = name {
+                    names.insert(dns.to_lowercase(), certificate.clone());
+                }
+            }
+        }
+    }
+    names
 }
 
 #[derive(Clone)]

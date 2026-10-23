@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `rtc-dtls`, found by porting pion's `conn_test.go` onto the new handshake harness: an empty PSK
+  client identity was rejected; hellos without an extension block were rejected, a ClientHello's
+  session id was ignored (the parse went wrong when one was sent), trailing bytes after the
+  extensions were accepted and a malformed known extension was skipped instead of rejecting the
+  hello (as pion does); the server picked the SRTP profile in the client's order instead of its
+  own; SNI was sent for IP literals and for names the application never configured; the
+  ServerHello carried `supported_groups`; `renegotiation_info` was answered when the client had
+  not offered it (the SCSV `0x00ff` is now understood); the client waited for the whole server
+  flight before refusing an unsupported ServerHello version; a server holding several
+  certificates always presented the first (the name map was never built and the lookup used the
+  server's own name instead of the client's SNI); `ConfigBuilder::build` reports an identity
+  without a PSK before a missing certificate, as pion does. `State::extended_master_secret()`
+  is new.
 - `rtc-interceptor`: `History` no longer downgrades an arrived packet to lost when later
   feedback says the same packet did not arrive (pion `TestHistoryArrivedIsNotDowngraded`);
   the first, positive report stands.

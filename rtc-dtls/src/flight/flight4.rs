@@ -610,7 +610,8 @@ impl Flight for Flight4 {
         }];
 
         if !state.is_cipher_suite_psk() {
-            let certificate = match cfg.get_certificate(&cfg.server_name) {
+            // The name the client asked for in its SNI, not this server's own configuration.
+            let certificate = match cfg.get_certificate(&state.server_name) {
                 Ok(cert) => cert,
                 Err(err) => {
                     return Err((

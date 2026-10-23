@@ -369,3 +369,66 @@ impl State {
         }
     }
 }
+
+#[cfg(test)]
+mod state_test {
+    use super::*;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn state(is_client: bool, local_epoch: u16) -> State {
+        let mut state = State::new(
+            crypto::default_provider().expect("a built-in crypto provider"),
+            is_client,
+        );
+        state.local_random = HandshakeRandom {
+            gmt_unix_time: UNIX_EPOCH + Duration::from_secs(500),
+            random_bytes: [0; 28],
+        };
+        state.remote_random = HandshakeRandom {
+            gmt_unix_time: UNIX_EPOCH + Duration::from_secs(1000),
+            random_bytes: [0; 28],
+        };
+        state.local_epoch = local_epoch;
+        state.cipher_suite = Some(Box::new(CipherSuiteAes128GcmSha256::new(false)));
+        state
+    }
+
+    /// pion/dtls v3.1.15 `TestExportKeyingMaterial`: the known answers pion computes for the same
+    /// randoms and an empty master secret, as server and as client, and the error cases.
+    #[test]
+    fn test_export_keying_material() {
+        const LABEL: &str = "EXTRACTOR-dtls_srtp";
+        let expected_server = [0x61, 0x09, 0x9d, 0x7d, 0xcb, 0x08, 0x52, 0x2c, 0xe7, 0x7b];
+        let expected_client = [0x87, 0xf0, 0x40, 0x02, 0xf6, 0x1c, 0xf1, 0xfe, 0x8c, 0x77];
+
+        assert!(matches!(
+            state(false, 0).export_keying_material(LABEL, &[], 0),
+            Err(Error::HandshakeInProgress)
+        ));
+        assert!(matches!(
+            state(false, 1).export_keying_material(LABEL, &[0x00], 0),
+            Err(Error::ContextUnsupported)
+        ));
+        for label in INVALID_KEYING_LABELS {
+            assert!(
+                matches!(
+                    state(false, 1).export_keying_material(label, &[], 0),
+                    Err(Error::ReservedExportKeyingMaterial)
+                ),
+                "{label}"
+            );
+        }
+
+        let server = state(false, 1)
+            .export_keying_material(LABEL, &[], 10)
+            .unwrap()
+            .into_bytes();
+        assert_eq!(server, expected_server, "server export");
+        let client = state(true, 1)
+            .export_keying_material(LABEL, &[], 10)
+            .unwrap()
+            .into_bytes();
+        assert_eq!(client, expected_client, "client export");
+    }
+}
