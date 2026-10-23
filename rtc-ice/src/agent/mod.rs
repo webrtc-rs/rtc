@@ -11,6 +11,8 @@
 #[cfg(test)]
 mod agent_test;
 #[cfg(test)]
+mod pion_agent_test;
+#[cfg(test)]
 mod selection_test;
 
 /// Configuration for a new [`Agent`]: servers, timeouts and role.
@@ -173,6 +175,8 @@ pub struct Agent {
     pub(crate) enable_use_candidate_check_priority: bool,
     pub(crate) tcp_priority_offset: u16,
     pub(crate) binding_request_handler: Option<BindingRequestHandler>,
+    pub(crate) ip_filter: Option<IpFilter>,
+    pub(crate) remote_ip_filter: Option<IpFilter>,
     /// A signaled candidate replaced the peer-reflexive remote of the selected pair; the
     /// selected-pair event is owed until the next call that knows the time.
     pub(crate) selected_pair_replaced: bool,
@@ -312,6 +316,8 @@ impl Agent {
             last_nomination: None,
             enable_use_candidate_check_priority: config.enable_use_candidate_check_priority,
             binding_request_handler: config.binding_request_handler.clone(),
+            ip_filter: config.ip_filter.clone(),
+            remote_ip_filter: config.remote_ip_filter.clone(),
             selected_pair_replaced: false,
             tcp_priority_offset: config
                 .tcp_priority_offset
@@ -440,6 +446,13 @@ impl Agent {
     pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<bool> {
         c.tcp_priority_offset = self.tcp_priority_offset;
 
+        if let Some(filter) = &self.ip_filter
+            && !filter.allows(&c.addr().ip())
+        {
+            debug!("Ignoring local candidate filtered by the IP policy: {}", c);
+            return Ok(false);
+        }
+
         // Filter by network type if network_types is configured
         if !self.network_types.is_empty() {
             let candidate_network_type = c.network_type();
@@ -524,17 +537,10 @@ impl Agent {
 
     /// Adds a new remote candidate.
     pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<bool> {
-        // Filter by network type if network_types is configured
-        if !self.network_types.is_empty() {
-            let candidate_network_type = c.network_type();
-            if !self.network_types.contains(&candidate_network_type) {
-                debug!(
-                    "Ignoring remote candidate with network type {:?} (not in configured network types: {:?})",
-                    candidate_network_type, self.network_types
-                );
-                return Ok(false);
-            }
-        }
+        // Remote candidates of a network type that is not enabled locally are kept all the same
+        // (pion stores them independently of the configured network types): they never pair,
+        // for want of a local candidate of that type, but they are real evidence about the peer
+        // and a peer-reflexive one is real traffic.
 
         // TCP active candidates don't have a listening port - they initiate connections.
         // The remote active side will probe our passive candidates, so we don't need
@@ -569,8 +575,34 @@ impl Agent {
             return Ok(false);
         }
 
+        if !self.remote_ip_allowed(&c) {
+            return Ok(false);
+        }
+
         self.trigger_request_connectivity_check(vec![c]);
         Ok(true)
+    }
+
+    /// The mDNS-resolved candidates the remote IP policy lets through.
+    pub(crate) fn allowed_remote_candidates(&self, candidates: Vec<Candidate>) -> Vec<Candidate> {
+        candidates
+            .into_iter()
+            .filter(|c| self.remote_ip_allowed(c))
+            .collect()
+    }
+
+    /// Whether the remote IP policy lets this candidate's address through.
+    pub(crate) fn remote_ip_allowed(&self, c: &Candidate) -> bool {
+        match &self.remote_ip_filter {
+            Some(filter) if !filter.allows(&c.addr().ip()) => {
+                warn!(
+                    "Ignoring remote candidate filtered by the remote IP policy: {}",
+                    c
+                );
+                false
+            }
+            _ => true,
+        }
     }
 
     /// If a peer-reflexive remote candidate already stands for the transport address of the

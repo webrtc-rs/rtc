@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before reporting disconnection. After a silence longer than both timeouts the agent reports
   Disconnected before Failed. Local relay candidates report their real relay protocol in stats.
   `CandidateRelayConfig` gained a `relay_protocol` field: struct literals need `..Default::default()`.
+- `rtc-ice`: `AgentConfig::ip_filter` and `remote_ip_filter` (pion `WithIPFilter`/`WithRemoteIPFilter`),
+  applied to added candidates and to peer-reflexive addresses learned from checks. Remote
+  candidates of a network type that is not enabled locally are now kept (they never pair)
+  instead of being dropped, and a peer-reflexive candidate is stored even then.
 - `rtc-rtp`: header-extension padding after a profile switch or a delete now matches pion byte
   for byte (found by a differential run against pion rtp v1.10.6).
 

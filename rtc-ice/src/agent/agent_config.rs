@@ -82,6 +82,28 @@ impl std::fmt::Debug for NominationValueGenerator {
     }
 }
 
+/// Decides which IP addresses an agent may use (pion's `IPFilter` / `RemoteIPFilter`): `true`
+/// keeps the address.
+#[derive(Clone)]
+pub struct IpFilter(Arc<dyn Fn(&IpAddr) -> bool + Send + Sync>);
+
+impl IpFilter {
+    /// A filter backed by `f`.
+    pub fn new(f: impl Fn(&IpAddr) -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+
+    pub(crate) fn allows(&self, ip: &IpAddr) -> bool {
+        (self.0)(ip)
+    }
+}
+
+impl std::fmt::Debug for IpFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IpFilter")
+    }
+}
+
 type BindingRequestFn =
     dyn Fn(&stun::message::Message, &Candidate, &Candidate, &CandidatePair) -> bool + Send + Sync;
 
@@ -225,6 +247,13 @@ pub struct AgentConfig {
     /// for a pair other than the selected one (pion's `WithEnableUseCandidateCheckPriority`).
     /// Full agents always apply it.
     pub enable_use_candidate_check_priority: bool,
+
+    /// Drops local candidates whose address the filter rejects (pion's `WithIPFilter`).
+    pub ip_filter: Option<IpFilter>,
+
+    /// Drops remote candidates whose address the filter rejects, including peer-reflexive
+    /// addresses learned from incoming checks (pion's `WithRemoteIPFilter`).
+    pub remote_ip_filter: Option<IpFilter>,
 
     /// Runs for every Binding request the agent answers and may select the pair it came in on
     /// (pion's `WithBindingRequestHandler`).

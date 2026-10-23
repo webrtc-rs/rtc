@@ -22,11 +22,11 @@ use stun::integrity::*;
 use stun::message::*;
 use stun::textattrs::*;
 
-fn provider() -> Arc<dyn crypto::RTCCryptoProvider> {
+pub(super) fn provider() -> Arc<dyn crypto::RTCCryptoProvider> {
     crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
 }
 
-fn host(ip: &str, port: u16) -> Candidate {
+pub(super) fn host(ip: &str, port: u16) -> Candidate {
     CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
@@ -41,7 +41,7 @@ fn host(ip: &str, port: u16) -> Candidate {
     .unwrap()
 }
 
-fn relay(ip: &str, port: u16) -> Candidate {
+pub(super) fn relay(ip: &str, port: u16) -> Candidate {
     CandidateRelayConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
@@ -59,17 +59,17 @@ fn relay(ip: &str, port: u16) -> Candidate {
 }
 
 /// One end of the in-memory link: an agent plus what it reported.
-struct Peer {
-    agent: Agent,
-    selected: Vec<(SocketAddr, SocketAddr)>,
-    states: Vec<ConnectionState>,
-    roles: Vec<bool>,
+pub(super) struct Peer {
+    pub(super) agent: Agent,
+    pub(super) selected: Vec<(SocketAddr, SocketAddr)>,
+    pub(super) states: Vec<ConnectionState>,
+    pub(super) roles: Vec<bool>,
     /// Every packet the agent sent, for inspection.
-    sent: Vec<Vec<u8>>,
+    pub(super) sent: Vec<Vec<u8>>,
 }
 
 impl Peer {
-    fn new(now: Instant, config: AgentConfig) -> Peer {
+    pub(super) fn new(now: Instant, config: AgentConfig) -> Peer {
         Peer {
             agent: Agent::new(now, Arc::new(config), provider()).unwrap(),
             selected: vec![],
@@ -79,13 +79,13 @@ impl Peer {
         }
     }
 
-    fn selected_pair(&self) -> Option<(SocketAddr, SocketAddr)> {
+    pub(super) fn selected_pair(&self) -> Option<(SocketAddr, SocketAddr)> {
         self.agent
             .get_selected_candidate_pair()
             .map(|(local, remote)| (local.addr(), remote.addr()))
     }
 
-    fn drain_events(&mut self) {
+    pub(super) fn drain_events(&mut self) {
         while let Some(event) = self.agent.poll_event() {
             match event.event {
                 Event::ConnectionStateChange(state) => self.states.push(state),
@@ -99,7 +99,7 @@ impl Peer {
 }
 
 /// Moves everything `from` has queued to `to`; whether anything moved.
-fn forward(from: &mut Peer, to: &mut Peer, now: Instant) -> bool {
+pub(super) fn forward(from: &mut Peer, to: &mut Peer, now: Instant) -> bool {
     let mut moved = false;
     while let Some(packet) = from.agent.poll_write() {
         moved = true;
@@ -120,7 +120,7 @@ fn forward(from: &mut Peer, to: &mut Peer, now: Instant) -> bool {
 }
 
 /// Delivers every pending datagram between the two peers until the link is quiet.
-fn pump(a: &mut Peer, b: &mut Peer, now: Instant) {
+pub(super) fn pump(a: &mut Peer, b: &mut Peer, now: Instant) {
     loop {
         let moved_a = forward(a, b, now);
         let moved_b = forward(b, a, now);
@@ -133,7 +133,7 @@ fn pump(a: &mut Peer, b: &mut Peer, now: Instant) {
 }
 
 /// Advances the clock in 50 ms steps, running both agents and the link.
-fn run(a: &mut Peer, b: &mut Peer, clock: &mut Instant, millis: u64) {
+pub(super) fn run(a: &mut Peer, b: &mut Peer, clock: &mut Instant, millis: u64) {
     for _ in 0..millis / 50 {
         *clock += Duration::from_millis(50);
         a.agent.handle_timeout(*clock).unwrap();
@@ -142,14 +142,14 @@ fn run(a: &mut Peer, b: &mut Peer, clock: &mut Instant, millis: u64) {
     }
 }
 
-fn credentials(peer: &Peer) -> (String, String) {
+pub(super) fn credentials(peer: &Peer) -> (String, String) {
     let c = peer.agent.get_local_credentials();
     (c.ufrag.clone(), c.pwd.clone())
 }
 
 /// Wires two peers together: each learns the other's candidates and credentials, and starts
 /// checking in the given role.
-fn start(
+pub(super) fn start(
     a: &mut Peer,
     a_candidates: &[Candidate],
     a_controlling: bool,
@@ -176,11 +176,11 @@ fn start(
         .unwrap();
 }
 
-fn addr(ip: &str, port: u16) -> SocketAddr {
+pub(super) fn addr(ip: &str, port: u16) -> SocketAddr {
     SocketAddr::from_str(&format!("{ip}:{port}")).unwrap()
 }
 
-fn renominating(generator: NominationValueGenerator) -> AgentConfig {
+pub(super) fn renominating(generator: NominationValueGenerator) -> AgentConfig {
     AgentConfig {
         is_controlling: true,
         renomination: Some(generator),
@@ -716,7 +716,7 @@ fn test_pair_quality_score() {
 // Lite agents
 // ---------------------------------------------------------------------------------------------
 
-fn lite_config(controlling: bool) -> AgentConfig {
+pub(super) fn lite_config(controlling: bool) -> AgentConfig {
     AgentConfig {
         lite: true,
         is_controlling: controlling,
@@ -1283,7 +1283,11 @@ fn test_nomination_attribute_configuration() {
 }
 
 /// An authenticated Binding request from the controlling side towards `controlled`.
-fn nomination_request(controlled: &Peer, use_candidate: bool, value: Option<u32>) -> Message {
+pub(super) fn nomination_request(
+    controlled: &Peer,
+    use_candidate: bool,
+    value: Option<u32>,
+) -> Message {
     let crypto_provider = provider();
     let creds = controlled.agent.get_local_credentials();
     let mut setters: Vec<Box<dyn Setter>> = vec![
@@ -1477,11 +1481,11 @@ fn test_keep_alive_candidates_for_renomination() {
 // that have already succeeded, driven with crafted Binding requests and responses.
 // ---------------------------------------------------------------------------------------------
 
-const REMOTE_PWD: &str = "remotepassword01234567890";
+pub(super) const REMOTE_PWD: &str = "remotepassword01234567890";
 
 /// An agent in the given role with one local host candidate and a pair (already succeeded) to
 /// each of `remotes`.
-fn agent_with_pairs(
+pub(super) fn agent_with_pairs(
     controlling: bool,
     config: AgentConfig,
     remotes: &[Candidate],
@@ -1513,7 +1517,7 @@ fn agent_with_pairs(
     (peer, local)
 }
 
-fn deliver_from(peer: &mut Peer, local: &Candidate, remote: &Candidate, m: &Message) {
+pub(super) fn deliver_from(peer: &mut Peer, local: &Candidate, remote: &Candidate, m: &Message) {
     peer.agent
         .handle_read(TaggedBytesMut {
             now: Instant::now(),
@@ -1529,7 +1533,7 @@ fn deliver_from(peer: &mut Peer, local: &Candidate, remote: &Candidate, m: &Mess
     peer.drain_events();
 }
 
-fn selected_remote(peer: &Peer) -> Option<SocketAddr> {
+pub(super) fn selected_remote(peer: &Peer) -> Option<SocketAddr> {
     peer.selected_pair().map(|(_, remote)| remote)
 }
 
@@ -1627,7 +1631,7 @@ fn test_controlled_higher_nomination_values_override_lower_ones() {
 }
 
 /// The Binding success an authenticated peer would send for `request`.
-fn success_for(request: &Message, mapped: SocketAddr) -> Message {
+pub(super) fn success_for(request: &Message, mapped: SocketAddr) -> Message {
     let crypto_provider = provider();
     let mut answer = Message::new();
     answer
@@ -1648,7 +1652,7 @@ fn success_for(request: &Message, mapped: SocketAddr) -> Message {
     answer
 }
 
-fn take_request(peer: &mut Peer) -> Message {
+pub(super) fn take_request(peer: &mut Peer) -> Message {
     let packet = peer.agent.poll_write().expect("a request");
     let mut m = Message {
         raw: packet.message.to_vec(),

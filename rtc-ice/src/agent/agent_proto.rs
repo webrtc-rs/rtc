@@ -45,6 +45,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
                 vec![]
             };
 
+            let remote_candidates = self.allowed_remote_candidates(remote_candidates);
             self.trigger_request_connectivity_check(remote_candidates);
 
             Ok(())
@@ -123,6 +124,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
         } else {
             vec![]
         };
+        let remote_candidates = self.allowed_remote_candidates(remote_candidates);
         self.trigger_request_connectivity_check(remote_candidates);
 
         if self.ufrag_pwd.remote_credentials.is_some()
