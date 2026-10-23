@@ -204,6 +204,9 @@ pub struct Candidate {
     pub(crate) tcp_priority_offset: u16,
     /// A relay candidate's local preference, set from the protocol used to reach the relay.
     pub(crate) relay_local_preference: u16,
+    /// The transport between this agent and the relay server (`udp`, `tcp`, `tls`, `dtls`);
+    /// empty for candidates that are not relayed.
+    pub(crate) relay_protocol: String,
 
     pub(crate) network: String,
 
@@ -232,6 +235,7 @@ impl Default for Candidate {
             priority_override: 0,
             tcp_priority_offset: DEFAULT_TCP_PRIORITY_OFFSET,
             relay_local_preference: 0,
+            relay_protocol: String::new(),
             network: String::new(),
 
             url: None,
@@ -471,6 +475,16 @@ impl Candidate {
             && self.related_address() == other.related_address()
     }
 
+    /// Whether both candidates name the same transport address: the same network type, address
+    /// and port, and TCP type (pion's `transportAddressEqual`). Unlike [`Candidate::equal`] the
+    /// candidate type does not matter, which is what finds a signaled candidate that a
+    /// peer-reflexive one already stands in for.
+    pub(crate) fn transport_address_equal(&self, other: &Candidate) -> bool {
+        self.network_type() == other.network_type()
+            && self.tcp_type() == other.tcp_type()
+            && self.addr() == other.addr()
+    }
+
     /// Returns true if this candidate can be paired with `other` according to
     /// ICE candidate pairing rules.
     ///
@@ -512,6 +526,12 @@ impl Candidate {
     /// Records that traffic was sent on this candidate at `now`.
     pub fn set_last_sent(&mut self, now: Instant) {
         self.last_sent = Some(now);
+    }
+
+    /// The transport between this agent and the relay server, for a relay candidate
+    /// (`udp`, `tcp`, `tls` or `dtls`); empty for any other kind.
+    pub fn relay_protocol(&self) -> &str {
+        &self.relay_protocol
     }
 
     /// Returns the local preference for this candidate.

@@ -173,6 +173,9 @@ pub struct Agent {
     pub(crate) enable_use_candidate_check_priority: bool,
     pub(crate) tcp_priority_offset: u16,
     pub(crate) binding_request_handler: Option<BindingRequestHandler>,
+    /// A signaled candidate replaced the peer-reflexive remote of the selected pair; the
+    /// selected-pair event is owed until the next call that knows the time.
+    pub(crate) selected_pair_replaced: bool,
 
     // LRU of outbound Binding request Transaction IDs
     pub(crate) pending_binding_requests: Vec<BindingRequest>,
@@ -187,6 +190,9 @@ pub struct Agent {
     // How long connectivity checks can fail before the ICE Agent
     // goes to disconnected
     pub(crate) disconnected_timeout: Duration,
+    /// Whether the application chose `disconnected_timeout`; a lite agent otherwise gets the
+    /// RFC 7675 consent-expiry period instead of the default.
+    pub(crate) disconnected_timeout_explicit: bool,
     // How long connectivity checks can fail before the ICE Agent
     // goes to failed
     pub(crate) failed_timeout: Duration,
@@ -306,6 +312,7 @@ impl Agent {
             last_nomination: None,
             enable_use_candidate_check_priority: config.enable_use_candidate_check_priority,
             binding_request_handler: config.binding_request_handler.clone(),
+            selected_pair_replaced: false,
             tcp_priority_offset: config
                 .tcp_priority_offset
                 .unwrap_or(DEFAULT_TCP_PRIORITY_OFFSET),
@@ -357,11 +364,12 @@ impl Agent {
 
             // How long connectivity checks can fail before the ICE Agent
             // goes to disconnected
-            disconnected_timeout: if let Some(disconnected_timeout) = config.disconnected_timeout {
-                disconnected_timeout
-            } else {
-                DEFAULT_DISCONNECTED_TIMEOUT
+            disconnected_timeout: match config.disconnected_timeout {
+                Some(disconnected_timeout) => disconnected_timeout,
+                None if config.lite => DEFAULT_LITE_DISCONNECTED_TIMEOUT,
+                None => DEFAULT_DISCONNECTED_TIMEOUT,
             },
+            disconnected_timeout_explicit: config.disconnected_timeout.is_some(),
 
             // How long connectivity checks can fail before the ICE Agent
             // goes to failed
@@ -476,6 +484,7 @@ impl Agent {
             }
         }
 
+        self.set_unique_lite_candidate_priority(&mut c);
         self.local_candidates.push(c);
         let local_index = self.local_candidates.len() - 1;
 
@@ -490,6 +499,27 @@ impl Agent {
         self.request_connectivity_check();
 
         Ok(true)
+    }
+
+    /// Gives a lite agent's local candidate a priority no other local candidate has.
+    ///
+    /// A lite agent runs no checks that would order its candidates, so the peer picks among
+    /// them by priority and equal priorities would make that arbitrary (RFC 8445 §5.1.2).
+    fn set_unique_lite_candidate_priority(&self, c: &mut Candidate) {
+        if !self.lite {
+            return;
+        }
+
+        let used: std::collections::HashSet<u32> = self
+            .local_candidates
+            .iter()
+            .map(Candidate::priority)
+            .collect();
+        let mut priority = c.priority();
+        while used.contains(&priority) {
+            priority -= 1 << 8;
+        }
+        c.priority_override = priority;
     }
 
     /// Adds a new remote candidate.
@@ -543,9 +573,61 @@ impl Agent {
         Ok(true)
     }
 
+    /// If a peer-reflexive remote candidate already stands for the transport address of the
+    /// signaled `c`, puts `c` in its place and reports so.
+    ///
+    /// The pairs of the old candidate carry over to the new one with their state, nomination,
+    /// statistics and priority, so a call already running on the peer-reflexive candidate is not
+    /// disturbed; only what it is called changes (pion's `replaceRedundantPeerReflexiveCandidates`).
+    fn replace_redundant_peer_reflexive_candidate(&mut self, c: &Candidate) -> bool {
+        if c.candidate_type() == CandidateType::PeerReflexive {
+            return false;
+        }
+
+        let mut replaced = false;
+        for remote_index in 0..self.remote_candidates.len() {
+            let old = &self.remote_candidates[remote_index];
+            if old.candidate_type() != CandidateType::PeerReflexive
+                || !old.transport_address_equal(c)
+            {
+                continue;
+            }
+
+            let mut new = c.clone();
+            // Keep the liveness history: the peer has been talking to us from this address.
+            if new.last_received.is_none() {
+                new.last_received = old.last_received;
+            }
+            if new.last_sent.is_none() {
+                new.last_sent = old.last_sent;
+            }
+
+            // The pairs keep the priority they were ranked with (their `remote_priority` is
+            // copied, not read from the candidate), so the ordering does not jump mid-session.
+            self.remote_candidates[remote_index] = new;
+            if let Some(selected) = self.selected_pair
+                && self.candidate_pairs[selected].remote_index == remote_index
+            {
+                self.selected_pair_replaced = true;
+            }
+            replaced = true;
+        }
+
+        if replaced {
+            self.request_connectivity_check();
+        }
+        replaced
+    }
+
     fn trigger_request_connectivity_check(&mut self, remote_candidates: Vec<Candidate>) {
         for c in remote_candidates {
             if !self.remote_candidates.iter().any(|cand| cand.equal(&c)) {
+                // RFC 8838 §11.4: a signaled candidate that is redundant with a peer-reflexive
+                // one already discovered replaces it.
+                if self.replace_redundant_peer_reflexive_candidate(&c) {
+                    continue;
+                }
+
                 self.remote_candidates.push(c);
                 let remote_index = self.remote_candidates.len() - 1;
 
@@ -628,6 +710,10 @@ impl Agent {
         self.is_controlling = is_controlling;
         for pair in &mut self.candidate_pairs {
             pair.ice_role_controlling = is_controlling;
+            // A role switch recomputes every pair's priority, forgetting the ranking a pair
+            // kept across a candidate replacement.
+            pair.local_priority = self.local_candidates[pair.local_index].priority();
+            pair.remote_priority = self.remote_candidates[pair.remote_index].priority();
         }
         self.nominated_pair = None;
     }
@@ -845,7 +931,7 @@ impl Agent {
                 && now
                     .checked_duration_since(self.checking_duration)
                     .unwrap_or_else(|| Duration::from_secs(0))
-                    > self.disconnected_timeout + self.failed_timeout
+                    > self.initial_checking_timeout()
             {
                 self.update_connection_state(Some(now), ConnectionState::Failed);
                 self.last_connection_state = self.connection_state;
@@ -857,6 +943,22 @@ impl Agent {
 
         self.last_connection_state = self.connection_state;
         self.last_checking_time = now;
+    }
+
+    /// How long the initial checking phase may last before the agent fails. A lite agent counts
+    /// the ordinary default for disconnection here, not the longer one it runs with once
+    /// connected.
+    pub(crate) fn initial_checking_timeout(&self) -> Duration {
+        if self.failed_timeout == ZERO_DURATION {
+            return ZERO_DURATION;
+        }
+
+        let disconnected_timeout = if self.lite && !self.disconnected_timeout_explicit {
+            DEFAULT_DISCONNECTED_TIMEOUT
+        } else {
+            self.disconnected_timeout
+        };
+        disconnected_timeout + self.failed_timeout
     }
 
     pub(crate) fn update_connection_state(
@@ -912,6 +1014,23 @@ impl Agent {
             }
         } else {
             self.selected_pair = None;
+        }
+    }
+
+    /// Reports the selected pair again when a signaled candidate has replaced its remote half.
+    pub(crate) fn announce_replaced_selected_pair(&mut self, now: Instant) {
+        if !std::mem::take(&mut self.selected_pair_replaced) {
+            return;
+        }
+        if let Some(pair_index) = self.selected_pair {
+            let pair = &self.candidate_pairs[pair_index];
+            self.event_outs.push_back(TaggedEvent {
+                now,
+                event: Event::SelectedCandidatePairChange(
+                    Box::new(self.local_candidates[pair.local_index].clone()),
+                    Box::new(self.remote_candidates[pair.remote_index].clone()),
+                ),
+            });
         }
     }
 
@@ -1011,17 +1130,28 @@ impl Agent {
                 total_time_to_failure += self.disconnected_timeout;
             }
 
-            if total_time_to_failure != Duration::from_secs(0)
-                && disconnected_time > total_time_to_failure
-            {
-                self.update_connection_state(Some(now), ConnectionState::Failed);
-            } else if self.disconnected_timeout != Duration::from_secs(0)
-                && disconnected_time > self.disconnected_timeout
-            {
-                self.update_connection_state(Some(now), ConnectionState::Disconnected);
+            let disconnected = self.disconnected_timeout != Duration::from_secs(0)
+                && disconnected_time > self.disconnected_timeout;
+            let failed = total_time_to_failure != Duration::from_secs(0)
+                && disconnected_time > total_time_to_failure;
+
+            let new_state = if failed {
+                if disconnected
+                    && self.connection_state != ConnectionState::Disconnected
+                    && self.connection_state != ConnectionState::Failed
+                {
+                    // Both thresholds are already behind us but disconnected was never
+                    // reported: report it first, so callers see both transitions.
+                    ConnectionState::Disconnected
+                } else {
+                    ConnectionState::Failed
+                }
+            } else if disconnected {
+                ConnectionState::Disconnected
             } else {
-                self.update_connection_state(Some(now), ConnectionState::Connected);
-            }
+                ConnectionState::Connected
+            };
+            self.update_connection_state(Some(now), new_state);
         }
 
         valid

@@ -17,6 +17,10 @@ pub(crate) const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// The default time till an Agent transitions disconnected.
 pub(crate) const DEFAULT_DISCONNECTED_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The default time till a lite Agent transitions disconnected: the consent-expiry period of
+/// RFC 7675, since a lite agent has no checks of its own to learn the path died sooner.
+pub(crate) const DEFAULT_LITE_DISCONNECTED_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The default time till an Agent transitions to failed after disconnected.
 pub(crate) const DEFAULT_FAILED_TIMEOUT: Duration = Duration::from_secs(25);
 

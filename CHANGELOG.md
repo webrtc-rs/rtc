@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and stops answering every request with a check once connected; role conflicts follow
   RFC 8445 §7.3.1.1 exactly (one side answers 487, the other switches) and a 487 response is
   handled (role switch, new tiebreaker, pair re-queued).
+- `rtc-ice`, RFC 8838 §11.4: a candidate signaled after the peer was already discovered at the same
+  address (peer-reflexive) replaces it, keeping the pair's state, nomination, statistics and rank,
+  and the selected pair is reported again with the signaled candidate. A lite agent's local
+  candidates get distinct priorities, and a lite agent defaults to the 10 s consent-expiry period
+  before reporting disconnection. After a silence longer than both timeouts the agent reports
+  Disconnected before Failed. Local relay candidates report their real relay protocol in stats.
+  `CandidateRelayConfig` gained a `relay_protocol` field: struct literals need `..Default::default()`.
 - `rtc-rtp`: header-extension padding after a profile switch or a delete now matches pion byte
   for byte (found by a differential run against pion rtp v1.10.6).
 

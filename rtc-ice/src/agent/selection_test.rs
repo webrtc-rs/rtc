@@ -12,6 +12,7 @@ use crate::attributes::{
     control::AttrControlling, priority::PriorityAttr, use_candidate::UseCandidateAttr,
 };
 use crate::candidate::candidate_host::CandidateHostConfig;
+use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_relay::CandidateRelayConfig;
 use sansio::Protocol;
 use std::str::FromStr;
@@ -2027,4 +2028,235 @@ fn test_binding_request_handler_on_a_lite_agent() {
         CandidatePairState::Succeeded,
         lite.agent.candidate_pairs[0].state
     );
+}
+
+// RFC 8838 §11.4 / pion replaceRedundantPeerReflexiveCandidates: a candidate signaled after the
+// peer was already discovered at that address (peer-reflexive) replaces it, and the running call
+// is undisturbed.
+#[test]
+fn test_signaled_candidate_replaces_peer_reflexive_one() {
+    let mut clock = Instant::now();
+    let mut a = Peer::new(clock, AgentConfig::default());
+    let mut b = Peer::new(clock, AgentConfig::default());
+
+    // `b` has not been told about `a`'s candidate, so it learns it from a check.
+    let a_candidate = host("10.0.0.1", 1000);
+    let b_candidate = host("10.0.0.2", 2000);
+    a.agent.add_local_candidate(a_candidate.clone()).unwrap();
+    a.agent.add_remote_candidate(b_candidate.clone()).unwrap();
+    b.agent.add_local_candidate(b_candidate.clone()).unwrap();
+    let (a_ufrag, a_pwd) = credentials(&a);
+    let (b_ufrag, b_pwd) = credentials(&b);
+    a.agent
+        .start_connectivity_checks(clock, true, b_ufrag, b_pwd)
+        .unwrap();
+    b.agent
+        .start_connectivity_checks(clock, false, a_ufrag, a_pwd)
+        .unwrap();
+    run(&mut a, &mut b, &mut clock, 2000);
+
+    assert_eq!(ConnectionState::Connected, b.agent.state());
+    assert_eq!(
+        CandidateType::PeerReflexive,
+        b.agent.get_remote_candidates()[0].candidate_type()
+    );
+    let pairs_before = b.agent.candidate_pairs.len();
+    let selected_before = b.agent.selected_pair;
+    let events_before = b.selected.len();
+    let requests_before = b.agent.candidate_pairs[selected_before.unwrap()].requests_received;
+
+    // The signaling catches up.
+    b.agent.add_remote_candidate(a_candidate.clone()).unwrap();
+    run(&mut a, &mut b, &mut clock, 500);
+
+    let remotes = b.agent.get_remote_candidates();
+    assert_eq!(1, remotes.len(), "replaced, not added");
+    assert_eq!(CandidateType::Host, remotes[0].candidate_type());
+    assert_eq!(
+        pairs_before,
+        b.agent.candidate_pairs.len(),
+        "no duplicate pair"
+    );
+    assert_eq!(
+        selected_before, b.agent.selected_pair,
+        "same pair stays selected"
+    );
+    assert_eq!(ConnectionState::Connected, b.agent.state());
+    assert!(
+        b.agent.candidate_pairs[selected_before.unwrap()].requests_received >= requests_before,
+        "the pair keeps its history"
+    );
+    assert_eq!(
+        events_before + 1,
+        b.selected.len(),
+        "the selected pair is reported again, now with the host candidate"
+    );
+    let (_, remote) = b.agent.get_selected_candidate_pair().unwrap();
+    assert_eq!(CandidateType::Host, remote.candidate_type());
+
+    // signaling the same candidate again changes nothing
+    b.agent.add_remote_candidate(a_candidate).unwrap();
+    assert_eq!(1, b.agent.get_remote_candidates().len());
+}
+
+// A peer-reflexive candidate never replaces anything.
+#[test]
+fn test_peer_reflexive_candidate_does_not_replace_a_signaled_one() {
+    let clock = Instant::now();
+    let mut peer = Peer::new(clock, AgentConfig::default());
+    peer.agent
+        .add_local_candidate(host("10.0.0.2", 2000))
+        .unwrap();
+    peer.agent
+        .add_remote_candidate(host("10.0.0.1", 1000))
+        .unwrap();
+    let prflx = CandidatePeerReflexiveConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "10.0.0.1".to_owned(),
+            port: 1000,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_peer_reflexive()
+    .unwrap();
+    peer.agent.add_remote_candidate(prflx).unwrap();
+    assert_eq!(
+        CandidateType::Host,
+        peer.agent.get_remote_candidates()[0].candidate_type()
+    );
+}
+
+// pion TestLiteLocalCandidatePrioritiesAreUnique
+#[test]
+fn test_lite_local_candidate_priorities_are_unique() {
+    let mut peer = Peer::new(Instant::now(), lite_config(false));
+    let mut previous = None;
+    for i in 0..3u16 {
+        peer.agent
+            .add_local_candidate(host(&format!("192.0.2.{}", i + 1), 10000 + i))
+            .unwrap();
+        let priority = peer.agent.get_local_candidates()[i as usize].priority();
+        if let Some(previous) = previous {
+            assert_eq!(previous - (1 << 8), priority);
+        }
+        previous = Some(priority);
+    }
+
+    // a full agent leaves priorities alone
+    let mut full = Peer::new(Instant::now(), AgentConfig::default());
+    for i in 0..3u16 {
+        full.agent
+            .add_local_candidate(host(&format!("192.0.2.{}", i + 1), 10000 + i))
+            .unwrap();
+    }
+    let priorities: Vec<u32> = full
+        .agent
+        .get_local_candidates()
+        .iter()
+        .map(Candidate::priority)
+        .collect();
+    assert_eq!(vec![priorities[0]; 3], priorities);
+}
+
+// A candidate's relay protocol is reported for local relay candidates only.
+#[test]
+fn test_candidate_stats_report_the_relay_protocol() {
+    let now = Instant::now();
+    let mut peer = Peer::new(now, AgentConfig::default());
+    let mut tls_relay = relay("10.0.0.9", 9000);
+    tls_relay.relay_protocol = "tls".to_owned();
+    peer.agent
+        .add_local_candidate(host("10.0.0.1", 1000))
+        .unwrap();
+    peer.agent.add_local_candidate(tls_relay).unwrap();
+    peer.agent
+        .add_remote_candidate(relay("10.0.0.8", 8000))
+        .unwrap();
+
+    let local = peer.agent.get_local_candidates_stats(now);
+    assert_eq!("", local[0].relay_protocol);
+    assert_eq!("tls", local[1].relay_protocol);
+    let remote = peer.agent.get_remote_candidates_stats(now);
+    assert_eq!("", remote[0].relay_protocol);
+    assert_eq!("udp", relay("10.0.0.9", 9000).relay_protocol());
+}
+
+// pion connectionStateForDisconnection: when a long silence has already passed both thresholds,
+// the agent still reports Disconnected before Failed.
+#[test]
+fn test_disconnected_is_reported_before_failed() {
+    let mut clock = Instant::now();
+    let mut a = Peer::new(clock, AgentConfig::default());
+    let mut b = Peer::new(clock, AgentConfig::default());
+    start(
+        &mut a,
+        &[host("10.0.0.1", 1000)],
+        true,
+        &mut b,
+        &[host("10.0.0.2", 2000)],
+        false,
+        clock,
+    );
+    run(&mut a, &mut b, &mut clock, 2000);
+    assert_eq!(ConnectionState::Connected, a.agent.state());
+    let seen = a.states.len();
+
+    // total silence for far longer than disconnected (5 s) + failed (25 s)
+    clock += Duration::from_secs(120);
+    a.agent.handle_timeout(clock).unwrap();
+    a.drain_events();
+    assert_eq!(
+        vec![ConnectionState::Disconnected],
+        a.states[seen..].to_vec(),
+        "disconnected is reported first, although failed is already due"
+    );
+
+    // the next tick carries on to failed
+    clock += Duration::from_secs(1);
+    a.agent.handle_timeout(clock).unwrap();
+    a.drain_events();
+    assert_eq!(
+        vec![ConnectionState::Disconnected, ConnectionState::Failed],
+        a.states[seen..].to_vec()
+    );
+}
+
+// pion applyICELiteDisconnectedTimeoutDefault / initialCheckingTimeout
+#[test]
+fn test_lite_agent_gets_the_longer_default_disconnect_timeout() {
+    let lite = Peer::new(Instant::now(), lite_config(false));
+    assert_eq!(Duration::from_secs(10), lite.agent.disconnected_timeout);
+    // while still checking, the ordinary default counts toward the initial deadline
+    assert_eq!(
+        Duration::from_secs(5 + 25),
+        lite.agent.initial_checking_timeout()
+    );
+
+    let explicit = Peer::new(
+        Instant::now(),
+        AgentConfig {
+            disconnected_timeout: Some(Duration::from_secs(3)),
+            ..lite_config(false)
+        },
+    );
+    assert_eq!(Duration::from_secs(3), explicit.agent.disconnected_timeout);
+    assert_eq!(
+        Duration::from_secs(3 + 25),
+        explicit.agent.initial_checking_timeout()
+    );
+
+    let full = Peer::new(Instant::now(), AgentConfig::default());
+    assert_eq!(Duration::from_secs(5), full.agent.disconnected_timeout);
+
+    let no_failure = Peer::new(
+        Instant::now(),
+        AgentConfig {
+            failed_timeout: Some(Duration::ZERO),
+            ..Default::default()
+        },
+    );
+    assert_eq!(Duration::ZERO, no_failure.agent.initial_checking_timeout());
 }

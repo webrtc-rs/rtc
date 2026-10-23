@@ -78,6 +78,11 @@ impl CandidateRelayConfig {
             }),
             url: self.url,
             relay_local_preference: relay_protocol_preference(&self.relay_protocol),
+            relay_protocol: if self.relay_protocol.is_empty() {
+                "udp".to_owned()
+            } else {
+                self.relay_protocol
+            },
             ..Candidate::default()
         })
     }
