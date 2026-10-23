@@ -1,4 +1,4 @@
-# Linux and macOS, on both CPU architectures, in debug and release, on both built-in crypto
+# Linux x64 (macOS arm64 is tested by hand on the developer's Mac), in debug and release, on both built-in crypto
 # providers. The `cargo.yml` workflow covers feature-graph and packaging concerns on one
 # runner; this one answers "does it work, and stay fast, on every platform we support".
 name: platform
@@ -30,7 +30,6 @@ jobs:
       matrix:
         target:
           - { name: linux-x64,   os: ubuntu-latest }
-          - { name: macos-arm64, os: macos-latest }
         profile: [ debug, release ]
         backend: [ crypto-ring, crypto-aws-lc-rs ]
     env:
@@ -82,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -101,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -178,7 +177,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -207,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

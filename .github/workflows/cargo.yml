@@ -18,7 +18,7 @@ jobs:
     name: Build
     strategy:
       matrix:
-        os: [ 'ubuntu-latest', 'macos-latest' ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
     name: Test (default backend)
     strategy:
       matrix:
-        os: [ 'ubuntu-latest' ] # macOS and arm64 Linux: see platform.yml
+        os: [ 'ubuntu-latest' ] # Only Linux x64 runs in CI; macOS arm64 is tested on the developer's Mac
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

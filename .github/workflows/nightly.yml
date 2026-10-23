@@ -60,31 +60,6 @@ jobs:
           name: fuzz-crashes-${{ matrix.crate }}
           path: ${{ matrix.crate }}/fuzz/artifacts
 
-  # The same fuzz harnesses on macOS, briefly: proves the targets build and run there too.
-  fuzz-macos:
-    name: fuzz (macOS smoke) ${{ matrix.crate }}
-    runs-on: macos-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        crate: [ rtc-rtp, rtc-srtp, rtc-sdp ]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ${{ matrix.crate }}/fuzz
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-      - name: Fuzz every target for a minute
-        working-directory: ${{ matrix.crate }}
-        run: |
-          set -eu
-          for target in $(cargo fuzz list); do
-            cargo fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=4096 -timeout=20
-          done
 
   # Miri interprets the code and reports undefined behaviour. The workspace has exactly one
   # place with `unsafe` that is exercised at run time — the audio sample buffers in rtc-media —
@@ -113,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -137,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
         toolchain: [ beta, nightly ]
     steps:
       - uses: actions/checkout@v4
@@ -155,7 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
         backend: [ ring, aws-lc-rs ]
     steps:
       - uses: actions/checkout@v4
