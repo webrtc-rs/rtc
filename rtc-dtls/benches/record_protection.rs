@@ -29,7 +29,7 @@ use criterion::{BenchmarkGroup, Criterion, criterion_main};
 
 use crypto::RTCCryptoProvider;
 use rtc_dtls::content::ContentType;
-use rtc_dtls::crypto::crypto_cbc::CryptoCbc;
+use rtc_dtls::crypto::crypto_cbc::{CryptoCbc, CryptoCbcSuite};
 use rtc_dtls::crypto::crypto_gcm::CryptoGcm;
 use rtc_dtls::record_layer::record_layer_header::{
     PROTOCOL_VERSION1_2, RECORD_LAYER_HEADER_SIZE, RecordLayerHeader,
@@ -114,12 +114,27 @@ fn benchmark_cbc(group: &mut BenchmarkGroup<WallTime>) {
     for (name, provider) in providers() {
         group.bench_function(format!("Setup/AES-256-CBC/{name}"), |b| {
             b.iter(|| {
-                CryptoCbc::new(Arc::clone(&provider), KEY_256, MAC_SHA1, KEY_256, MAC_SHA1).unwrap()
+                CryptoCbc::new(
+                    Arc::clone(&provider),
+                    CryptoCbcSuite::Aes256CbcSha1,
+                    KEY_256,
+                    MAC_SHA1,
+                    KEY_256,
+                    MAC_SHA1,
+                )
+                .unwrap()
             });
         });
 
-        let mut cipher =
-            CryptoCbc::new(Arc::clone(&provider), KEY_256, MAC_SHA1, KEY_256, MAC_SHA1).unwrap();
+        let mut cipher = CryptoCbc::new(
+            Arc::clone(&provider),
+            CryptoCbcSuite::Aes256CbcSha1,
+            KEY_256,
+            MAC_SHA1,
+            KEY_256,
+            MAC_SHA1,
+        )
+        .unwrap();
         let (header, raw) = record();
 
         group.bench_function(format!("Encrypt/AES-256-CBC/{name}"), |b| {
