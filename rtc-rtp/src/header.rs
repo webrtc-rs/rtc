@@ -19,6 +19,9 @@ use shared::{
     marshal::{Marshal, MarshalSize, Unmarshal},
 };
 
+#[cfg(test)]
+mod header_extension_test;
+
 use bytes::{Buf, BufMut, Bytes};
 
 /// The length of the extension-profile and length fields that precede header extensions.
@@ -587,9 +590,12 @@ impl Marshal for Header {
                         buf.put(&*extension.payload);
                     }
                 }
-                // RFC3550 Extension
+                // RFC3550 Extension: the single raw payload block, or nothing
+                // at all when the header was built with the extension flag set
+                // but no extension attached (pion marshals that as an empty
+                // block; erroring broke round-trips of freshly built headers).
                 _ => {
-                    if self.extensions.len() != 1 {
+                    if self.extensions.len() > 1 {
                         return Err(Error::ErrRfc3550headerIdrange);
                     }
 
@@ -760,6 +766,10 @@ impl Header {
     }
 
     /// Removes an RTP Header extension
+    ///
+    /// Removing the last extension also clears the extension flag and profile,
+    /// as pion does: a header with no extensions left marshals as if extensions
+    /// were never enabled.
     pub fn del_extension(&mut self, id: u8) -> Result<()> {
         if self.extension {
             if let Some(index) = self
@@ -768,6 +778,13 @@ impl Header {
                 .position(|extension| extension.id == id)
             {
                 let extension = self.extensions.remove(index);
+
+                if self.extensions.is_empty() {
+                    self.extension = false;
+                    self.extension_profile = 0;
+                    self.extensions_padding = 0;
+                    return Ok(());
+                }
 
                 let extension_profile_len = match self.extension_profile {
                     EXTENSION_PROFILE_ONE_BYTE => 1,
@@ -786,6 +803,76 @@ impl Header {
             Err(Error::ErrHeaderExtensionsNotEnabled)
         }
     }
+
+    /// Removes all RTP header extensions (pion's `ClearExtensions`): the table
+    /// is emptied and the extension flag and profile are reset.
+    pub fn clear_extensions(&mut self) {
+        self.extensions.clear();
+        self.extension = false;
+        self.extension_profile = 0;
+        self.extensions_padding = 0;
+    }
+
+    /// Sets an RTP header extension, switching the extension profile when the
+    /// header already carries one of a different kind (pion's
+    /// `SetExtensionWithProfile`).
+    ///
+    /// Upgrading (for example to two-byte ids for an id above 14 or a payload
+    /// above 16 bytes) re-encodes every existing extension under the new
+    /// profile; downgrading to one-byte ids fails if any existing extension
+    /// does not fit the one-byte element format (an id above 14 or a payload
+    /// above 16 bytes).
+    pub fn set_extension_with_profile(
+        &mut self,
+        id: u8,
+        payload: Bytes,
+        intended_profile: u16,
+    ) -> Result<()> {
+        if !self.extension || self.extension_profile == intended_profile {
+            return self.set_extension(id, payload);
+        }
+
+        // Don't mutate the header if the set is invalid anyway.
+        check_extension(intended_profile, id, &payload)?;
+
+        // If downgrading, assert the existing extensions will still fit.
+        if intended_profile == EXTENSION_PROFILE_ONE_BYTE {
+            for extension in &self.extensions {
+                check_extension(intended_profile, extension.id, &extension.payload)?;
+            }
+        }
+
+        self.extension_profile = intended_profile;
+        self.set_extension(id, payload)
+    }
+}
+
+/// pion's `headerExtensionCheck`: the id/payload rules per profile.
+fn check_extension(extension_profile: u16, id: u8, payload: &[u8]) -> Result<()> {
+    match extension_profile {
+        EXTENSION_PROFILE_ONE_BYTE => {
+            if !(1..=14).contains(&id) {
+                return Err(Error::ErrRfc8285oneByteHeaderIdrange);
+            }
+            if payload.len() > 16 {
+                return Err(Error::ErrRfc8285oneByteHeaderSize);
+            }
+        }
+        EXTENSION_PROFILE_TWO_BYTE => {
+            if id < 1 {
+                return Err(Error::ErrRfc8285twoByteHeaderIdrange);
+            }
+            if payload.len() > 255 {
+                return Err(Error::ErrRfc8285twoByteHeaderSize);
+            }
+        }
+        _ => {
+            if id != 0 {
+                return Err(Error::ErrRfc3550headerIdrange);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
