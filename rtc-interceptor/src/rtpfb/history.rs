@@ -117,6 +117,15 @@ impl History {
     ) -> Option<Duration> {
         let packet = self.packets.get_mut(&id)?;
 
+        // A packet already known to have arrived is never downgraded to lost. pion keeps the
+        // first, positive word (`if !ack.arrived && report.Arrived { return }`): a later
+        // report saying the same packet did not arrive is usually a window that ended before
+        // the retransmission landed, and honouring it would flip an arrival into a loss right
+        // after a congestion controller had counted it.
+        if !acknowledgement.arrived && packet.arrived {
+            return Some(received_at.saturating_duration_since(packet.departure));
+        }
+
         packet.arrived = acknowledgement.arrived;
         packet.arrival = acknowledgement.arrival;
         packet.ecn = acknowledgement.ecn;
@@ -308,6 +317,37 @@ mod tests {
         assert_eq!(3, history.take_reports().len());
         assert!(history.take_reports().is_empty());
         assert!(history.is_empty(), "and released");
+    }
+
+    /// pion `TestHistoryArrivedIsNotDowngraded`: once a packet is known to have arrived, a
+    /// later report saying it did not arrive must not flip it back to lost. Both packets end
+    /// up arrived with the arrival time of the positive report.
+    #[test]
+    fn an_arrived_packet_is_not_downgraded_by_later_feedback() {
+        let now = Instant::now();
+        let mut history = History::new();
+        history.add_outgoing(1, 0, false, 0, 0, now);
+        history.add_outgoing(1, 1, false, 0, 0, now);
+
+        let arrival = Duration::from_secs(1);
+        history.on_ccfb_feedback(
+            now,
+            1,
+            Acknowledgement::received(0, Some(arrival), Ecn::NotEct),
+        );
+        history.on_ccfb_feedback(now, 1, Acknowledgement::lost(0));
+        history.on_ccfb_feedback(
+            now,
+            1,
+            Acknowledgement::received(1, Some(arrival), Ecn::NotEct),
+        );
+
+        let reports = history.take_reports();
+        assert_eq!(2, reports.len());
+        assert!(reports[0].arrived, "packet 0 keeps its arrival");
+        assert_eq!(Some(arrival), reports[0].arrival);
+        assert!(reports[1].arrived);
+        assert_eq!(Some(arrival), reports[1].arrival);
     }
 
     #[test]

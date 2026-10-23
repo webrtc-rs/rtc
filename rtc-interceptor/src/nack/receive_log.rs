@@ -24,6 +24,11 @@ pub(crate) struct ReceiveLog {
     last_consecutive: u16,
 }
 
+/// Whether `size` is one the receive log can hold: 64, 128, ..., 32768.
+pub(crate) fn is_valid_size(size: u16) -> bool {
+    (6..=15).any(|i| size == 1 << i)
+}
+
 impl ReceiveLog {
     /// Create a new receive log with the specified size.
     ///
@@ -31,8 +36,7 @@ impl ReceiveLog {
     /// Returns `None` if the size is invalid.
     pub(crate) fn new(size: u16) -> Option<Self> {
         // Valid sizes: 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
-        let is_valid = (6..=15).any(|i| size == 1 << i);
-        if !is_valid {
+        if !is_valid_size(size) {
             return None;
         }
 

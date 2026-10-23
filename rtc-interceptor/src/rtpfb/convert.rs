@@ -37,6 +37,10 @@ pub fn convert_twcc(feedback: &TransportLayerCc) -> Vec<Acknowledgement> {
     let mut arrival = TWCC_REFERENCE_TICK * feedback.reference_time;
     let mut delta_index = 0usize;
     let mut offset = 0u16;
+    // The report declares how many packets it describes; the chunks can overshoot it (a run
+    // length or a status vector carries whole symbols), so conversion stops at the declared
+    // count and a run is clamped to what remains. pion does the same.
+    let mut processed = 0u16;
 
     let push = |symbol: SymbolTypeTcc,
                 offset: &mut u16,
@@ -66,15 +70,10 @@ pub fn convert_twcc(feedback: &TransportLayerCc) -> Vec<Acknowledgement> {
                         Some(*arrival),
                         Ecn::NotEct,
                     ));
-                } else {
-                    // The chunks claim more received packets than there are deltas. Report the
-                    // packet as arrived without a time rather than inventing one.
-                    acknowledgements.push(Acknowledgement::received(
-                        sequence_number,
-                        None,
-                        Ecn::NotEct,
-                    ));
                 }
+                // A received symbol with no delta left is silently skipped, as in pion: the
+                // report is malformed and inventing an arrival time for it would poison the
+                // delay estimate.
             }
             SymbolTypeTcc::PacketReceivedWithoutDelta => {
                 acknowledgements.push(Acknowledgement::received(
@@ -86,10 +85,16 @@ pub fn convert_twcc(feedback: &TransportLayerCc) -> Vec<Acknowledgement> {
         }
     };
 
-    for chunk in &feedback.packet_chunks {
+    'chunks: for chunk in &feedback.packet_chunks {
+        if processed >= feedback.packet_status_count {
+            break;
+        }
         match chunk {
             PacketStatusChunk::RunLengthChunk(run) => {
-                for _ in 0..run.run_length {
+                // A run may claim more packets than the report still has room to describe.
+                let remaining = feedback.packet_status_count - processed;
+                let run_length = run.run_length.min(remaining);
+                for _ in 0..run_length {
                     push(
                         run.packet_status_symbol,
                         &mut offset,
@@ -97,10 +102,15 @@ pub fn convert_twcc(feedback: &TransportLayerCc) -> Vec<Acknowledgement> {
                         &mut delta_index,
                         &mut acknowledgements,
                     );
+                    processed += 1;
                 }
             }
             PacketStatusChunk::StatusVectorChunk(vector) => {
                 for &symbol in &vector.symbol_list {
+                    if processed >= feedback.packet_status_count {
+                        break 'chunks;
+                    }
+                    processed += 1;
                     push(
                         symbol,
                         &mut offset,
@@ -123,7 +133,7 @@ pub fn convert_twcc(feedback: &TransportLayerCc) -> Vec<Acknowledgement> {
 /// it was stamped. A round trip measured without subtracting it counts the receiver's own
 /// reporting interval as network time.
 pub fn convert_ccfb(feedback: &CcFeedbackReport) -> (Duration, HashMap<u32, Vec<Acknowledgement>>) {
-    let mut per_stream = HashMap::new();
+    let mut per_stream: HashMap<u32, Vec<Acknowledgement>> = HashMap::new();
     // Arrivals are offsets *back* from the report timestamp, so the newest arrival is the
     // smallest offset.
     let mut newest_arrival: Option<Duration> = None;
@@ -161,7 +171,13 @@ pub fn convert_ccfb(feedback: &CcFeedbackReport) -> (Duration, HashMap<u32, Vec<
             ));
         }
 
-        per_stream.insert(block.media_ssrc, acknowledgements);
+        // A report may carry more than one block for the same stream — a long window is split
+        // across blocks — and pion merges them; overwriting would drop every block but the
+        // last and lose the packets the dropped blocks described.
+        per_stream
+            .entry(block.media_ssrc)
+            .or_default()
+            .extend(acknowledgements);
     }
 
     (newest_arrival.unwrap_or_default(), per_stream)
@@ -207,6 +223,7 @@ mod tests {
     fn a_run_of_lost_packets_converts_to_losses() {
         let feedback = TransportLayerCc {
             base_sequence_number: 100,
+            packet_status_count: 3,
             reference_time: 0,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketNotReceived, 3)],
             recv_deltas: vec![],
@@ -230,6 +247,7 @@ mod tests {
     fn deltas_accumulate_from_the_reference_time() {
         let feedback = TransportLayerCc {
             base_sequence_number: 10,
+            packet_status_count: 3,
             // One tick of 64 ms.
             reference_time: 1,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketReceivedSmallDelta, 3)],
@@ -260,6 +278,7 @@ mod tests {
     fn a_negative_delta_moves_the_arrival_backwards() {
         let feedback = TransportLayerCc {
             base_sequence_number: 0,
+            packet_status_count: 2,
             reference_time: 1,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketReceivedSmallDelta, 2)],
             recv_deltas: vec![delta(5000), delta(-2000)],
@@ -286,6 +305,7 @@ mod tests {
     fn a_status_vector_converts_symbol_by_symbol() {
         let feedback = TransportLayerCc {
             base_sequence_number: 500,
+            packet_status_count: 3,
             reference_time: 0,
             packet_chunks: vec![status_vector(vec![
                 SymbolTypeTcc::PacketReceivedSmallDelta,
@@ -319,6 +339,7 @@ mod tests {
     fn a_packet_received_without_a_delta_has_no_arrival_time() {
         let feedback = TransportLayerCc {
             base_sequence_number: 0,
+            packet_status_count: 1,
             reference_time: 0,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketReceivedWithoutDelta, 1)],
             recv_deltas: vec![],
@@ -330,12 +351,14 @@ mod tests {
         assert_eq!(None, acknowledgements[0].arrival);
     }
 
-    /// A report claiming more received packets than it carries deltas for is malformed. The
-    /// packets are still reported as arrived, without times, rather than panicking on the index.
+    /// A report claiming more received packets than it carries deltas for is malformed. As in
+    /// pion, the symbols without a delta are dropped rather than reported with an invented
+    /// time: a made-up arrival would poison the delay estimate.
     #[test]
     fn more_received_packets_than_deltas_does_not_panic() {
         let feedback = TransportLayerCc {
             base_sequence_number: 0,
+            packet_status_count: 4,
             reference_time: 0,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketReceivedSmallDelta, 4)],
             recv_deltas: vec![delta(100)],
@@ -343,13 +366,92 @@ mod tests {
         };
 
         let acknowledgements = convert_twcc(&feedback);
-        assert_eq!(4, acknowledgements.len());
-        assert!(acknowledgements[0].arrival.is_some(), "the one real delta");
-        assert!(
-            acknowledgements[1..]
-                .iter()
-                .all(|ack| ack.arrival.is_none()),
-            "and no invented times for the rest"
+        assert_eq!(
+            1,
+            acknowledgements.len(),
+            "only the packet the one real delta describes"
+        );
+        assert!(acknowledgements[0].arrival.is_some());
+    }
+
+    /// pion `TestConvertTWCC`: the report declares how many packets it describes, and a run
+    /// length or status vector that overshoots that count is cut short — the extra symbols
+    /// describe packets the sender never asked about.
+    #[test]
+    fn conversion_stops_at_the_declared_packet_status_count() {
+        let feedback = TransportLayerCc {
+            base_sequence_number: 200,
+            packet_status_count: 4,
+            reference_time: 3,
+            packet_chunks: vec![
+                run_length(SymbolTypeTcc::PacketNotReceived, 1),
+                run_length(SymbolTypeTcc::PacketReceivedWithoutDelta, 1),
+                run_length(SymbolTypeTcc::PacketReceivedSmallDelta, 5),
+                status_vector(vec![SymbolTypeTcc::PacketNotReceived]),
+            ],
+            recv_deltas: vec![],
+            ..Default::default()
+        };
+
+        let acknowledgements = convert_twcc(&feedback);
+        assert_eq!(
+            vec![
+                Acknowledgement::lost(200),
+                Acknowledgement::received(201, None, Ecn::NotEct),
+            ],
+            acknowledgements,
+            "the small-delta run is clamped to two symbols and its deltas are missing, so both are dropped"
+        );
+    }
+
+    /// pion `TestConvertTWCC`: a count that runs out mid-status-vector stops there, and a
+    /// received symbol whose delta is missing is dropped.
+    #[test]
+    fn a_status_vector_is_cut_short_at_the_declared_count() {
+        let feedback = TransportLayerCc {
+            base_sequence_number: 300,
+            packet_status_count: 3,
+            reference_time: 3,
+            packet_chunks: vec![status_vector(vec![
+                SymbolTypeTcc::PacketReceivedWithoutDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+            ])],
+            recv_deltas: vec![delta(1000)],
+            ..Default::default()
+        };
+
+        let acknowledgements = convert_twcc(&feedback);
+        assert_eq!(
+            2,
+            acknowledgements.len(),
+            "the count ends after three symbols"
+        );
+        assert!(acknowledgements[0].arrived);
+        assert_eq!(None, acknowledgements[0].arrival);
+        assert_eq!(
+            Some(Duration::from_millis(3 * 64) + Duration::from_micros(1000)),
+            acknowledgements[1].arrival
+        );
+    }
+
+    /// pion `TestConvertTWCC`: a count larger than what the chunks describe is simply the end
+    /// of the road — everything the chunks say is converted, nothing is invented.
+    #[test]
+    fn a_count_larger_than_the_chunks_converts_all_of_them() {
+        let feedback = TransportLayerCc {
+            base_sequence_number: 400,
+            packet_status_count: 100,
+            reference_time: 0,
+            packet_chunks: vec![run_length(SymbolTypeTcc::PacketNotReceived, 2)],
+            recv_deltas: vec![],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            vec![Acknowledgement::lost(400), Acknowledgement::lost(401)],
+            convert_twcc(&feedback)
         );
     }
 
@@ -357,6 +459,7 @@ mod tests {
     fn sequence_numbers_wrap_across_a_report() {
         let feedback = TransportLayerCc {
             base_sequence_number: 65534,
+            packet_status_count: 4,
             reference_time: 0,
             packet_chunks: vec![run_length(SymbolTypeTcc::PacketNotReceived, 4)],
             recv_deltas: vec![],
@@ -422,6 +525,57 @@ mod tests {
         let second = &per_stream[&20];
         assert_eq!(5, second[0].sequence_number);
         assert_eq!(Ecn::Ce, second[0].ecn, "ECN survives conversion");
+    }
+
+    /// pion `TestConvertCCFB`: a long window is split across report blocks, and two blocks for
+    /// the same media SSRC describe consecutive stretches of one stream — they must be merged,
+    /// not overwritten.
+    #[test]
+    fn report_blocks_for_the_same_stream_are_merged() {
+        let feedback = CcFeedbackReport {
+            sender_ssrc: 1,
+            report_blocks: vec![
+                CcFeedbackReportBlock {
+                    media_ssrc: 10,
+                    begin_sequence: 100,
+                    metric_blocks: vec![
+                        metric(true, 512, Ecn::NotEct),
+                        metric(false, 0, Ecn::NotEct),
+                    ],
+                },
+                CcFeedbackReportBlock {
+                    media_ssrc: 10,
+                    begin_sequence: 102,
+                    metric_blocks: vec![metric(true, 256, Ecn::NotEct)],
+                },
+            ],
+            report_timestamp: 0,
+        };
+
+        let (_, per_stream) = convert_ccfb(&feedback);
+
+        let merged = &per_stream[&10];
+        assert_eq!(
+            3,
+            merged.len(),
+            "both blocks' packets, not just the second block's"
+        );
+        assert_eq!(
+            vec![100, 101, 102],
+            merged
+                .iter()
+                .map(|ack| ack.sequence_number)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !merged[1].arrived,
+            "the loss the first block reported survives"
+        );
+        assert_eq!(
+            Some(Duration::from_millis(250)),
+            merged[2].arrival,
+            "the newest arrival still drives the reporting delay"
+        );
     }
 
     /// The receiver's own reporting delay is not network time. Without subtracting it, a round

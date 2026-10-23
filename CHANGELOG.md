@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `rtc-interceptor`: `History` no longer downgrades an arrived packet to lost when later
+  feedback says the same packet did not arrive (pion `TestHistoryArrivedIsNotDowngraded`);
+  the first, positive report stands.
+- `rtc-interceptor`: `convert_twcc` now stops at the feedback's declared `packet_status_count`
+  and drops received symbols whose delta is missing, as pion does, instead of converting every
+  chunk symbol (found by porting pion's `TestConvertTWCC`).
+- `rtc-interceptor`: `convert_ccfb` merges report blocks that describe the same media SSRC
+  instead of keeping only the last one (pion's `TestConvertCCFB`).
+- `rtc-interceptor`: the NACK responder strips padding from RFC 4588 RTX retransmissions, as
+  pion's packet factory does — the P-bit comes off and legacy payload-embedded padding is
+  trimmed; a padding count larger than the payload is never buffered, so it is never
+  retransmitted (pion's `TestRTPBuffer_*` padding family).
+- `rtc-rtp`: `Header::get_extension` clones its payload `Bytes`, which allocates per packet in
+  the `bytes` crate's promotable form; the congestion controller, the TWCC receiver/sender and
+  the peer-connection demuxer now read the new borrowed `Header::get_extension_payload`
+  instead (found by porting pion's `TestRecordDoesNotAllocateInSteadyState`; TWCC recording is
+  now allocation-free in steady state).
+
 ### Added
 - `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
+- `rtc-interceptor`: pion's interceptor test suite is ported (issue #15): the twcc recorder
+  (full feedback content, rolling wrap, min input, counts, duplicates, short and reordered
+  deltas, chunk boundaries), the arrival-time map (erase/grow/shrink), the TWCC feedback
+  receiver subtests, the nack generator/responder scenarios (exact NACK content with
+  `skip_last_n`, stream filters, unbind, bypass, RTX exact sets), flexfec (decoder retention,
+  multi-stream protection, whole-range and high-count round trips), RFC 8888 stream-log
+  vectors, CCFB ingestion at the estimator, and a steady-state allocation test. The
+  `interceptor` ledger is now `todo`-free: 111 `rust`, 27 `na`, 2 `gap`.
+- `rtc-interceptor`: `NackGeneratorBuilder::with_streams_filter` /
+  `NackResponderBuilder::with_streams_filter` (pion's `GeneratorStreamsFilter` /
+  `ResponderStreamsFilter`) and `try_build` on both, which rejects an unusable buffer size
+  with the new `ErrNackInvalidSize` where the infallible `build` stays inert.
+- `rtc-rtp`: `Header::get_extension_payload`, the borrowed form of
+  `Header::get_extension`.
 - `rtc-interceptor`: `PacketDump`, the belt-shaped port of pion's `interceptor/pkg/packetdump`:
   one interceptor sees both directions and forwards every packet unchanged, while writing a
   line per RTP/RTCP packet through pluggable filters, formatters and a `PacketDumpSink`

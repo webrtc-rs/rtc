@@ -953,3 +953,334 @@ fn test_twcc_receiver_ignores_unbound_ssrcs_without_any_binding() {
         }
     }
 }
+
+// =============================================================================
+// pion parity ports (sender_interceptor_test.go — this crate's TwccReceiver plays pion's
+// SenderInterceptor role: the side that reports arrivals)
+// =============================================================================
+
+use rtcp::transport_feedbacks::transport_layer_cc::{
+    PacketStatusChunk, RunLengthChunk, StatusVectorChunk, SymbolSizeTypeTcc, SymbolTypeTcc,
+    TransportLayerCc,
+};
+
+fn feedback_chunk(symbol: SymbolTypeTcc, run: u16) -> PacketStatusChunk {
+    PacketStatusChunk::RunLengthChunk(RunLengthChunk {
+        packet_status_symbol: symbol,
+        run_length: run,
+        ..Default::default()
+    })
+}
+
+fn feedback_vector_two_bit(symbols: Vec<SymbolTypeTcc>) -> PacketStatusChunk {
+    PacketStatusChunk::StatusVectorChunk(StatusVectorChunk {
+        type_tcc:
+            rtcp::transport_feedbacks::transport_layer_cc::StatusChunkTypeTcc::StatusVectorChunk,
+        symbol_size: SymbolSizeTypeTcc::TwoBit,
+        symbol_list: symbols,
+    })
+}
+
+fn feedback_vector_one_bit(symbols: Vec<SymbolTypeTcc>) -> PacketStatusChunk {
+    PacketStatusChunk::StatusVectorChunk(StatusVectorChunk {
+        type_tcc:
+            rtcp::transport_feedbacks::transport_layer_cc::StatusChunkTypeTcc::StatusVectorChunk,
+        symbol_size: SymbolSizeTypeTcc::OneBit,
+        symbol_list: symbols,
+    })
+}
+
+/// Drain one timeout's worth of feedback and return the single TransportLayerCc it produced.
+fn single_feedback(chain: &mut impl Interceptor) -> TransportLayerCc {
+    let mut found = None;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                if let Some(cc) = rtcp_pkt.as_any().downcast_ref::<TransportLayerCc>() {
+                    assert!(found.is_none(), "a single feedback packet per interval");
+                    found = Some(TransportLayerCc {
+                        sender_ssrc: cc.sender_ssrc,
+                        media_ssrc: cc.media_ssrc,
+                        base_sequence_number: cc.base_sequence_number,
+                        packet_status_count: cc.packet_status_count,
+                        reference_time: cc.reference_time,
+                        fb_pkt_count: cc.fb_pkt_count,
+                        packet_chunks: cc.packet_chunks.clone(),
+                        recv_deltas: cc.recv_deltas.clone(),
+                    });
+                }
+            }
+        }
+    }
+    found.expect("a TransportLayerCc feedback packet")
+}
+
+/// pion `TestSenderInterceptor` "before any packets": a bound stream that has seen no RTP
+/// produces no feedback, however long the interval waits.
+#[test]
+fn test_twcc_receiver_before_any_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(100))
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let ext_id = 1u16;
+    chain.bind_remote_stream(&twcc_stream_info(ssrc, ext_id));
+
+    let base_time = Instant::now();
+    chain
+        .handle_timeout(base_time + Duration::from_millis(300))
+        .unwrap();
+
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            assert!(
+                rtcp_packets.is_empty(),
+                "no feedback before any packet arrives"
+            );
+        }
+    }
+}
+
+/// pion `TestSenderInterceptor` "after RTP packets": ten packets arriving together report as
+/// one run of small deltas.
+#[test]
+fn test_twcc_receiver_after_rtp_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(100))
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let ext_id = 1u16;
+    chain.bind_remote_stream(&twcc_stream_info(ssrc, ext_id));
+
+    let base_time = Instant::now();
+    for i in 0..10u16 {
+        chain
+            .handle_read(create_rtp_packet_with_twcc(
+                base_time,
+                ssrc,
+                i,
+                i,
+                ext_id as u8,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(150))
+        .unwrap();
+
+    let cc = single_feedback(&mut chain);
+    assert_eq!(1, cc.media_ssrc);
+    assert_eq!(0, cc.base_sequence_number);
+    assert_eq!(
+        vec![feedback_chunk(SymbolTypeTcc::PacketReceivedSmallDelta, 10)],
+        cc.packet_chunks
+    );
+}
+
+/// pion `TestSenderInterceptor` "different delays between RTP packets": gaps of 0, 10, 100 and
+/// 200 ms between arrivals come out as small, small, large, large delta symbols — the 250 µs
+/// scale puts anything past 63.75 ms into the large-delta form.
+#[test]
+fn test_twcc_receiver_different_delays_between_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(500))
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let ext_id = 1u16;
+    chain.bind_remote_stream(&twcc_stream_info(ssrc, ext_id));
+
+    let base_time = Instant::now();
+    let delays = [0, 10, 100, 200];
+    let mut elapsed = 0u64;
+    for (i, delay) in delays.iter().enumerate() {
+        elapsed += delay;
+        chain
+            .handle_read(create_rtp_packet_with_twcc(
+                base_time + Duration::from_millis(elapsed),
+                ssrc,
+                i as u16,
+                i as u16,
+                ext_id as u8,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(600))
+        .unwrap();
+
+    let cc = single_feedback(&mut chain);
+    assert_eq!(0, cc.base_sequence_number);
+    assert_eq!(
+        vec![feedback_vector_two_bit(vec![
+            SymbolTypeTcc::PacketReceivedSmallDelta,
+            SymbolTypeTcc::PacketReceivedSmallDelta,
+            SymbolTypeTcc::PacketReceivedLargeDelta,
+            SymbolTypeTcc::PacketReceivedLargeDelta,
+        ])],
+        cc.packet_chunks
+    );
+}
+
+/// pion `TestSenderInterceptor` "packet loss": a sparse arrival pattern mixes received,
+/// not-received, small and large symbols, and a long gap collapses into a run of
+/// not-received symbols.
+#[test]
+fn test_twcc_receiver_packet_loss() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(2000))
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let ext_id = 1u16;
+    chain.bind_remote_stream(&twcc_stream_info(ssrc, ext_id));
+
+    let base_time = Instant::now();
+    let arrivals = [
+        (0u16, 0u64),
+        (1, 10),
+        (4, 110),
+        (8, 310),
+        (9, 330),
+        (10, 350),
+        (30, 650),
+    ];
+    for (sequence, at) in arrivals {
+        chain
+            .handle_read(create_rtp_packet_with_twcc(
+                base_time + Duration::from_millis(at),
+                ssrc,
+                sequence,
+                sequence,
+                ext_id as u8,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(2100))
+        .unwrap();
+
+    let cc = single_feedback(&mut chain);
+    assert_eq!(0, cc.base_sequence_number);
+    assert_eq!(
+        vec![
+            feedback_vector_two_bit(vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+            ]),
+            feedback_vector_two_bit(vec![
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+            ]),
+            feedback_chunk(SymbolTypeTcc::PacketNotReceived, 16),
+            feedback_chunk(SymbolTypeTcc::PacketReceivedLargeDelta, 1),
+        ],
+        cc.packet_chunks
+    );
+}
+
+/// pion `TestSenderInterceptor` "overflow": sequence numbers crossing the 16-bit wrap keep
+/// their order, split into a 14-symbol one-bit vector and a three-symbol two-bit vector.
+#[test]
+fn test_twcc_receiver_sequence_overflow() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(2000))
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let ext_id = 1u16;
+    chain.bind_remote_stream(&twcc_stream_info(ssrc, ext_id));
+
+    let base_time = Instant::now();
+    for (index, sequence) in [65_530u16, 65_534, 65_535, 1, 2, 10]
+        .into_iter()
+        .enumerate()
+    {
+        chain
+            .handle_read(create_rtp_packet_with_twcc(
+                base_time + Duration::from_millis(index as u64),
+                ssrc,
+                sequence,
+                sequence,
+                ext_id as u8,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(2100))
+        .unwrap();
+
+    let cc = single_feedback(&mut chain);
+    assert_eq!(65_530, cc.base_sequence_number);
+    assert_eq!(
+        vec![
+            feedback_vector_one_bit(vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+            ]),
+            feedback_vector_two_bit(vec![
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+            ]),
+        ],
+        cc.packet_chunks
+    );
+}

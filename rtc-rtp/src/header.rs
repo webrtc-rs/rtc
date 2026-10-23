@@ -741,6 +741,24 @@ impl Header {
         }
     }
 
+    /// The payload of an RTP header extension, borrowed rather than cloned.
+    ///
+    /// [`Header::get_extension`](Self::get_extension) hands out an owned [`Bytes`], and cloning
+    /// a payload that was never shared before costs an allocation — the `bytes` crate promotes
+    /// a freshly-frozen payload to its shared form on the first clone. In the per-packet path
+    /// (a congestion controller reading the transport-cc sequence on every packet) that is one
+    /// heap allocation per packet for what is a two-byte read, so this borrowed form exists.
+    pub fn get_extension_payload(&self, id: u8) -> Option<&[u8]> {
+        if self.extension {
+            self.extensions
+                .iter()
+                .find(|extension| extension.id == id)
+                .map(|extension| extension.payload.as_ref())
+        } else {
+            None
+        }
+    }
+
     /// Removes an RTP Header extension
     pub fn del_extension(&mut self, id: u8) -> Result<()> {
         if self.extension {

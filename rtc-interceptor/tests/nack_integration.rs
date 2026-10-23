@@ -1323,3 +1323,733 @@ fn a_retransmission_is_tagged_and_an_original_is_not() {
         "the responder should have retransmitted exactly the packet that was asked for"
     );
 }
+
+// =============================================================================
+// pion parity ports (generator_interceptor_test.go / responder_interceptor_test.go /
+// rtpbuffer_test.go, observed at the interceptor boundary)
+// =============================================================================
+
+/// pion `TestGeneratorInterceptor`: with `skip_last_n = 2`, the NACK names exactly the packets
+/// that are missing and old enough to ask about — 13 and 15, not 17, which sits within the two
+/// newest the log deliberately ignores because they may merely be delayed.
+#[test]
+fn test_nack_generator_nack_content_respects_skip_last_n() {
+    let interval = Duration::from_millis(10);
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackGenerator,
+            NackGeneratorBuilder::new()
+                .with_size(64)
+                .with_skip_last_n(2)
+                .with_max_nacks_per_packet(10)
+                .with_interval(interval)
+                .build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    chain.bind_remote_stream(&nack_stream_info(ssrc));
+    let base_time = Instant::now();
+
+    for seq in [10u16, 11, 12, 14, 16, 18] {
+        chain
+            .handle_read(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                500,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+
+    chain.handle_timeout(base_time + interval * 2).unwrap();
+
+    let mut nacks_seen = 0;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            assert_eq!(
+                1,
+                rtcp_packets.len(),
+                "single packet RTCP compound expected"
+            );
+            for rtcp_pkt in rtcp_packets {
+                if let Some(nack) = rtcp_pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>(
+                    )
+                {
+                    nacks_seen += 1;
+                    assert_eq!(1, nack.nacks.len());
+                    assert_eq!(13, nack.nacks[0].packet_id);
+                    // 13 and 15 — not 17, which skip_last_n holds back.
+                    assert_eq!(0b10, nack.nacks[0].lost_packets);
+                }
+            }
+        }
+    }
+    assert!(nacks_seen > 0, "a NACK should have been generated");
+}
+
+/// pion `TestResponderInterceptor`: one NACK covering 11, 12, 13 and 15 retransmits exactly the
+/// packets that were actually sent — the never-sent 13 is silently skipped, and nothing else
+/// follows.
+#[test]
+fn test_nack_responder_retransmits_exactly_the_sent_packets_in_one_nack() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    chain.bind_local_stream(&nack_stream_info(ssrc));
+    let base_time = Instant::now();
+
+    // 13 is deliberately never sent.
+    for seq in [10u16, 11, 12, 14, 15] {
+        chain
+            .handle_write(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                500,
+            ))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    // 11 + bitmap 0b1011 covers 11, 12, 13 and 15.
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            2,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 11,
+                lost_packets: 0b1011,
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut retransmitted = Vec::new();
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            assert_eq!(1, rtp.header.ssrc, "retransmission keeps the stream's SSRC");
+            retransmitted.push(rtp.header.sequence_number);
+        }
+    }
+    let mut expected = vec![11, 12, 15];
+    expected.sort_unstable();
+    retransmitted.sort_unstable();
+    assert_eq!(
+        expected, retransmitted,
+        "exactly the sent-and-nacked packets"
+    );
+}
+
+/// pion `TestRTPBuffer_Overridden_WithRTX_NILPayload`: an empty-payload packet retransmitted on
+/// the RTX stream carries exactly the two-byte original sequence number and nothing else.
+#[test]
+fn test_nack_responder_rtx_payload_of_empty_packet_is_only_the_osn() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let rtx_ssrc = 2;
+    let rtx_pt = 100;
+    chain.bind_local_stream(&nack_rtx_stream_info(ssrc, rtx_ssrc, rtx_pt));
+    let base_time = Instant::now();
+
+    // An empty payload, as pion's nil payload.
+    chain
+        .handle_write(create_rtp_packet_with_time(base_time, ssrc, 1, 3000, 0))
+        .unwrap();
+    while chain.poll_write().is_some() {}
+
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            1,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 1,
+                lost_packets: 0,
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut rtx_seen = false;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            rtx_seen = true;
+            assert_eq!(rtx_ssrc, rtp.header.ssrc);
+            assert_eq!(rtx_pt, rtp.header.payload_type);
+            assert_eq!(
+                vec![0, 1],
+                rtp.payload.to_vec(),
+                "exactly the two-byte original sequence number"
+            );
+        }
+    }
+    assert!(rtx_seen, "an RTX retransmission should be sent");
+}
+
+/// pion `TestRTPBuffer_Overridden_WithRTX_AND_Padding` and `TestRTPBuffer_Padding`: a padded
+/// packet retransmitted on the RTX stream loses its padding — the P-bit comes off and the
+/// legacy padding bytes (count in the last payload byte) are trimmed — leaving the original
+/// sequence number followed by the pure payload.
+#[test]
+fn test_nack_responder_rtx_strips_legacy_padding() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let rtx_ssrc = 1;
+    let rtx_pt = 1;
+    chain.bind_local_stream(&nack_rtx_stream_info(ssrc, rtx_ssrc, rtx_pt));
+    let base_time = Instant::now();
+
+    // pion's fixture: "test" plus 119 padding bytes, the last carrying the count 120.
+    let mut padded = create_rtp_packet_with_time(base_time, ssrc, 1, 3000, 0);
+    if let Packet::Rtp(rtp) = &mut padded.message.packet {
+        rtp.header.padding = true;
+        let mut payload = b"test".to_vec();
+        payload.extend(std::iter::repeat(0).take(119));
+        payload.push(120);
+        rtp.payload = payload.into();
+    }
+    chain.handle_write(padded).unwrap();
+    while chain.poll_write().is_some() {}
+
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            1,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 1,
+                lost_packets: 0,
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut rtx_seen = false;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            rtx_seen = true;
+            assert!(!rtp.header.padding, "the P-bit comes off the RTX copy");
+            let mut expected = vec![0, 1]; // the original sequence number
+            expected.extend_from_slice(b"test");
+            assert_eq!(expected, rtp.payload.to_vec(), "OSN plus the pure payload");
+        }
+    }
+    assert!(rtx_seen, "an RTX retransmission should be sent");
+}
+
+/// pion `TestRTPBuffer_Padding` ("overflow padding"): a padding count larger than the payload
+/// cannot be honoured. pion's factory rejects the packet at buffer time, so it is never
+/// retransmitted — the write itself still goes through.
+#[test]
+fn test_nack_responder_never_retransmits_malformed_padding() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let rtx_ssrc = 2;
+    let rtx_pt = 100;
+    chain.bind_local_stream(&nack_rtx_stream_info(ssrc, rtx_ssrc, rtx_pt));
+    let base_time = Instant::now();
+
+    // A padding count of 200 with a three-byte payload cannot be trimmed.
+    let mut malformed = create_rtp_packet_with_time(base_time, ssrc, 1, 3000, 0);
+    if let Packet::Rtp(rtp) = &mut malformed.message.packet {
+        rtp.header.padding = true;
+        rtp.payload = vec![0, 1, 200].into();
+    }
+    chain.handle_write(malformed).unwrap();
+
+    let mut forwarded = false;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            assert_eq!(1, rtp.header.sequence_number, "the write itself succeeds");
+            forwarded = true;
+        }
+    }
+    assert!(forwarded, "the packet still reaches the network");
+
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            1,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 1,
+                lost_packets: 0,
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut retransmissions = 0;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(_rtp) = &pkt.message.packet {
+            retransmissions += 1;
+        }
+    }
+    assert_eq!(0, retransmissions, "nothing was buffered to retransmit");
+}
+
+/// pion `TestResponderInterceptor_BypassUnknownSSRCs`: packets written with an SSRC the responder
+/// never bound pass through unbuffered — a NACK for the bound stream cannot resurrect them.
+#[test]
+fn test_nack_responder_bypasses_unknown_ssrcs() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    chain.bind_local_stream(&nack_stream_info(ssrc));
+    let base_time = Instant::now();
+
+    // Alternate between the bound SSRC and an unbound one; only SSRC 1 is buffered.
+    for seq in [10u16, 11, 12, 14, 15] {
+        chain
+            .handle_write(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                100,
+            ))
+            .unwrap();
+        chain
+            .handle_write(create_rtp_packet_with_time(
+                base_time,
+                2,
+                seq,
+                seq as u32 * 3000,
+                100,
+            ))
+            .unwrap();
+    }
+    let mut unknown_forwarded = 0;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            if rtp.header.ssrc == 2 {
+                unknown_forwarded += 1;
+            }
+        }
+    }
+    assert_eq!(
+        5, unknown_forwarded,
+        "the unbound stream's packets pass through"
+    );
+
+    // 13 was only ever sent on the unbound SSRC, so it must not come back.
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            1,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 11,
+                lost_packets: 0b1011, // 11, 12, 13, 15
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut retransmitted = Vec::new();
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            assert_eq!(1, rtp.header.ssrc, "only the bound stream's packets");
+            retransmitted.push(rtp.header.sequence_number);
+        }
+    }
+    retransmitted.sort_unstable();
+    assert_eq!(vec![11, 12, 15], retransmitted, "never-sent 13 is excluded");
+}
+
+/// pion `TestResponderInterceptor_UnbindReleasesBufferedPackets`: once a stream is unbound its
+/// buffered packets are gone — a late NACK naming them retransmits nothing.
+#[test]
+fn test_nack_responder_unbind_releases_buffered_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let info = nack_stream_info(ssrc);
+    chain.bind_local_stream(&info);
+    let base_time = Instant::now();
+
+    for seq in 0..5u16 {
+        chain
+            .handle_write(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                100,
+            ))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    chain.unbind_local_stream(&info);
+
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            1,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 0,
+                lost_packets: 0b1111, // 0..=4, all of them
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let retransmissions = {
+        let mut count = 0;
+        while let Some(pkt) = chain.poll_write() {
+            if let Packet::Rtp(_rtp) = &pkt.message.packet {
+                count += 1;
+            }
+        }
+        count
+    };
+    assert_eq!(
+        0, retransmissions,
+        "the buffer died with the stream, so nothing is left to retransmit"
+    );
+}
+
+/// pion `TestGeneratorInterceptor_InvalidSize` / `TestResponderInterceptor_InvalidSize`: an
+/// unusable buffer size is rejected loudly by `try_build` (pion errors at construction) and,
+/// through the infallible `build`, degrades to an interceptor that tracks nothing rather than
+/// panicking.
+#[test]
+fn test_nack_invalid_size_is_rejected_or_inert_not_panicking() {
+    let generator = NackGeneratorBuilder::new().with_size(5).try_build();
+    assert!(generator.is_err(), "the generator rejects size 5");
+
+    let responder = NackResponderBuilder::new().with_size(5).try_build();
+    assert!(responder.is_err(), "the responder rejects size 5");
+
+    // The infallible builders neither panic nor track anything.
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackGenerator,
+            NackGeneratorBuilder::new()
+                .with_size(5)
+                .with_interval(Duration::from_millis(10))
+                .build(),
+        )
+        .build();
+    let ssrc = 1;
+    chain.bind_remote_stream(&nack_stream_info(ssrc));
+    let base_time = Instant::now();
+    for seq in [0u16, 1, 5] {
+        chain
+            .handle_read(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                100,
+            ))
+            .unwrap();
+    }
+    while chain.poll_read().is_some() {}
+    chain
+        .handle_timeout(base_time + Duration::from_millis(50))
+        .unwrap();
+    let mut nacks = 0;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                if rtcp_pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>(
+                    )
+                    .is_some()
+                {
+                    nacks += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(0, nacks, "an inert generator never NACKs");
+}
+
+/// pion `TestGeneratorInterceptor_StreamFilter` / `TestResponderInterceptor_StreamFilter`: a
+/// streams filter keeps one stream and drops another, both of which negotiated NACK feedback —
+/// the filtered stream's gaps are not reported and its packets are not buffered.
+#[test]
+fn test_nack_streams_filter_excludes_one_of_two_nack_streams() {
+    // The generator side: SSRC 1 is filtered out, SSRC 2 is kept.
+    let mut generator = Registry::new()
+        .with(
+            Slot::NackGenerator,
+            NackGeneratorBuilder::new()
+                .with_size(64)
+                .with_interval(Duration::from_millis(10))
+                .with_streams_filter(Box::new(|info| info.ssrc != 1))
+                .build(),
+        )
+        .build();
+
+    let base_time = Instant::now();
+    for ssrc in [1u32, 2] {
+        generator.bind_remote_stream(&nack_stream_info(ssrc));
+        for seq in [10u16, 11, 12, 14, 16, 18] {
+            generator
+                .handle_read(create_rtp_packet_with_time(
+                    base_time,
+                    ssrc,
+                    seq,
+                    seq as u32 * 3000,
+                    100,
+                ))
+                .unwrap();
+        }
+    }
+    while generator.poll_read().is_some() {}
+    generator
+        .handle_timeout(base_time + Duration::from_millis(30))
+        .unwrap();
+
+    let mut nacked_ssrcs = Vec::new();
+    while let Some(pkt) = generator.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                if let Some(nack) = rtcp_pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>(
+                    )
+                {
+                    nacked_ssrcs.push(nack.media_ssrc);
+                }
+            }
+        }
+    }
+    assert!(
+        !nacked_ssrcs.is_empty(),
+        "the kept stream's gap is reported"
+    );
+    assert!(
+        nacked_ssrcs.iter().all(|&ssrc| ssrc != 1),
+        "the filtered stream is never NACKed"
+    );
+
+    // The responder side: SSRC 1 is filtered out, SSRC 2 is kept.
+    let mut responder = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new()
+                .with_size(64)
+                .with_streams_filter(Box::new(|info| info.ssrc != 1))
+                .build(),
+        )
+        .build();
+    for ssrc in [1u32, 2] {
+        responder.bind_local_stream(&nack_stream_info(ssrc));
+        for seq in [10u16, 11, 12] {
+            responder
+                .handle_write(create_rtp_packet_with_time(
+                    base_time,
+                    ssrc,
+                    seq,
+                    seq as u32 * 3000,
+                    100,
+                ))
+                .unwrap();
+        }
+    }
+    while responder.poll_write().is_some() {}
+
+    // NACK both streams; only SSRC 2 has anything buffered.
+    for ssrc in [1u32, 2] {
+        responder
+            .handle_read(create_nack_packet(
+                base_time,
+                2,
+                ssrc,
+                vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                    packet_id: 10,
+                    lost_packets: 0b11, // 10, 11
+                }],
+            ))
+            .unwrap();
+    }
+    while responder.poll_read().is_some() {}
+
+    let mut retransmitted_ssrcs = Vec::new();
+    while let Some(pkt) = responder.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            retransmitted_ssrcs.push(rtp.header.ssrc);
+        }
+    }
+    assert!(
+        !retransmitted_ssrcs.is_empty(),
+        "the kept stream retransmits"
+    );
+    assert!(
+        retransmitted_ssrcs.iter().all(|&ssrc| ssrc == 2),
+        "the filtered stream has nothing buffered to retransmit"
+    );
+}
+
+/// pion `TestGeneratorInterceptor_UnbindRemovesCorrespondingSSRC`: unbinding one stream removes
+/// exactly that stream's tracking — the other stream keeps generating NACKs.
+#[test]
+fn test_nack_generator_unbind_removes_only_that_ssrc() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackGenerator,
+            NackGeneratorBuilder::new()
+                .with_size(64)
+                .with_interval(Duration::from_millis(10))
+                .build(),
+        )
+        .build();
+
+    let base_time = Instant::now();
+    let (kept, dropped) = (1u32, 2u32);
+    for ssrc in [kept, dropped] {
+        chain.bind_remote_stream(&nack_stream_info(ssrc));
+    }
+    chain.unbind_remote_stream(&nack_stream_info(dropped));
+
+    for ssrc in [kept, dropped] {
+        for seq in [10u16, 11, 12, 14, 16, 18] {
+            chain
+                .handle_read(create_rtp_packet_with_time(
+                    base_time,
+                    ssrc,
+                    seq,
+                    seq as u32 * 3000,
+                    100,
+                ))
+                .unwrap();
+        }
+    }
+    while chain.poll_read().is_some() {}
+    chain
+        .handle_timeout(base_time + Duration::from_millis(30))
+        .unwrap();
+
+    let mut nacked: Vec<u32> = Vec::new();
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                if let Some(nack) = rtcp_pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>(
+                    )
+                {
+                    nacked.push(nack.media_ssrc);
+                }
+            }
+        }
+    }
+    assert!(!nacked.is_empty(), "the still-bound stream is tracked");
+    assert!(
+        nacked.iter().all(|&ssrc| ssrc == kept),
+        "the unbound stream is not tracked: {:?}",
+        nacked
+    );
+}
+
+/// pion `TestResponderInterceptor_RFC4588`: the exact-set scenario on an RTX stream — one NACK
+/// covering 11, 12, 13 and 15 retransmits 11, 12 and 15 on the RTX SSRC, each carrying its own
+/// original sequence number in the first two payload bytes, and never-sent 13 stays absent.
+#[test]
+fn test_nack_responder_rtx_retransmits_exactly_the_sent_packets() {
+    let mut chain = Registry::new()
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(8).build(),
+        )
+        .build();
+
+    let ssrc = 1;
+    let rtx_ssrc = 2;
+    let rtx_pt = 100;
+    chain.bind_local_stream(&nack_rtx_stream_info(ssrc, rtx_ssrc, rtx_pt));
+    let base_time = Instant::now();
+
+    for seq in [10u16, 11, 12, 14, 15] {
+        chain
+            .handle_write(create_rtp_packet_with_time(
+                base_time,
+                ssrc,
+                seq,
+                seq as u32 * 3000,
+                500,
+            ))
+            .unwrap();
+    }
+    while chain.poll_write().is_some() {}
+
+    chain
+        .handle_read(create_nack_packet(
+            base_time,
+            2,
+            ssrc,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 11,
+                lost_packets: 0b1011, // 11, 12, 13, 15
+            }],
+        ))
+        .unwrap();
+    while chain.poll_read().is_some() {}
+
+    let mut original_sequence_numbers = Vec::new();
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtp(rtp) = &pkt.message.packet {
+            assert_eq!(rtx_ssrc, rtp.header.ssrc, "on the RTX stream");
+            assert_eq!(rtx_pt, rtp.header.payload_type);
+            assert_eq!(2, rtp.header.version);
+            assert!(
+                rtp.payload.len() >= 2,
+                "the original sequence number rides first"
+            );
+            let osn = u16::from_be_bytes([rtp.payload[0], rtp.payload[1]]);
+            original_sequence_numbers.push(osn);
+        }
+    }
+    original_sequence_numbers.sort_unstable();
+    assert_eq!(
+        vec![11, 12, 15],
+        original_sequence_numbers,
+        "each retransmission names its own original sequence number; never-sent 13 is excluded"
+    );
+}

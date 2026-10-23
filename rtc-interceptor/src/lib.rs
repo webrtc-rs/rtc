@@ -317,8 +317,8 @@ pub use jitterbuffer::receiver::{
     DEFAULT_CAPACITY as JITTER_BUFFER_DEFAULT_CAPACITY,
     DEFAULT_DEPTH as JITTER_BUFFER_DEFAULT_DEPTH, JitterBufferBuilder, JitterBufferInterceptor,
 };
-pub use nack::generator::{NackGeneratorBuilder, NackGeneratorInterceptor};
-pub use nack::responder::{NackResponderBuilder, NackResponderInterceptor};
+pub use nack::generator::{GeneratorStreamsFilter, NackGeneratorBuilder, NackGeneratorInterceptor};
+pub use nack::responder::{NackResponderBuilder, NackResponderInterceptor, ResponderStreamsFilter};
 pub use noop::NoopInterceptor;
 pub use pacing::pacer::{MIN_BURST_BITS as PACER_MIN_BURST_BITS, Pacer};
 pub use pacing::sender::{

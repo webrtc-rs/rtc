@@ -23,6 +23,11 @@ pub(crate) struct SendBuffer {
     started: bool,
 }
 
+/// Whether `size` is one the send buffer can hold: 1, 2, 4, ..., 32768.
+pub(crate) fn is_valid_size(size: u16) -> bool {
+    (0..=15).any(|i| size == 1 << i)
+}
+
 impl SendBuffer {
     /// Create a new send buffer with the specified size.
     ///
@@ -30,8 +35,7 @@ impl SendBuffer {
     /// Returns `None` if the size is invalid.
     pub(crate) fn new(size: u16) -> Option<Self> {
         // Valid sizes: 1, 2, 4, 8, 16, 32, 64, 128, ..., 32768
-        let is_valid = (0..=15).any(|i| size == 1 << i);
-        if !is_valid {
+        if !is_valid_size(size) {
             return None;
         }
 

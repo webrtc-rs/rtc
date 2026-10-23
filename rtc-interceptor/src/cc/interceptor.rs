@@ -125,8 +125,8 @@ impl<E: BandwidthEstimator> CongestionControlInterceptor<E> {
     /// the sender being.
     fn twcc_sequence_number(&self, rtp_packet: &rtp::Packet) -> Option<u16> {
         let stream = self.streams.get(&rtp_packet.header.ssrc)?;
-        let mut extension = rtp_packet.header.get_extension(stream.hdr_ext_id)?;
-        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(&mut extension)
+        let mut payload = rtp_packet.header.get_extension_payload(stream.hdr_ext_id)?;
+        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(&mut payload)
             .ok()
             .map(|extension| extension.transport_sequence)
     }

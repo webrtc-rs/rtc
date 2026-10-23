@@ -478,3 +478,98 @@ fn the_pacer_follows_the_estimate() {
          {spacing_after:?}"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// RFC 8888 ingestion
+// ---------------------------------------------------------------------------------------
+
+/// pion `rtpfb.TestInterceptor` ("calls_on_feedback"): an RFC 8888 report arriving on the
+/// read leg reaches the estimator as packet reports — the acknowledged sequence comes out
+/// arrived with the arrival the report's offset describes, and everything before it that the
+/// report window now covers comes out lost.
+#[test]
+fn ccfb_feedback_reaches_the_estimator() {
+    use rtcp::transport_feedbacks::cc_feedback_report::{
+        CcFeedbackMetricBlock, CcFeedbackReport, CcFeedbackReportBlock,
+    };
+
+    let estimator = Recorder::new(BITRATE);
+    let mut cc = rtc_interceptor::CongestionControlBuilder::new(estimator.clone()).build();
+    cc.bind_local_stream(&StreamInfo {
+        ssrc: SSRC,
+        clock_rate: 90_000,
+        mime_type: "video/VP8".to_owned(),
+        payload_type: 96,
+        ..Default::default()
+    });
+
+    let epoch = Instant::now();
+    let send = |cc: &mut rtc_interceptor::CongestionControlInterceptor<Recorder>,
+                at: Duration,
+                sequence: u16| {
+        let packet = rtp::Packet {
+            header: rtp::header::Header {
+                version: 2,
+                ssrc: SSRC,
+                sequence_number: sequence,
+                payload_type: 96,
+                ..Default::default()
+            },
+            payload: vec![1, 2, 3, 4].into(),
+        };
+        let size = {
+            use shared::marshal::MarshalSize;
+            packet.marshal_size()
+        };
+        cc.handle_write(TaggedPacket {
+            now: epoch + at,
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtp(packet)),
+        })
+        .expect("handle_write");
+        while cc.poll_write().is_some() {}
+        size
+    };
+
+    let size_16 = send(&mut cc, Duration::from_millis(0), 16);
+    let size_17 = send(&mut cc, Duration::from_millis(10), 17);
+    send(&mut cc, Duration::from_millis(20), 18);
+
+    // A report naming only sequence 17, arrived exactly at the report timestamp (offset 0).
+    let report = CcFeedbackReport {
+        sender_ssrc: 1,
+        report_timestamp: 0,
+        report_blocks: vec![CcFeedbackReportBlock {
+            media_ssrc: SSRC,
+            begin_sequence: 17,
+            metric_blocks: vec![CcFeedbackMetricBlock {
+                received: true,
+                ecn: rtcp::transport_feedbacks::cc_feedback_report::Ecn::NotEct,
+                arrival_time_offset: 0,
+            }],
+        }],
+    };
+    cc.handle_read(TaggedPacket {
+        now: epoch + Duration::from_millis(100),
+        transport: TransportContext::default(),
+        message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(report)])),
+    })
+    .expect("handle_read");
+    while cc.poll_read().is_some() {}
+
+    let reports = estimator.reports();
+    assert_eq!(2, reports.len(), "16 is now a loss and 17 is acknowledged");
+    assert_eq!(SSRC, reports[0].ssrc);
+    assert_eq!(16, reports[0].rtp_sequence_number);
+    assert!(!reports[0].arrived, "never acknowledged");
+    assert_eq!(size_16, reports[0].size, "the marshalled size is recorded");
+
+    assert_eq!(17, reports[1].rtp_sequence_number);
+    assert!(reports[1].arrived);
+    assert_eq!(
+        Some(Duration::ZERO),
+        reports[1].arrival,
+        "offset zero means it arrived at the report timestamp"
+    );
+    assert_eq!(size_17, reports[1].size);
+}

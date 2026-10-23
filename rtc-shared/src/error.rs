@@ -2415,6 +2415,10 @@ pub enum Error {
     #[error("{0}")]
     /// An error that does not fit any other variant, carrying a description.
     Other(String),
+    /// A NACK generator or responder was configured with a buffer size that is not a power of
+    /// two in the supported range.
+    #[error("nack: invalid buffer size")]
+    ErrNackInvalidSize,
 }
 
 impl Error {

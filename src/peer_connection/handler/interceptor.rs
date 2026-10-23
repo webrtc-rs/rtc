@@ -703,19 +703,23 @@ impl<'a> InterceptorHandler<'a> {
                     uri: ::sdp::extmap::SDES_REPAIR_RTP_STREAM_ID_URI.to_owned(),
                 });
 
-        let mid = if let Some(payload) = rtp_header.get_extension(mid_extension_id as u8) {
+        // The borrowed form: cloning each payload `Bytes` would allocate three times per
+        // packet (the bytes crate promotes a fresh payload to its shared form on first clone),
+        // and this runs for every demuxed RTP packet.
+        let mid = if let Some(payload) = rtp_header.get_extension_payload(mid_extension_id as u8) {
             String::from_utf8(payload.to_vec()).unwrap_or_default()
         } else {
             String::new()
         };
 
-        let rid = if let Some(payload) = rtp_header.get_extension(rid_extension_id as u8) {
+        let rid = if let Some(payload) = rtp_header.get_extension_payload(rid_extension_id as u8) {
             String::from_utf8(payload.to_vec()).unwrap_or_default()
         } else {
             String::new()
         };
 
-        let rrid = if let Some(payload) = rtp_header.get_extension(rrid_extension_id as u8) {
+        let rrid = if let Some(payload) = rtp_header.get_extension_payload(rrid_extension_id as u8)
+        {
             String::from_utf8(payload.to_vec()).unwrap_or_default()
         } else {
             String::new()

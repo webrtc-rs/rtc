@@ -315,4 +315,199 @@ mod tests {
         assert_eq!(map.clamp(7), 7);
         assert_eq!(map.clamp(100), 11);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // pion ports (arrival_time_map_test.go)
+    // ---------------------------------------------------------------------------------------
+
+    /// pion "grows buffer and removes old": a packet beyond the window slides the beginning
+    /// forward, dropping the packets that fell off the back.
+    #[test]
+    fn test_grows_buffer_and_removes_old() {
+        let mut map = PacketArrivalTimeMap::new();
+
+        let large_sequence = 42 + MAX_NUMBER_OF_PACKETS;
+        map.add_packet(42, 10);
+        map.add_packet(43, 11);
+        map.add_packet(44, 12);
+        map.add_packet(45, 13);
+        map.add_packet(large_sequence, 12);
+
+        assert_eq!(43, map.begin_sequence_number());
+        assert_eq!(large_sequence + 1, map.end_sequence_number());
+
+        assert!(!map.has_received(41));
+        assert!(!map.has_received(42), "slid off the back");
+        assert!(map.has_received(43));
+        assert!(map.has_received(44));
+        assert!(map.has_received(45));
+        assert!(!map.has_received(46));
+        assert!(map.has_received(large_sequence));
+        assert!(!map.has_received(large_sequence + 1));
+    }
+
+    /// pion "sequence number jump deletes all": a jump of two windows empties everything but
+    /// the packet that jumped.
+    #[test]
+    fn test_sequence_number_jump_deletes_all() {
+        let mut map = PacketArrivalTimeMap::new();
+
+        let large_sequence = 42 + 2 * MAX_NUMBER_OF_PACKETS;
+        map.add_packet(42, 10);
+        map.add_packet(large_sequence, 12);
+
+        assert_eq!(large_sequence, map.begin_sequence_number());
+        assert_eq!(large_sequence + 1, map.end_sequence_number());
+
+        assert!(!map.has_received(42));
+        assert!(map.has_received(large_sequence));
+        assert!(!map.has_received(large_sequence + 1));
+    }
+
+    /// pion "expands before beginning": a sequence below the current beginning extends the
+    /// window backwards to hold it.
+    #[test]
+    fn test_expands_before_beginning() {
+        let mut map = PacketArrivalTimeMap::new();
+        map.add_packet(42, 10);
+        map.add_packet(-1000, 13);
+
+        assert_eq!(-1000, map.begin_sequence_number());
+        assert_eq!(43, map.end_sequence_number());
+
+        assert!(!map.has_received(-1001));
+        assert!(map.has_received(-1000));
+        assert!(!map.has_received(-999));
+        assert!(map.has_received(42));
+        assert!(!map.has_received(43));
+    }
+
+    /// pion "expanding before beginning keeps received": a small backward jump within the
+    /// window keeps the existing beginning.
+    #[test]
+    fn test_expanding_before_beginning_keeps_received() {
+        let mut map = PacketArrivalTimeMap::new();
+
+        let small_sequence = 42 - 2 * MAX_NUMBER_OF_PACKETS;
+        map.add_packet(42, 10);
+        map.add_packet(small_sequence, 13);
+
+        assert_eq!(42, map.begin_sequence_number());
+        assert_eq!(43, map.end_sequence_number());
+    }
+
+    /// pion "erase to removes elements".
+    #[test]
+    fn test_erase_to_removes_elements() {
+        let mut map = PacketArrivalTimeMap::new();
+        map.add_packet(42, 10);
+        map.add_packet(43, 11);
+        map.add_packet(44, 12);
+        map.add_packet(45, 13);
+
+        map.erase_to(44);
+
+        assert_eq!(44, map.begin_sequence_number());
+        assert_eq!(46, map.end_sequence_number());
+
+        assert!(!map.has_received(43));
+        assert!(map.has_received(44));
+        assert!(map.has_received(45));
+        assert!(!map.has_received(46));
+    }
+
+    /// pion "erases in empty map".
+    #[test]
+    fn test_erases_in_empty_map() {
+        let mut map = PacketArrivalTimeMap::new();
+
+        assert_eq!(map.begin_sequence_number(), map.end_sequence_number());
+
+        map.erase_to(map.end_sequence_number());
+        assert_eq!(map.begin_sequence_number(), map.end_sequence_number());
+    }
+
+    /// pion "is tolerant to wrong arguments for erase": erasing below the beginning is a
+    /// no-op; erasing past the end empties the map without panicking.
+    #[test]
+    fn test_tolerant_to_wrong_arguments_for_erase() {
+        let mut map = PacketArrivalTimeMap::new();
+        map.add_packet(42, 10);
+        map.add_packet(43, 11);
+
+        map.erase_to(1);
+        assert_eq!(42, map.begin_sequence_number());
+        assert_eq!(44, map.end_sequence_number());
+
+        map.erase_to(100);
+        assert_eq!(44, map.begin_sequence_number());
+        assert_eq!(44, map.end_sequence_number());
+    }
+
+    /// pion "erase all remembers beginning sequence number": after erasing everything, the
+    /// beginning stays where the erase left it, not where the next packet lands.
+    #[test]
+    fn test_erase_all_remembers_beginning_sequence_number() {
+        let mut map = PacketArrivalTimeMap::new();
+        map.add_packet(42, 10);
+        map.add_packet(43, 11);
+        map.add_packet(44, 12);
+        map.add_packet(45, 13);
+
+        map.erase_to(46);
+        map.add_packet(50, 10);
+
+        assert_eq!(46, map.begin_sequence_number());
+        assert_eq!(51, map.end_sequence_number());
+
+        assert!(!map.has_received(45));
+        assert!(!map.has_received(46));
+        assert!(!map.has_received(47));
+        assert!(!map.has_received(48));
+        assert!(!map.has_received(49));
+        assert!(map.has_received(50));
+        assert!(!map.has_received(51));
+    }
+
+    /// pion "erase to missing sequence number": erasing to a sequence that was never received
+    /// still moves the beginning there.
+    #[test]
+    fn test_erase_to_missing_sequence_number() {
+        let mut map = PacketArrivalTimeMap::new();
+        map.add_packet(37, 10);
+        map.add_packet(39, 11);
+        map.add_packet(40, 12);
+        map.add_packet(41, 13);
+
+        map.erase_to(38);
+        map.add_packet(42, 40);
+
+        assert_eq!(38, map.begin_sequence_number());
+        assert_eq!(43, map.end_sequence_number());
+
+        assert!(!map.has_received(37));
+        assert!(!map.has_received(38));
+        assert!(map.has_received(39));
+        assert!(map.has_received(40));
+        assert!(map.has_received(41));
+        assert!(map.has_received(42));
+        assert!(!map.has_received(43));
+    }
+
+    /// pion "shrinks buffer when necessary": erasing almost everything gives the memory back,
+    /// down to the minimum capacity.
+    #[test]
+    fn test_shrinks_buffer_when_necessary() {
+        let mut map = PacketArrivalTimeMap::new();
+
+        let large_sequence = 100 + MAX_NUMBER_OF_PACKETS - 1;
+        map.add_packet(100, 10);
+        map.add_packet(large_sequence, 11);
+
+        map.erase_to(large_sequence - 1);
+
+        assert_eq!(large_sequence - 1, map.begin_sequence_number());
+        assert_eq!(large_sequence + 1, map.end_sequence_number());
+        assert_eq!(MIN_CAPACITY, map.capacity());
+    }
 }

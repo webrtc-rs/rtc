@@ -439,3 +439,99 @@ fn sequence_order(a: u16, b: u16) -> std::cmp::Ordering {
 fn sequence_distance(a: u16, b: u16) -> u16 {
     a.wrapping_sub(b).min(b.wrapping_sub(a))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_REPAIR_SSRC: u32 = 1;
+    const TEST_MEDIA_SSRC: u32 = 476_325_762;
+
+    /// pion `buildTestFlexFecPayload`: the smallest well-formed repair payload — one protected
+    /// SSRC, a sequence-number base, and a first mask claiming exactly the base packet.
+    fn test_repair_payload(sequence_number_base: u16) -> Vec<u8> {
+        let mut payload = vec![0u8; 24];
+        payload[8] = 1;
+        payload[12..16].copy_from_slice(&TEST_MEDIA_SSRC.to_be_bytes());
+        payload[16..18].copy_from_slice(&sequence_number_base.to_be_bytes());
+        payload[18] = 0x80; // the k-bit ends the mask list after the first mask
+        payload[19] = 0x01; // the first mask protects the base packet itself
+        payload
+    }
+
+    fn repair_packet(sequence_number: u16) -> rtp::Packet {
+        rtp::Packet {
+            header: rtp::header::Header {
+                sequence_number,
+                ssrc: TEST_REPAIR_SSRC,
+                ..Default::default()
+            },
+            payload: test_repair_payload(sequence_number).into(),
+        }
+    }
+
+    /// A held repair packet with nothing outstanding, mirroring pion's `newFecPacketState`: a
+    /// state seeded directly rather than earned through a recovery.
+    fn inert_state(sequence_number: u16) -> RepairState {
+        RepairState {
+            packet: repair_packet(sequence_number),
+            header: parse_repair_header(&test_repair_payload(sequence_number)).expect("valid"),
+            protected: Vec::new(),
+        }
+    }
+
+    /// pion `TestFECDecoderInsertPacketRemovesOldFEC`: a repair packet arriving far beyond the
+    /// held ones retires everything more than half a sequence space away — they protect media
+    /// that will never be offered again.
+    #[test]
+    fn an_incoming_repair_packet_retires_distant_held_ones() {
+        let mut decoder = FlexFec03Decoder::new(TEST_REPAIR_SSRC, TEST_MEDIA_SSRC);
+        decoder.repair_packets = vec![
+            inert_state(1),
+            inert_state(500),
+            inert_state(1500),
+            inert_state(25000),
+        ];
+
+        decoder.insert(repair_packet(40000));
+
+        assert_eq!(2, decoder.repair_packets.len());
+        assert_eq!(
+            25000,
+            decoder.repair_packets[0].packet.header.sequence_number
+        );
+        assert_eq!(
+            40000,
+            decoder.repair_packets[1].packet.header.sequence_number
+        );
+    }
+
+    /// pion `TestFECDecoderInsertPacketKeepsRecentFEC`: a repair packet within the stale window
+    /// of the held ones keeps them all, ordered oldest first.
+    #[test]
+    fn a_repair_packet_within_the_window_keeps_the_held_ones() {
+        let mut decoder = FlexFec03Decoder::new(TEST_REPAIR_SSRC, TEST_MEDIA_SSRC);
+        let initial = [1u16, 500, 1500];
+        decoder.repair_packets = initial
+            .iter()
+            .map(|&sequence_number| inert_state(sequence_number))
+            .collect();
+
+        decoder.insert(repair_packet(2000));
+
+        assert_eq!(initial.len() + 1, decoder.repair_packets.len());
+        for (index, &sequence_number) in initial.iter().enumerate() {
+            assert_eq!(
+                sequence_number,
+                decoder.repair_packets[index].packet.header.sequence_number
+            );
+        }
+        assert_eq!(
+            2000,
+            decoder.repair_packets[initial.len()]
+                .packet
+                .header
+                .sequence_number
+        );
+    }
+}
