@@ -1241,6 +1241,15 @@ impl RTCPeerConnection {
                         local_sctp_port,
                         remote_sctp_port,
                     )?;
+                    // Over a DTLS connection that is already up there is no handshake-complete
+                    // event still to come, so the client side starts here.
+                    if self.dtls_transport().state
+                        == transport::dtls::state::RTCDtlsTransportState::Connected
+                    {
+                        self.pipeline_context
+                            .sctp_handler_context
+                            .connect_client(now)?;
+                    }
                 }
                 self.start_rtp(remote_description)?;
             }
@@ -1486,6 +1495,7 @@ impl RTCPeerConnection {
                         };
 
                         if let Some(transceiver) = transceiver {
+                            transceiver.set_current_remote_direction(direction);
                             if direction == RTCRtpTransceiverDirection::Recvonly {
                                 if transceiver.direction() == RTCRtpTransceiverDirection::Sendrecv {
                                     transceiver.set_direction(RTCRtpTransceiverDirection::Sendonly);
@@ -1547,6 +1557,8 @@ impl RTCPeerConnection {
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
+
+                            transceiver.set_current_remote_direction(direction);
 
                             // Mark as implicitly created by a remote offer so that, if this offer
                             // is later rolled back, the transceiver is stopped and removed
@@ -1709,6 +1721,15 @@ impl RTCPeerConnection {
                         local_sctp_port,
                         remote_sctp_port,
                     )?;
+                    // Over a DTLS connection that is already up there is no handshake-complete
+                    // event still to come, so the client side starts here.
+                    if self.dtls_transport().state
+                        == transport::dtls::state::RTCDtlsTransportState::Connected
+                    {
+                        self.pipeline_context
+                            .sctp_handler_context
+                            .connect_client(now)?;
+                    }
                 }
                 self.start_rtp(remote_description)?;
             }
@@ -2226,10 +2247,7 @@ impl RTCPeerConnection {
         let (track, send_encodings, codec_preferences) =
             self.normalize_sender_track(track, send_encodings)?;
         for (id, transceiver) in self.rtp_transceivers.iter_mut().enumerate() {
-            if !transceiver.stopped()
-                && transceiver.kind() == track.kind()
-                && transceiver.sender().is_none()
-            {
+            if transceiver.is_send_allowed(track.kind()) {
                 let mut sender =
                     RTCRtpSenderInternal::new(track.kind(), track, vec![], send_encodings);
 

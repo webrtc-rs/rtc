@@ -73,6 +73,44 @@ pub(crate) struct SctpHandlerContext {
 }
 
 impl SctpHandlerContext {
+    /// Starts the client side of the association (the INIT) when this endpoint was configured as
+    /// the DTLS client. Idempotent: an association that exists is left alone.
+    ///
+    /// Called when the DTLS handshake completes, and when the SCTP transport is started over a
+    /// DTLS connection that is already up (a data channel added to a media-only session).
+    pub(crate) fn connect_client(&mut self, now: Instant) -> Result<()> {
+        let Some(sctp_transport_config) = self.sctp_transport.sctp_transport_config.clone() else {
+            return Ok(());
+        };
+        if !self.sctp_transport.sctp_associations.is_empty() {
+            return Ok(());
+        }
+        let (sctp_endpoint, sctp_associations) = (
+            self.sctp_transport
+                .sctp_endpoint
+                .as_mut()
+                .ok_or(Error::ErrSCTPNotEstablished)?,
+            &mut self.sctp_transport.sctp_associations,
+        );
+
+        debug!("sctp endpoint initiates connection for dtls client role");
+        let (ch, conn) = sctp_endpoint
+            .connect(
+                now,
+                ClientConfig::new(sctp_transport_config),
+                TransportContext::default().peer_addr,
+            )
+            .map_err(|e| Error::Other(e.to_string()))?;
+
+        sctp_associations.insert(ch, conn);
+
+        // `connect` queued the client INIT. Mark dirty so poll_write emits it at the next flush
+        // instead of waiting for a later handle_* (the deferred flush is now the only transmit
+        // path).
+        self.flush_dirty = true;
+        Ok(())
+    }
+
     pub(crate) fn new(now: Instant, sctp_transport: SctpTransport) -> Self {
         Self {
             sctp_transport,
@@ -702,34 +740,7 @@ impl<'a>
         if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
-            if let Some(sctp_transport_config) =
-                self.ctx.sctp_transport.sctp_transport_config.clone()
-            {
-                let (sctp_endpoint, sctp_associations) = (
-                    self.ctx
-                        .sctp_transport
-                        .sctp_endpoint
-                        .as_mut()
-                        .ok_or(Error::ErrSCTPNotEstablished)?,
-                    &mut self.ctx.sctp_transport.sctp_associations,
-                );
-
-                debug!("sctp endpoint initiates connection for dtls client role");
-                let (ch, conn) = sctp_endpoint
-                    .connect(
-                        now,
-                        ClientConfig::new(sctp_transport_config),
-                        TransportContext::default().peer_addr,
-                    )
-                    .map_err(|e| Error::Other(e.to_string()))?;
-
-                sctp_associations.insert(ch, conn);
-
-                // `connect` queued the client INIT. Mark dirty so poll_write emits
-                // it at the next flush instead of waiting for a later handle_* (the
-                // deferred flush is now the only transmit path).
-                self.ctx.flush_dirty = true;
-            }
+            self.ctx.connect_client(now)?;
         }
 
         // The peer closed the DTLS transport the associations run over, so they are over too.

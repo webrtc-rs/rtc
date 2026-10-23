@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
+  negotiated media-only never opened, because the SCTP client side was started only by the
+  DTLS-handshake-complete event, which had long passed; it now starts when SCTP is started over
+  a connection whose DTLS is already up. `add_track` reused a transceiver whose removal had not
+  been negotiated yet, or whose remote only sends (pion `isSendAllowed`); it now creates a new
+  one until the removal is settled.
 - `rtc`, found by porting pion's `peerconnection_renegotiation_test.go` onto a deterministic
   in-memory network: every renegotiation replaced the receive track of a stream it already knew,
   so the next packet fired `OnTrack` again for the same track (it now fires once per track); a

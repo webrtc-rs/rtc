@@ -290,3 +290,248 @@ fn test_role_switch_second_offerer_adds_a_track() {
         "the first offerer receives the second offerer's track"
     );
 }
+
+fn sendrecv() -> Option<RTCRtpTransceiverInit> {
+    Some(RTCRtpTransceiverInit {
+        direction: RTCRtpTransceiverDirection::Sendrecv,
+        streams: vec![],
+        send_encodings: vec![],
+    })
+}
+
+/// `TestPeerConnection_Renegotiation_NoApplication`: media-only peers connect, twice negotiated,
+/// and no SCTP transport is involved.
+#[test]
+fn test_renegotiation_without_application_section() {
+    let mut sim = Sim::new(pc(), pc());
+    let send = |pc: &mut RTCPeerConnection, id: &str, ssrc| {
+        pc.add_transceiver_from_track(
+            vp8_track(id, ssrc),
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Sendrecv,
+                streams: vec![],
+                send_encodings: vec![],
+            }),
+        )
+        .unwrap();
+    };
+    send(&mut sim.a.pc, "a", 0xa0a0_0001);
+    send(&mut sim.b.pc, "b", 0xb0b0_0001);
+    sim.negotiate(true);
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+    assert!(
+        !sim.a
+            .pc
+            .local_description()
+            .unwrap()
+            .sdp
+            .contains("m=application")
+    );
+}
+
+/// `TestAddDataChannelDuringRenegotiation`: a data channel created after a media-only negotiation
+/// puts exactly one application section in the next offer, and the other side sees the channel.
+#[test]
+fn test_add_data_channel_during_renegotiation() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a.pc.add_track(vp8_track("video", 0xa0a0_0001)).unwrap();
+    sim.negotiate(true);
+    sim.a.pc.create_data_channel("data-channel", None).unwrap();
+
+    let offer = sim.a.pc.create_offer(None).unwrap();
+    assert_eq!(offer.sdp.matches("m=application").count(), 1);
+
+    sim.negotiate(true);
+    assert!(
+        sim.run_until(Duration::from_secs(10), |s| {
+            s.b.events.iter().any(|e| {
+                matches!(
+                    e,
+                    rtc::peer_connection::event::RTCPeerConnectionEvent::OnDataChannel(_)
+                )
+            })
+        }),
+        "OnDataChannel fired on the answerer"
+    );
+}
+
+/// `TestNegotiationNeededRemoveTrack`: adding a track asks for negotiation, and so does removing
+/// it once that was settled.
+#[test]
+fn test_negotiation_needed_after_add_and_after_remove() {
+    let mut sim = Sim::new(pc(), pc());
+    let sender = sim.a.pc.add_track(vp8_track("video", 0xa0a0_0001)).unwrap();
+    assert_eq!(sim.a.negotiation_needed() + drain_needed(&mut sim), 1);
+    sim.negotiate(true);
+    drain_needed(&mut sim);
+    let before = sim.a.negotiation_needed();
+
+    sim.a.pc.remove_track(sender).unwrap();
+    drain_needed(&mut sim);
+    assert!(
+        sim.a.negotiation_needed() > before,
+        "removing the track asks for a new negotiation"
+    );
+}
+
+/// Moves the `OnNegotiationNeeded` events of `sim.a` the simulator has not yet collected into its
+/// event list, and returns how many arrived.
+fn drain_needed(sim: &mut Sim) -> usize {
+    let before = sim.a.negotiation_needed();
+    sim.run_for(Duration::from_millis(1));
+    sim.a.negotiation_needed() - before
+}
+
+/// `TestPeerConnection_Renegotiation_DisableTrack`: stopping a transceiver turns its section
+/// `inactive`, and the answer mirrors that.
+#[test]
+fn test_stopping_a_transceiver_makes_its_section_inactive() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    for _ in 0..2 {
+        sim.a
+            .pc
+            .add_transceiver_from_kind(RtpCodecKind::Video, None)
+            .ok();
+    }
+    // A sendrecv transceiver needs a track in this API; use tracks for the two video sections.
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    sim.a.pc.add_track(vp8_track("one", 0xa0a0_0001)).unwrap();
+    let second = sim
+        .a
+        .pc
+        .add_transceiver_from_track(vp8_track("two", 0xa0a0_0002), sendrecv())
+        .unwrap();
+    sim.negotiate(true);
+
+    let offer = sim.a.pc.create_offer(None).unwrap();
+    assert_eq!(offer.sdp.matches("a=sendrecv").count(), 3, "{}", offer.sdp);
+
+    sim.a.pc.rtp_transceiver(second).unwrap().stop().unwrap();
+    let offer = sim.a.pc.create_offer(None).unwrap();
+    assert_eq!(offer.sdp.matches("a=sendrecv").count(), 2, "{}", offer.sdp);
+    assert_eq!(offer.sdp.matches("a=inactive").count(), 1, "{}", offer.sdp);
+
+    // The answerer sees one section disabled.
+    sim.b.pc.set_remote_description(sim.now, offer).unwrap();
+    let answer = sim.b.pc.create_answer(None).unwrap();
+    assert_eq!(
+        answer.sdp.matches("a=sendrecv").count(),
+        1,
+        "the data channel"
+    );
+    assert_eq!(
+        answer.sdp.matches("a=recvonly").count(),
+        1,
+        "the live video"
+    );
+    assert_eq!(
+        answer.sdp.matches("a=inactive").count(),
+        1,
+        "the stopped video"
+    );
+}
+
+/// `TestNegotiationNeededWithRecvonlyTrack`: an answerer that created a transceiver in answering a
+/// `recvonly` offer is not asked to negotiate again (nothing differs from what it answered).
+#[test]
+fn test_answerer_of_a_recvonly_offer_does_not_need_negotiation() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    sim.negotiate(true);
+    sim.run_for(Duration::from_secs(1));
+    assert_eq!(
+        sim.b.negotiation_needed(),
+        0,
+        "the answerer needs nothing the exchange did not settle"
+    );
+}
+
+/// `TestPeerConnection_Regegotiation_AnswerAddsTrack`: the answering side adds a track on a
+/// transceiver the offerer created recvonly, and the offerer receives it.
+#[test]
+fn test_answerer_adds_a_track_later() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    sim.negotiate(true);
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    sim.negotiate(true);
+
+    let ssrc = 0xb0b0_0001;
+    let sender = sim.b.pc.add_track(vp8_track("foo", ssrc)).unwrap();
+    sim.negotiate(true);
+    sim.send_video(false, sender, ssrc, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.a.tracks_opened() == 1));
+}
+
+/// `TestPeerConnection_Regegotiation_ReuseTransceiver`
+#[test]
+fn test_reuse_of_a_freed_transceiver() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .create_data_channel("initial_data_channel", None)
+        .unwrap();
+    let ssrc1 = 0xa0a0_0001;
+    let sender = sim.a.pc.add_track(vp8_track("foo", ssrc1)).unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+
+    assert_eq!(sim.a.pc.get_transceivers().count(), 1);
+    sim.a.pc.remove_track(sender).unwrap();
+
+    // The transceiver is not free until the removal is negotiated: a new track gets a new one.
+    let ssrc2 = 0xa0a0_0002;
+    let sender2 = sim.a.pc.add_track(vp8_track("foo2", ssrc2)).unwrap();
+    assert_eq!(
+        sim.a.pc.get_transceivers().count(),
+        2,
+        "not reused before negotiation"
+    );
+    sim.negotiate(true);
+
+    // After the removal was negotiated, the first transceiver is reused.
+    let sender1b = sim.a.pc.add_track(vp8_track("foo", ssrc1)).unwrap();
+    assert_eq!(
+        sim.a.pc.get_transceivers().count(),
+        2,
+        "the freed transceiver is reused"
+    );
+    assert_eq!(
+        sim.a.pc.get_transceivers().next().and_then(|id| sim
+            .a
+            .pc
+            .rtp_transceiver(id)
+            .unwrap()
+            .sender()),
+        Some(sender1b),
+        "it is the first one"
+    );
+    sim.negotiate(true);
+    sim.send_video(true, sender1b, ssrc1, 10);
+    sim.send_video(true, sender2, ssrc2, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() >= 2));
+}

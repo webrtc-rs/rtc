@@ -33,6 +33,9 @@ pub(crate) struct RTCRtpTransceiverInternal {
     receiver: Option<RTCRtpReceiverInternal>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
+    /// The direction the remote last declared for this transceiver's section in an offer, or
+    /// `Unspecified` when we are the offerer and have not heard it.
+    current_remote_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
     stopped: bool,
     /// Whether RTP header extensions and CSRCs of this transceiver are encrypted (RFC 9335).
@@ -85,6 +88,7 @@ impl RTCRtpTransceiverInternal {
             receiver: Some(RTCRtpReceiverInternal::new(kind, vec![])),
             direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
+            current_remote_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
             rtp_header_encryption_negotiated: false,
@@ -167,6 +171,36 @@ impl RTCRtpTransceiverInternal {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
+    pub(crate) fn current_remote_direction(&self) -> RTCRtpTransceiverDirection {
+        self.current_remote_direction
+    }
+
+    pub(crate) fn set_current_remote_direction(&mut self, direction: RTCRtpTransceiverDirection) {
+        self.current_remote_direction = direction;
+    }
+
+    /// Whether `add_track` may put a new sender on this transceiver (pion `isSendAllowed`, a
+    /// relaxed form of W3C addTrack step 5): it has no sender, is not stopped, was not sending in
+    /// the last negotiation, and the remote can receive.
+    pub(crate) fn is_send_allowed(&self, kind: RtpCodecKind) -> bool {
+        if self.stopped() || self.kind() != kind || self.sender().is_some() {
+            return false;
+        }
+        // A removal that has not been negotiated yet leaves the transceiver sending as far as the
+        // peer knows, so it cannot be handed to another track.
+        if matches!(
+            self.current_direction(),
+            RTCRtpTransceiverDirection::Sendrecv | RTCRtpTransceiverDirection::Sendonly
+        ) {
+            return false;
+        }
+        // A remote that only sends (or is inactive) cannot be sent to.
+        !matches!(
+            self.current_remote_direction(),
+            RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Inactive
+        )
+    }
+
     pub(crate) fn current_direction(&self) -> RTCRtpTransceiverDirection {
         self.current_direction
     }
