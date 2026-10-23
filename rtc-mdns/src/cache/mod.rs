@@ -189,7 +189,11 @@ impl Cache {
     ///
     /// Entries created within the last second are preserved.
     fn apply_cache_flush(&mut self, key: &CacheKey, received_at: Instant) {
-        let deadline = received_at - CACHE_FLUSH_DELAY;
+        // `Instant` subtraction panics on underflow; no entry can predate an
+        // instant that is not even a second past the clock's origin.
+        let Some(deadline) = received_at.checked_sub(CACHE_FLUSH_DELAY) else {
+            return;
+        };
 
         if let Some(entries) = self.entries.get_mut(key) {
             for entry in entries.iter_mut() {
