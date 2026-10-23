@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `rtc`, from pion's `peerconnection_go_test.go`: a remote candidate of an unknown type or
+  transport (`ssltcp`) failed `add_remote_candidate` and the whole `set_remote_description`; both
+  now discard it with a warning, and a description fails only when no usable candidate is left.
+  An answerer holding a sender-only transceiver did not reuse it for a `sendrecv` offer and added
+  a second one. `get_transceivers` no longer borrows the connection while iterated.
 - `rtc`, found by porting pion's `peerconnection_test.go`: `set_configuration` applied part of a
   rejected call (it now validates everything first and changes nothing on error), accepted a
   change of the RTP header encryption policy (`ErrModifyingRTPHeaderEncryptionPolicy` now), and

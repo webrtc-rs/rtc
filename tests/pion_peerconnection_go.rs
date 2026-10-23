@@ -277,3 +277,136 @@ fn test_media_direction_in_sdp() {
         answerer.close().unwrap();
     }
 }
+
+/// `TestPeerConnection_TransceiverDirection`: the answerer starts with a transceiver of its own
+/// and receives an offer; what directions its transceivers end up with.
+#[test]
+fn test_transceiver_direction_matrix() {
+    use RTCRtpTransceiverDirection::{Recvonly, Sendonly, Sendrecv};
+    use rtc::rtp_transceiver::RTCRtpTransceiverInit;
+
+    fn create(pc: &mut RTCPeerConnection, dir: RTCRtpTransceiverDirection, ssrc: u32) {
+        if dir.has_send() {
+            // A sending transceiver needs a track to send.
+            let t = track(RtpCodecKind::Video, "local", ssrc);
+            pc.add_transceiver_from_track(
+                t,
+                Some(RTCRtpTransceiverInit {
+                    direction: dir,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        } else {
+            pc.add_transceiver_from_kind(
+                RtpCodecKind::Video,
+                Some(RTCRtpTransceiverInit {
+                    direction: dir,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        }
+    }
+
+    // (name, offer direction, answerer's starting direction, answerer's final directions)
+    let cases: [(&str, _, _, Vec<RTCRtpTransceiverDirection>); 9] = [
+        (
+            "offer sendrecv answer sendrecv",
+            Sendrecv,
+            Sendrecv,
+            vec![Sendrecv],
+        ),
+        (
+            "offer sendonly answer sendrecv",
+            Sendonly,
+            Sendrecv,
+            vec![Sendrecv, Recvonly],
+        ),
+        (
+            "offer recvonly answer sendrecv",
+            Recvonly,
+            Sendrecv,
+            vec![Sendonly],
+        ),
+        (
+            "offer sendrecv answer sendonly",
+            Sendrecv,
+            Sendonly,
+            vec![Sendrecv],
+        ),
+        (
+            "offer sendonly answer sendonly",
+            Sendonly,
+            Sendonly,
+            vec![Sendonly, Recvonly],
+        ),
+        (
+            "offer recvonly answer sendonly",
+            Recvonly,
+            Sendonly,
+            vec![Sendonly],
+        ),
+        (
+            "offer sendrecv answer recvonly",
+            Sendrecv,
+            Recvonly,
+            vec![Recvonly],
+        ),
+        (
+            "offer sendonly answer recvonly",
+            Sendonly,
+            Recvonly,
+            vec![Recvonly],
+        ),
+        (
+            "offer recvonly answer recvonly",
+            Recvonly,
+            Recvonly,
+            vec![Recvonly, Sendonly],
+        ),
+    ];
+    for (name, offer_dir, answer_start, finals) in cases {
+        let mut offerer = pc();
+        let mut answerer = pc();
+        create(&mut offerer, offer_dir, 0x1000_0001);
+        let offer = offerer.create_offer(None).unwrap();
+        create(&mut answerer, answer_start, 0x2000_0001);
+        answerer
+            .set_remote_description(Instant::now(), offer)
+            .unwrap();
+        let got: Vec<_> = answerer
+            .get_transceivers()
+            .map(|id| answerer.rtp_transceiver(id).unwrap().direction())
+            .collect();
+        assert_eq!(got, finals, "{name}");
+        offerer.close().unwrap();
+        answerer.close().unwrap();
+    }
+}
+
+/// `TestInvalidCandidateTransport`: a candidate with a transport this stack does not know
+/// (`ssltcp`) is dropped without failing the call.
+#[test]
+fn test_invalid_candidate_transport_is_ignored() {
+    use rtc::peer_connection::transport::RTCIceCandidateInit;
+    let candidate = "candidate:1 1 ssltcp 1 127.0.0.1 443 typ host generation 0";
+    let offer = format!(
+        "v=0\r\no=- 0 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=msid-semantic: WMS\r\n\
+m=application 9 DTLS/SCTP 5000\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:1/MvHwjAyVf27aLu\r\n\
+a=ice-pwd:3dBU7cFOBl120v33cynDvN1E\r\n\
+a=fingerprint:sha-256 75:74:5A:A6:A4:E5:52:F4:A7:67:4C:01:C7:EE:91:3F:21:3D:A2:E3:53:7B:6F:30:86:F2:30:AA:65:FB:04:24\r\n\
+a=mid:0\r\na={candidate}\r\n"
+    );
+    let mut pc = pc();
+    pc.set_remote_description(Instant::now(), RTCSessionDescription::offer(offer).unwrap())
+        .unwrap();
+    pc.add_remote_candidate(RTCIceCandidateInit {
+        candidate: candidate.to_owned(),
+        ..Default::default()
+    })
+    .unwrap();
+    pc.close().unwrap();
+}

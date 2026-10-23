@@ -1784,6 +1784,8 @@ impl RTCPeerConnection {
     /// - No remote description has been set
     /// - The candidate string is invalid
     ///
+    /// A candidate of an unknown type or transport is discarded with a warning, not reported.
+    ///
     /// # Specification
     ///
     /// See [addIceCandidate](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addicecandidate!overload-1)
@@ -1798,7 +1800,16 @@ impl RTCPeerConnection {
         };
 
         if !candidate_value.is_empty() {
-            self.add_ice_remote_candidate(candidate_value)?;
+            match self.add_ice_remote_candidate(candidate_value) {
+                Ok(()) => {}
+                // A candidate of a type or transport this stack does not know (legacy Chrome's
+                // `ssltcp`, for one) is not an error: it is discarded, as pion does, so that
+                // trickle from such a peer keeps working.
+                Err(err @ (Error::ErrUnknownCandidateType | Error::ErrDetermineNetworkType)) => {
+                    log::warn!("Discarding remote candidate: {err}");
+                }
+                Err(err) => return Err(err),
+            }
         }
 
         Ok(())
@@ -2181,7 +2192,7 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [getTransceivers](https://www.w3.org/TR/webrtc/#dom-peerconnection-gettranseceivers)
-    pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> {
+    pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> + use<> {
         0..self.rtp_transceivers.len()
     }
 
@@ -3413,5 +3424,39 @@ mod tests {
             csrcs[0].inbound_rtp_stream_id, "RTCInboundRTPStream_video_5000",
             "the entry joins to the inbound stream it contributed to"
         );
+    }
+
+    /// pion `TestICELite`: against an ice-lite offer this side must take the controlling role,
+    /// because a lite agent never initiates checks.
+    #[test]
+    fn an_ice_lite_offer_makes_us_controlling() {
+        use crate::peer_connection::transport::ice::role::RTCIceRole;
+        use sansio::Protocol;
+
+        let lite_offer = "v=0\r
+o=- 4596489990601351948 2 IN IP4 127.0.0.1\r
+s=-\r
+t=0 0\r
+a=msid-semantic: WMS\r
+a=ice-lite\r
+m=application 47299 DTLS/SCTP 5000\r
+c=IN IP4 192.168.20.129\r
+a=ice-ufrag:1/MvHwjAyVf27aLu\r
+a=ice-pwd:3dBU7cFOBl120v33cynDvN1E\r
+a=fingerprint:sha-256 75:74:5A:A6:A4:E5:52:F4:A7:67:4C:01:C7:EE:91:3F:21:3D:A2:E3:53:7B:6F:30:86:F2:30:AA:65:FB:04:24\r
+a=mid:data\r
+";
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        pc.set_remote_description(
+            Instant::now(),
+            RTCSessionDescription::offer(lite_offer.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let answer = pc.create_answer(None).unwrap();
+        pc.set_local_description(Instant::now(), answer).unwrap();
+        assert_eq!(pc.ice_transport().role(), RTCIceRole::Controlling);
+        pc.close().unwrap();
     }
 }

@@ -1066,6 +1066,9 @@ impl RTCPeerConnection {
                 RTCRtpTransceiverDirection::Sendrecv => vec![
                     RTCRtpTransceiverDirection::Recvonly,
                     RTCRtpTransceiverDirection::Sendrecv,
+                    // A local sender-only transceiver can still carry what a sendrecv remote
+                    // offers: it becomes sendrecv (pion `satisfyTypeAndDirection`).
+                    RTCRtpTransceiverDirection::Sendonly,
                 ],
                 RTCRtpTransceiverDirection::Sendonly => vec![RTCRtpTransceiverDirection::Recvonly],
                 RTCRtpTransceiverDirection::Recvonly => vec![
@@ -1264,6 +1267,7 @@ pub(crate) fn extract_ice_details(
     desc: &SessionDescription,
 ) -> Result<(String, String, Vec<Candidate>)> {
     let mut candidates = vec![];
+    let mut last_candidate_error = None;
 
     // Backup ufrag/pwd is the first inactive credentials found.
     // We will return the backup credentials to solve the corner case where
@@ -1308,11 +1312,31 @@ pub(crate) fn extract_ice_details(
             if a.is_ice_candidate()
                 && let Some(value) = &a.value
             {
-                let c: Candidate = unmarshal_candidate(value)?;
-                //let candidate = RTCIceCandidate::from(&c);
-                candidates.push(c);
+                match unmarshal_candidate(value) {
+                    Ok(c) => candidates.push(c),
+                    // An unknown type or transport (legacy Chrome's `ssltcp`) is dropped, as
+                    // when it arrives through `add_remote_candidate`.
+                    Err(
+                        err @ (Error::ErrUnknownCandidateType | Error::ErrDetermineNetworkType),
+                    ) => {
+                        log::warn!("Discarding remote candidate: {err}");
+                    }
+                    // Any other bad candidate is skipped too; the description only fails if
+                    // nothing usable is left (pion `extractICEDetails`).
+                    Err(err) => {
+                        log::warn!("Failed to parse remote candidate {value:?}: {err}");
+                        last_candidate_error = Some(err);
+                    }
+                }
             }
         }
+    }
+
+    // Only invalid candidates were offered: surface the last error.
+    if candidates.is_empty()
+        && let Some(err) = last_candidate_error
+    {
+        return Err(err);
     }
 
     let remote_ufrag = remote_ufrag
