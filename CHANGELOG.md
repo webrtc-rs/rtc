@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the first got a random SDP origin version instead of the previous one plus one
   (RFC 9429 §5.2.2). A legacy `m=application ... DTLS/SCTP 5000` offer with `a=sctpmap` failed
   `set_remote_description` (the SCTP port was parsed as an RTP payload type) and was not treated
-  as a data channel.
+  as a data channel. A transceiver created from an inactive remote section was `recvonly` (it is `inactive`, as in pion).
 - `rtc-dtls`, found by porting pion's `conn_test.go` onto the new handshake harness: an empty PSK
   client identity was rejected; hellos without an extension block were rejected, a ClientHello's
   session id was ignored (the parse went wrong when one was sent), trailing bytes after the

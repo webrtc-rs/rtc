@@ -1517,12 +1517,17 @@ impl RTCPeerConnection {
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
                         } else {
-                            let local_direction =
-                                if direction == RTCRtpTransceiverDirection::Recvonly {
+                            // The mirror of the remote direction: it sends what the remote only
+                            // receives, receives otherwise, and an inactive section stays inactive.
+                            let local_direction = match direction {
+                                RTCRtpTransceiverDirection::Recvonly => {
                                     RTCRtpTransceiverDirection::Sendonly
-                                } else {
-                                    RTCRtpTransceiverDirection::Recvonly
-                                };
+                                }
+                                RTCRtpTransceiverDirection::Inactive => {
+                                    RTCRtpTransceiverDirection::Inactive
+                                }
+                                _ => RTCRtpTransceiverDirection::Recvonly,
+                            };
 
                             let mut transceiver = RTCRtpTransceiverInternal::new(
                                 kind,
