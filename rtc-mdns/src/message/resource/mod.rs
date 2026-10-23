@@ -43,6 +43,15 @@ pub(crate) struct Resource {
     pub(crate) body: Option<Box<dyn ResourceBody>>,
 }
 
+impl Clone for Resource {
+    fn clone(&self) -> Self {
+        Resource {
+            header: self.header.clone(),
+            body: self.body.as_ref().map(|b| b.clone_box()),
+        }
+    }
+}
+
 impl fmt::Display for Resource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -273,6 +282,11 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
     ) -> Result<Vec<u8>>;
 
     fn unpack(&mut self, msg: &[u8], off: usize, length: usize) -> Result<usize>;
+
+    // clone_box returns a boxed copy of this resource body. The concrete
+    // bodies derive Clone; this method lets the trait object be copied
+    // (the mDNS record cache needs to hand out records it stores).
+    fn clone_box(&self) -> Box<dyn ResourceBody>;
 
     fn as_any(&self) -> &dyn Any;
 }

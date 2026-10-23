@@ -1393,7 +1393,6 @@ fn test_malformed_input_returns_err_never_panics() {
         .unwrap_err(),
         Error::ErrTXTValueNotUtf8
     );
-
 }
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {

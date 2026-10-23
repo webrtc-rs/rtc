@@ -190,6 +190,7 @@
 #![warn(missing_docs)]
 #![allow(dead_code)]
 
+pub mod cache;
 pub(crate) mod config;
 pub mod dnssd;
 pub(crate) mod message;

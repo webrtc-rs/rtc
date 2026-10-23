@@ -23,7 +23,7 @@ use shared::error::*;
 // Message formats
 
 // A Type is a type of DNS request and response.
-#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum DnsType {
     // ResourceHeader.Type and question.Type
     A = 1,
@@ -126,7 +126,7 @@ impl DnsType {
 ///
 /// - [`DNSCLASS_INET`] (1): Internet class - used for virtually all DNS queries
 /// - [`DNSCLASS_ANY`] (255): Any class - used in queries to match any class
-#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct DnsClass(pub(crate) u16);
 
 /// Internet class (IN) - the standard class for Internet DNS records.

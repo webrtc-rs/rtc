@@ -94,6 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Known gap: TXT values that are not valid UTF-8 are rejected
   (`ErrTXTValueNotUtf8`) rather than carried, because the crate's TXT wire type is
   string-based (Go strings hold arbitrary bytes).
+- `rtc-mdns`: the RFC 6762 §10 record cache of pion/mdns v2.2.2 `cache.go` (issue #22),
+  in the new `cache` module: goodbye records (§10.1, one-second retention), the
+  cache-flush bit with its one-second grace (§10.2), TTL clamping to 75 minutes, the
+  80/85/90/95 % refresh thresholds of §5.2 with injected jitter, `sweep`, `reduce_ttls`,
+  `flush_all`, and a 4096-entry cap evicting the soonest-to-expire record. Sans-I/O
+  throughout: every method takes the `Instant` it needs and the jitter is a caller
+  argument, so no clock is read and no `rand` is drawn inside the crate. The 41 pion
+  `cache_test.go` tests are ported (a Go `time.Sleep` becomes advancing the injected
+  instant; the goroutine race test is `na`: the cache is a single-owner `&mut self`
+  type with no locks to exercise), plus the 4097-record capacity test and
+  refresh-threshold tests pion has no counterpart for.
 - `rtc`: `RTCConfigurationBuilder::with_always_negotiate_data_channels` (pion's
   `AlwaysNegotiateDataChannels`): offer an `m=application` section before any data channel
   exists, so the first channel created later needs no renegotiation. `set_configuration` can

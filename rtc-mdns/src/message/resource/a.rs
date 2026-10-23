@@ -32,6 +32,10 @@ impl ResourceBody for AResource {
         unpack_bytes(msg, off, &mut self.a)
     }
 
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
