@@ -9,9 +9,9 @@ use crate::peer_connection::handler::interceptor::InterceptorHandlerContext;
 use crate::peer_connection::handler::srtp::SrtpHandlerContext;
 use crate::peer_connection::sdp::cryptex::{cryptex_mode_from_sdp, cryptex_negotiated_in_sdp};
 use crate::peer_connection::sdp::{
-    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
-    get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
-    rtp_extensions_from_media_description, track_details_from_sdp,
+    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions,
+    description_contains_ufrag, get_by_mid, get_peer_direction, get_rids, have_data_channel,
+    is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -106,6 +106,19 @@ impl RTCPeerConnection {
             multicast_dns_query_timeout: setting_engine.multicast_dns.timeout,
             local_ufrag: setting_engine.candidates.username_fragment.clone(),
             local_pwd: setting_engine.candidates.password.clone(),
+            renomination: setting_engine.ice_renomination.as_ref().map(|r| {
+                r.generator.clone().unwrap_or_else(
+                    ice::agent::agent_config::NominationValueGenerator::incrementing,
+                )
+            }),
+            automatic_renomination: setting_engine
+                .ice_renomination
+                .as_ref()
+                .map(|r| r.interval.unwrap_or_default()),
+            nomination_attribute: setting_engine
+                .ice_renomination
+                .as_ref()
+                .and_then(|r| r.nomination_attribute),
 
             ..Default::default()
         };
@@ -1541,6 +1554,23 @@ impl RTCPeerConnection {
 
     pub(super) fn add_ice_remote_candidate(&mut self, candidate_value: &str) -> Result<()> {
         let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+        // Reject candidates from old generations (W3C addIceCandidate step 8): a candidate that
+        // names a username fragment no applied remote description carries belongs to an ICE
+        // session that has since been restarted. Like pion, drop it with an error log instead of
+        // failing the call, so that a late trickled candidate never poisons the new session.
+        if let Some(ufrag) = candidate.get_extension("ufrag")
+            && let Some(parsed) = self
+                .remote_description()
+                .and_then(|description| description.parsed.as_ref())
+            && !description_contains_ufrag(parsed, &ufrag.value)
+        {
+            log::error!(
+                "dropping candidate with ufrag {} because it doesn't match the current ufrags",
+                ufrag.value
+            );
+            return Ok(());
+        }
 
         // Register remote candidate with stats accumulator
         // Per W3C spec, URL must NOT be present for remote candidates

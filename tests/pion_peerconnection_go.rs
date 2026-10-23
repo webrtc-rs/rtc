@@ -7,9 +7,15 @@ use std::time::Instant;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
+use rtc::peer_connection::configuration::setting_engine::{
+    IceRenomination, SettingEngine, SettingEngineBuilder,
+};
 use rtc::peer_connection::sdp::RTCSessionDescription;
+use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+use rtc::statistics::StatsSelector;
+use rtc::statistics::stats::RTCStatsType;
 use shared::error::Error;
 
 fn pc() -> RTCPeerConnection {
@@ -408,5 +414,182 @@ a=mid:0\r\na={candidate}\r\n"
         ..Default::default()
     })
     .unwrap();
+    pc.close().unwrap();
+}
+
+const ICE_OPTIONS_OFFER: &str = "v=0\r
+o=- 0 0 IN IP4 127.0.0.1\r
+s=-\r
+t=0 0\r
+a=group:BUNDLE 0\r
+a=ice-ufrag:someufrag\r
+a=ice-pwd:somepwd\r
+a=fingerprint:sha-256 F7:BF:B4:42:5B:44:C0:B9:49:70:6D:26:D7:3E:E6:08:B1:5B:25:2E:32:88:50:B6:3C:BE:4E:18:A7:2C:85:7C\r
+a=msid-semantic: WMS *\r
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r
+c=IN IP4 0.0.0.0\r
+a=rtcp:9 IN IP4 0.0.0.0\r
+a=mid:0\r
+a=rtcp-mux\r
+a=setup:actpass\r
+a=rtpmap:111 opus/48000/2\r
+";
+
+fn pc_with(setting_engine: SettingEngine) -> RTCPeerConnection {
+    let mut me = MediaEngine::default();
+    me.register_default_codecs().unwrap();
+    RTCPeerConnectionBuilder::new()
+        .with_media_engine(me)
+        .with_setting_engine(setting_engine)
+        .build(Instant::now())
+        .unwrap()
+}
+
+fn ice_options(sdp: &str) -> Vec<&str> {
+    sdp.lines()
+        .filter_map(|line| line.strip_prefix("a=ice-options:"))
+        .collect()
+}
+
+/// `TestICETricklingSupported`: no `ice-options` unless asked for, then `trickle` in both the
+/// offer and the answer.
+#[test]
+fn test_ice_trickling_supported() {
+    let mut plain = pc();
+    plain.create_data_channel("d", None).unwrap();
+    assert!(ice_options(&plain.create_offer(None).unwrap().sdp).is_empty());
+
+    let setting = SettingEngineBuilder::new()
+        .with_ice_trickle_advertised(true)
+        .build();
+    let mut offerer = pc_with(setting.clone());
+    offerer.create_data_channel("d", None).unwrap();
+    let offer = offerer.create_offer(None).unwrap();
+    assert_eq!(vec!["trickle"], ice_options(&offer.sdp));
+
+    let mut answerer = pc_with(setting);
+    answerer
+        .set_remote_description(
+            Instant::now(),
+            RTCSessionDescription::offer(ICE_OPTIONS_OFFER.to_owned()).unwrap(),
+        )
+        .unwrap();
+    let answer = answerer.create_answer(None).unwrap();
+    assert_eq!(vec!["trickle"], ice_options(&answer.sdp));
+}
+
+/// `TestICERenominationAdvertised`: `renomination` joins the same attribute; both together are
+/// one space-separated list, not two attributes.
+#[test]
+fn test_ice_renomination_advertised() {
+    let renomination = SettingEngineBuilder::new()
+        .with_ice_renomination(IceRenomination::default())
+        .build();
+    let mut offerer = pc_with(renomination.clone());
+    offerer.create_data_channel("d", None).unwrap();
+    assert_eq!(
+        vec!["renomination"],
+        ice_options(&offerer.create_offer(None).unwrap().sdp)
+    );
+
+    let mut answerer = pc_with(renomination);
+    answerer
+        .set_remote_description(
+            Instant::now(),
+            RTCSessionDescription::offer(ICE_OPTIONS_OFFER.to_owned()).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        vec!["renomination"],
+        ice_options(&answerer.create_answer(None).unwrap().sdp)
+    );
+
+    let both = SettingEngineBuilder::new()
+        .with_ice_trickle_advertised(true)
+        .with_ice_renomination(IceRenomination::default())
+        .build();
+    let mut pc = pc_with(both);
+    pc.create_data_channel("d", None).unwrap();
+    assert_eq!(
+        vec!["trickle renomination"],
+        ice_options(&pc.create_offer(None).unwrap().sdp)
+    );
+}
+
+/// `TestEmptyCandidate`: an empty candidate string is the end-of-candidates marker and is fine,
+/// a real candidate is fine, and garbage is an error.
+#[test]
+fn test_empty_candidate() {
+    for (candidate, expect_error) in [
+        ("", false),
+        (
+            "211962667 1 udp 2122194687 10.0.3.1 40864 typ host generation 0",
+            false,
+        ),
+        ("1234567", true),
+    ] {
+        let mut pc = pc();
+        pc.set_remote_description(
+            Instant::now(),
+            RTCSessionDescription::offer(ICE_OPTIONS_OFFER.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let result = pc.add_remote_candidate(RTCIceCandidateInit {
+            candidate: candidate.to_owned(),
+            ..Default::default()
+        });
+        assert_eq!(expect_error, result.is_err(), "candidate {candidate:?}");
+        pc.close().unwrap();
+    }
+}
+
+/// `TestAddICECandidate__DroppingOldGenerationCandidates`: a candidate naming a ufrag the remote
+/// description does not carry is dropped (not an error); one with no ufrag or the right one is
+/// kept.
+#[test]
+fn test_old_generation_candidates_are_dropped() {
+    let remote_candidates = |pc: &mut RTCPeerConnection| {
+        pc.get_stats(Instant::now(), StatsSelector::None)
+            .iter_by_type(RTCStatsType::RemoteCandidate)
+            .count()
+    };
+
+    let mut pc = pc();
+    pc.set_remote_description(
+        Instant::now(),
+        RTCSessionDescription::offer(ICE_OPTIONS_OFFER.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let add = |pc: &mut RTCPeerConnection, candidate: &str| {
+        pc.add_remote_candidate(RTCIceCandidateInit {
+            candidate: candidate.to_owned(),
+            ..Default::default()
+        })
+    };
+
+    add(
+        &mut pc,
+        "candidate:1 1 UDP 2122252543 192.168.1.1 12345 typ host",
+    )
+    .unwrap();
+    assert_eq!(1, remote_candidates(&mut pc), "no ufrag: kept");
+
+    add(
+        &mut pc,
+        "candidate:2 1 UDP 2122252543 192.168.1.2 12345 typ host ufrag someufrag",
+    )
+    .unwrap();
+    assert_eq!(2, remote_candidates(&mut pc), "the current ufrag: kept");
+
+    add(
+        &mut pc,
+        "candidate:3 1 UDP 2122252543 192.168.1.3 12345 typ host ufrag invalid",
+    )
+    .unwrap();
+    assert_eq!(
+        2,
+        remote_candidates(&mut pc),
+        "another generation's ufrag: dropped"
+    );
     pc.close().unwrap();
 }

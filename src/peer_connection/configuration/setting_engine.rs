@@ -112,12 +112,12 @@ use crypto::RTCCryptoProvider;
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 //TODO: use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
-//TODO: use ice::mdns::MulticastDnsMode;
+use ice::agent::agent_config::NominationValueGenerator;
+use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
-use ice::mdns::MulticastDnsMode;
 use std::time::Duration;
 
 /// Equal to UDP MTU
@@ -246,6 +246,20 @@ pub struct Candidates {
     pub include_loopback_candidate: bool,
 }
 
+/// ICE renomination (draft-thatcher-ice-renomination-01): lets the controlling agent move a call
+/// to a better candidate pair while it runs, and advertises `a=ice-options:renomination`.
+///
+/// Mirrors pion's `SetICERenomination`: renominating automatically is always on once enabled.
+#[derive(Default, Clone)]
+pub struct IceRenomination {
+    /// Produces the increasing nomination values; counts 1, 2, 3... when `None`.
+    pub generator: Option<NominationValueGenerator>,
+    /// How often the controlling agent re-evaluates the pairs; 3 seconds when `None` or zero.
+    pub interval: Option<Duration>,
+    /// The STUN attribute type carrying the nomination value; `0xC001` when `None`.
+    pub nomination_attribute: Option<u16>,
+}
+
 /// Replay attack protection window sizes.
 ///
 /// Larger windows provide better protection against packet reordering
@@ -360,6 +374,8 @@ pub struct SettingEngine {
     pub(crate) data_channel: DataChannel,
     pub(crate) turn_allocation_refresh_interval_cap: Option<Duration>,
     pub(crate) candidates: Candidates,
+    pub(crate) ice_renomination: Option<IceRenomination>,
+    pub(crate) ice_trickle_advertised: bool,
     pub(crate) multicast_dns: MulticastDNS,
     pub(crate) replay_protection: ReplayProtection,
     pub(crate) sdp_media_level_fingerprints: bool,
@@ -498,6 +514,26 @@ impl SettingEngineBuilder {
     /// A registry with every setting at its default.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Advertises trickle ICE: offers and answers carry `a=ice-options:trickle`
+    /// (RFC 9429 §5.2.1 / §5.3.1; pion's `ICETricklingSupported` offer/answer option).
+    ///
+    /// A browser reads the attribute as permission to send its candidates as they are found
+    /// instead of waiting for gathering to finish.
+    pub fn with_ice_trickle_advertised(mut self, advertised: bool) -> Self {
+        self.0.ice_trickle_advertised = advertised;
+        self
+    }
+
+    /// Enables ICE renomination for peer connections built with this setting engine.
+    ///
+    /// The controlling agent then re-evaluates its candidate pairs periodically and moves the
+    /// call to a clearly better one (a direct path instead of a relay, a lower round-trip time),
+    /// and offers and answers carry `a=ice-options:renomination` so the peer knows.
+    pub fn with_ice_renomination(mut self, renomination: IceRenomination) -> Self {
+        self.0.ice_renomination = Some(renomination);
+        self
     }
 
     /// Selects the cryptographic provider used by peer connections built with this setting engine.

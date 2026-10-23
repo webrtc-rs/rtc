@@ -1577,6 +1577,43 @@ pub(crate) fn is_ext_map_allow_mixed_set(
 /// # Returns
 ///
 /// `true` if trickle ICE is supported, `false` otherwise
+/// Whether `ufrag` is the `ice-ufrag` of the session or of any of its media sections.
+pub(crate) fn description_contains_ufrag(desc: &SessionDescription, ufrag: &str) -> bool {
+    if desc
+        .attribute("ice-ufrag")
+        .is_some_and(|value| value == ufrag)
+    {
+        return true;
+    }
+
+    desc.media_descriptions.iter().any(|media| {
+        media
+            .attribute("ice-ufrag")
+            .and_then(|value| value)
+            .is_some_and(|value| value == ufrag)
+    })
+}
+
+/// Adds `value` to the session-level `ice-options` attribute, creating the attribute when there is
+/// none (pion's `addOrUpdateICEOption`). An option already listed is not repeated.
+pub(crate) fn add_ice_option(desc: &mut SessionDescription, value: &str) {
+    for attribute in &mut desc.attributes {
+        if attribute.key == "ice-options" {
+            match &mut attribute.value {
+                Some(existing) if !existing.is_empty() => {
+                    if !existing.split_whitespace().any(|option| option == value) {
+                        *existing = format!("{existing} {value}").into();
+                    }
+                }
+                other => *other = Some(value.into()),
+            }
+            return;
+        }
+    }
+
+    *desc = std::mem::take(desc).with_value_attribute("ice-options".to_owned(), value.to_owned());
+}
+
 pub(crate) fn has_ice_trickle_option(desc: &SessionDescription) -> bool {
     // Check session-level ice-options attribute
     if let Some(value) = desc.attribute("ice-options")

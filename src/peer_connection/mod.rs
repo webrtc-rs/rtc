@@ -271,7 +271,7 @@ use crate::peer_connection::handler::sctp::SctpHandlerContext;
 use crate::peer_connection::sdp::MediaDescriptionExt;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    extract_fingerprint, extract_ice_details, get_application_media,
+    add_ice_option, extract_fingerprint, extract_ice_details, get_application_media,
     get_application_media_section_max_message_size, get_application_media_section_sctp_port,
     get_mid_value, get_peer_direction, has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType,
     update_sdp_origin,
@@ -852,6 +852,13 @@ impl RTCPeerConnection {
             )?
         };
 
+        if self.setting_engine.ice_trickle_advertised {
+            add_ice_option(&mut d, "trickle");
+        }
+        if self.setting_engine.ice_renomination.is_some() {
+            add_ice_option(&mut d, "renomination");
+        }
+
         update_sdp_origin(&mut self.sdp_origin, &mut d);
 
         let sdp = d.marshal();
@@ -1016,6 +1023,13 @@ impl RTCPeerConnection {
             connection_role,
             self.setting_engine.ignore_rid_pause_for_recv,
         )?;
+
+        if self.setting_engine.ice_trickle_advertised {
+            add_ice_option(&mut d, "trickle");
+        }
+        if self.setting_engine.ice_renomination.is_some() {
+            add_ice_option(&mut d, "renomination");
+        }
 
         update_sdp_origin(&mut self.sdp_origin, &mut d);
 
