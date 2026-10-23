@@ -111,8 +111,7 @@ use std::sync::Arc;
 use crypto::RTCCryptoProvider;
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
-//TODO: use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
-use ice::agent::agent_config::NominationValueGenerator;
+use ice::agent::agent_config::{BindingRequestHandler, IpFilter, NominationValueGenerator};
 use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
@@ -225,8 +224,18 @@ pub struct Candidates {
 
     /// Restrict candidate gathering to specific network types (e.g., UDP4, UDP6, TCP4).
     pub ice_network_types: Vec<NetworkType>,
-    //TODO: pub interface_filter: Arc<Option<InterfaceFilterFn>>,
-    //TODO: pub ip_filter: Arc<Option<IpFilterFn>>,
+    /// Filter for local candidate addresses.
+    pub ip_filter: Option<IpFilter>,
+
+    /// Filter for remote candidate addresses.
+    pub remote_ip_filter: Option<IpFilter>,
+
+    /// Whether a lite agent checks candidate priority on `USE-CANDIDATE` like a full agent.
+    pub ice_use_candidate_check_priority: bool,
+
+    /// Hook that sees every ICE binding request.
+    pub ice_binding_request_handler: Option<BindingRequestHandler>,
+
     /// External IP addresses for 1:1 NAT mappings (e.g., AWS Elastic IP).
     pub nat_1to1_ips: Vec<String>,
 
@@ -856,24 +865,44 @@ impl SettingEngineBuilder {
         self
     }
 
-    /*todo:
-    /// set_interface_filter sets the filtering functions when gathering ICE candidates
-    /// This can be used to exclude certain network interfaces from ICE. Which may be
-    /// useful if you know a certain interface will never succeed, or if you wish to reduce
-    /// the amount of information you wish to expose to the remote peer
-    pub fn with_interface_filter(mut self, filter: InterfaceFilterFn) -> Self {
-        self.0.candidates.interface_filter = Arc::new(Some(filter));
+    /// Limits which local IP addresses may become candidates.
+    ///
+    /// The filter is asked about every local candidate added to the connection and about the
+    /// peer-reflexive addresses learned from checks; an address it refuses is dropped. Use it to
+    /// keep private or tunnel addresses out of the SDP, or to reduce what is revealed to the
+    /// peer. The sans-I/O connection does not enumerate interfaces itself, so there is no
+    /// interface filter: choose the interfaces when binding.
+    pub fn with_ip_filter(mut self, filter: IpFilter) -> Self {
+        self.0.candidates.ip_filter = Some(filter);
         self
     }
 
+    /// Limits which remote IP addresses candidates may be accepted from.
+    ///
+    /// Remote candidates (signaled or learned from checks) on an address the filter refuses are
+    /// ignored. Useful for a server that must not connect out to private ranges.
+    pub fn with_remote_ip_filter(mut self, filter: IpFilter) -> Self {
+        self.0.candidates.remote_ip_filter = Some(filter);
+        self
+    }
 
-    /// set_ip_filter sets the filtering functions when gathering ICE candidates
-    /// This can be used to exclude certain ip from ICE. Which may be
-    /// useful if you know a certain ip will never succeed, or if you wish to reduce
-    /// the amount of information you wish to expose to the remote peer
-    pub fn with_ip_filter(mut self, filter: IpFilterFn) -> Self {
-        self.0.candidates.ip_filter = Arc::new(Some(filter));
-    }*/
+    /// Makes a lite agent apply the same candidate-priority check as a full agent to
+    /// `USE-CANDIDATE` requests, so a lagging low-priority pair cannot be selected over a better
+    /// one. Off by default, as in pion.
+    pub fn with_ice_use_candidate_check_priority(mut self, enable: bool) -> Self {
+        self.0.candidates.ice_use_candidate_check_priority = enable;
+        self
+    }
+
+    /// Installs a hook that sees every ICE binding request before the agent acts on it.
+    ///
+    /// If the handler returns `true` it has taken over pair selection for that request (the agent
+    /// still answers it); `false` leaves the request to the agent, as pion's
+    /// `SetICEBindingRequestHandler`.
+    pub fn with_ice_binding_request_handler(mut self, handler: BindingRequestHandler) -> Self {
+        self.0.candidates.ice_binding_request_handler = Some(handler);
+        self
+    }
 
     /// Configures 1:1 NAT IP mapping for cloud deployments.
     ///

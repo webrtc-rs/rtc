@@ -120,6 +120,16 @@ impl RTCPeerConnection {
                 .as_ref()
                 .and_then(|r| r.nomination_attribute),
 
+            ip_filter: setting_engine.candidates.ip_filter.clone(),
+            remote_ip_filter: setting_engine.candidates.remote_ip_filter.clone(),
+            enable_use_candidate_check_priority: setting_engine
+                .candidates
+                .ice_use_candidate_check_priority,
+            binding_request_handler: setting_engine
+                .candidates
+                .ice_binding_request_handler
+                .clone(),
+
             ..Default::default()
         };
 

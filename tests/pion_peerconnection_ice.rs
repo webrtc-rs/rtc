@@ -196,3 +196,81 @@ fn test_always_negotiate_data_channels_create_data_channel() {
         "creating a data channel needs no new negotiation"
     );
 }
+
+fn peer_with(builder: SettingEngineBuilder) -> RTCPeerConnection {
+    RTCPeerConnectionBuilder::new()
+        .with_setting_engine(builder.build())
+        .build(Instant::now())
+        .unwrap()
+}
+
+/// `SettingEngine.SetIPFilter`: an address the filter refuses never becomes a local candidate.
+#[test]
+fn test_ip_filter_drops_local_candidates() {
+    use ice::agent::agent_config::IpFilter;
+    for refuse in [false, true] {
+        let filter = IpFilter::new(move |ip| !(refuse && ip.to_string() == "10.0.0.1"));
+        let mut sim = Sim::new(
+            peer_with(SettingEngineBuilder::new().with_ip_filter(filter)),
+            peer(false),
+        );
+        sim.a.pc.create_data_channel("d", None).unwrap();
+        sim.negotiate(true);
+        let sdp = sim.a.pc.local_description().unwrap().sdp;
+        let has_candidate = sdp.lines().any(|l| l.starts_with("a=candidate:"));
+        assert_eq!(has_candidate, !refuse, "refuse={refuse}: {sdp}");
+    }
+}
+
+/// `SettingEngine.SetRemoteIPFilter`: candidates from a refused address are ignored, so the
+/// connection cannot form to it.
+#[test]
+fn test_remote_ip_filter_ignores_remote_candidates() {
+    use ice::agent::agent_config::IpFilter;
+    for refuse in [false, true] {
+        let filter = IpFilter::new(move |ip| !(refuse && ip.to_string() == "10.0.0.2"));
+        let mut sim = Sim::new(
+            peer_with(SettingEngineBuilder::new().with_remote_ip_filter(filter)),
+            peer(false),
+        );
+        sim.a.pc.create_data_channel("d", None).unwrap();
+        sim.negotiate(true);
+        let connected = sim.run_until(Duration::from_secs(8), |s| s.a.connected());
+        assert_eq!(connected, !refuse, "refuse={refuse}");
+    }
+}
+
+/// `TestSetICEBindingRequestHandler`: the handler sees the binding requests of both roles while a
+/// connection forms, and declining them (`false`) leaves the connection working.
+#[test]
+fn test_ice_binding_request_handler_sees_both_roles() {
+    use ice::agent::agent_config::BindingRequestHandler;
+    use std::sync::{Arc, Mutex};
+    use stun::attributes::{ATTR_ICE_CONTROLLED, ATTR_ICE_CONTROLLING};
+
+    let seen = Arc::new(Mutex::new((false, false)));
+    let recorder = seen.clone();
+    let handler = BindingRequestHandler::new(move |message, _, _, _| {
+        let mut seen = recorder.lock().unwrap();
+        for attribute in message.attributes.0.iter() {
+            if attribute.typ == ATTR_ICE_CONTROLLED {
+                seen.0 = true;
+            } else if attribute.typ == ATTR_ICE_CONTROLLING {
+                seen.1 = true;
+            }
+        }
+        false
+    });
+    // The handler sits on both peers: each sees the other's request.
+    let mut sim = Sim::new(
+        peer_with(SettingEngineBuilder::new().with_ice_binding_request_handler(handler.clone())),
+        peer_with(SettingEngineBuilder::new().with_ice_binding_request_handler(handler)),
+    );
+    sim.a.pc.create_data_channel("d", None).unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+    let (controlled, controlling) = *seen.lock().unwrap();
+    assert!(controlled, "a request from a controlled agent was seen");
+    assert!(controlling, "a request from a controlling agent was seen");
+}

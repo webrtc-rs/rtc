@@ -231,6 +231,8 @@ pub mod setting_engine;
 
 #[cfg(test)]
 mod pion_media_engine_test;
+#[cfg(test)]
+mod pion_setting_engine_test;
 
 pub use bundle_policy::RTCBundlePolicy;
 pub use ice_transport_policy::{ICEGatherPolicy, RTCIceTransportPolicy};
