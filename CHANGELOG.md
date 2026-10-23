@@ -42,8 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom detector factories, `SetROC` burst-loss recovery, the 2^48/2^31 packet limits),
   truncated and crafted packets on both legs, the all-profiles `TestSrtpCipher` vector
   table, DTLS keying-material order, and Cryptex runtime flips on both legs.
-
-### Added
 - `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
 - `rtc-interceptor`: pion's interceptor test suite is ported (issue #15): the twcc recorder
   (full feedback content, rolling wrap, min input, counts, duplicates, short and reordered
