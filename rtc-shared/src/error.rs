@@ -1035,6 +1035,12 @@ pub enum Error {
     /// Server responded with SRTP Profile we do not support.
     #[error("server responded with SRTP Profile we do not support")]
     ErrClientNoMatchingSrtpProfile,
+    /// The ALPN extension is malformed, or the server selected a protocol the client did not offer.
+    #[error("alpn extension has an invalid format")]
+    ErrAlpnInvalidFormat,
+    /// The peer and this endpoint share no application protocol.
+    #[error("no application protocol in common")]
+    ErrAlpnNoAppProto,
     /// Client required Extended Master Secret extension, but server does not support it.
     #[error("client required Extended Master Secret extension, but server does not support it")]
     ErrClientRequiredButNoServerEms,

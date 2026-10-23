@@ -3,6 +3,7 @@ use super::*;
 use crate::compression_methods::*;
 use crate::config::*;
 use crate::content::*;
+use crate::extension::extension_alpn::*;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -201,6 +202,29 @@ impl Flight for Flight3 {
                         };
                         state.srtp_protection_profile = profile;
                     }
+                    Extension::Alpn(e) => {
+                        // The server's answer names exactly one protocol, and it must be one
+                        // this client offered (RFC 7301 §3.1).
+                        let [selected] = &e.protocols[..] else {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::InternalError,
+                                }),
+                                Some(Error::ErrAlpnInvalidFormat),
+                            ));
+                        };
+                        if !cfg.local_supported_protocols.contains(selected) {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::IllegalParameter,
+                                }),
+                                Some(Error::ErrAlpnInvalidFormat),
+                            ));
+                        }
+                        state.negotiated_protocol.clone_from(selected);
+                    }
                     Extension::UseExtendedMasterSecret(_)
                         if cfg.extended_master_secret != ExtendedMasterSecretType::Disable =>
                     {
@@ -360,6 +384,12 @@ impl Flight for Flight3 {
         if !cfg.local_srtp_protection_profiles.is_empty() {
             extensions.push(Extension::UseSrtp(ExtensionUseSrtp {
                 protection_profiles: cfg.local_srtp_protection_profiles.clone(),
+            }));
+        }
+
+        if !cfg.local_supported_protocols.is_empty() {
+            extensions.push(Extension::Alpn(ExtensionAlpn {
+                protocols: cfg.local_supported_protocols.clone(),
             }));
         }
 

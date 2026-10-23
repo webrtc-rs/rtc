@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
 - `rtc-interceptor`: `PacketDump`, the belt-shaped port of pion's `interceptor/pkg/packetdump`:
   one interceptor sees both directions and forwards every packet unchanged, while writing a
   line per RTP/RTCP packet through pluggable filters, formatters and a `PacketDumpSink`

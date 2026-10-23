@@ -8,6 +8,7 @@ use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
 use crate::curve::*;
+use crate::extension::extension_alpn::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
 use crate::extension::extension_use_extended_master_secret::*;
@@ -548,6 +549,28 @@ impl Flight for Flight4 {
             extensions.push(Extension::UseSrtp(ExtensionUseSrtp {
                 protection_profiles: vec![state.srtp_protection_profile],
             }));
+        }
+
+        match alpn_protocol_selection(
+            &cfg.local_supported_protocols,
+            &state.peer_supported_protocols,
+        ) {
+            Ok(Some(selected)) => {
+                extensions.push(Extension::Alpn(ExtensionAlpn {
+                    protocols: vec![selected.to_owned()],
+                }));
+                state.negotiated_protocol = selected.to_owned();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::NoApplicationProtocol,
+                    }),
+                    Some(err),
+                ));
+            }
         }
 
         if !state.is_cipher_suite_psk() {

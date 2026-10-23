@@ -25,6 +25,8 @@ pub struct State {
     pub(crate) cipher_suite: Option<Box<dyn CipherSuite>>, // nil if a cipher_suite hasn't been chosen
 
     pub(crate) srtp_protection_profile: SrtpProtectionProfile, // Negotiated srtp_protection_profile
+    pub(crate) peer_supported_protocols: Vec<String>,          // ALPN protocols the client offered
+    pub(crate) negotiated_protocol: String,                    // ALPN protocol both sides agreed on
     /// The peer's certificate chain, DER-encoded.
     ///
     /// WebRTC checks its fingerprint against the one signalled in SDP.
@@ -61,6 +63,7 @@ struct SerializedState {
     master_secret: Vec<u8>,
     sequence_number: u64,
     srtp_protection_profile: u16,
+    negotiated_protocol: String,
     peer_certificates: Vec<Vec<u8>>,
     identity_hint: Vec<u8>,
     is_client: bool,
@@ -84,6 +87,8 @@ impl State {
             cipher_suite: None,
 
             srtp_protection_profile: SrtpProtectionProfile::Unsupported,
+            peer_supported_protocols: vec![],
+            negotiated_protocol: String::new(),
             peer_certificates: vec![],
             identity_hint: vec![],
 
@@ -145,6 +150,7 @@ impl State {
             master_secret: self.master_secret.clone(),
             sequence_number,
             srtp_protection_profile: self.srtp_protection_profile as u16,
+            negotiated_protocol: self.negotiated_protocol.clone(),
             peer_certificates: self.peer_certificates.clone(),
             identity_hint: self.identity_hint.clone(),
             is_client: self.is_client,
@@ -179,6 +185,8 @@ impl State {
         self.cipher_suite = Some(cipher_suite_for_id(serialized.cipher_suite_id.into())?);
 
         self.srtp_protection_profile = serialized.srtp_protection_profile.into();
+        self.negotiated_protocol
+            .clone_from(&serialized.negotiated_protocol);
 
         // Set remote certificate
         self.peer_certificates
@@ -270,6 +278,11 @@ impl State {
     /// The SRTP protection profile negotiated through `use_srtp`.
     pub fn srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.srtp_protection_profile
+    }
+
+    /// The application protocol negotiated through ALPN, or `""` when none was.
+    pub fn negotiated_protocol(&self) -> &str {
+        &self.negotiated_protocol
     }
 
     /// Whether this endpoint took the client role.

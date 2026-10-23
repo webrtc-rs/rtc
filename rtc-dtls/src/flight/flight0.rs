@@ -69,6 +69,7 @@ impl Flight for Flight0 {
             }
 
             state.remote_random = client_hello.random.clone();
+            state.peer_supported_protocols.clear();
 
             if let Ok(id) =
                 find_matching_cipher_suite(&client_hello.cipher_suites, &cfg.local_cipher_suites)
@@ -125,6 +126,9 @@ impl Flight for Flight0 {
                                 Some(Error::ErrServerNoMatchingSrtpProfile),
                             ));
                         }
+                    }
+                    Extension::Alpn(e) => {
+                        state.peer_supported_protocols.clone_from(&e.protocols);
                     }
                     Extension::UseExtendedMasterSecret(_)
                         if cfg.extended_master_secret != ExtendedMasterSecretType::Disable =>

@@ -1,3 +1,7 @@
+/// Application-Layer Protocol Negotiation ([RFC 7301]).
+///
+/// [RFC 7301]: https://www.rfc-editor.org/rfc/rfc7301
+pub mod extension_alpn;
 /// Server Name Indication (SNI).
 pub mod extension_server_name;
 /// The curves a client will accept for ECDHE.
@@ -15,6 +19,7 @@ pub mod extension_use_srtp;
 /// The renegotiation info extension, sent empty to signal renegotiation is not supported.
 pub mod renegotiation_info;
 
+use extension_alpn::*;
 use extension_server_name::*;
 use extension_supported_elliptic_curves::*;
 use extension_supported_point_formats::*;
@@ -43,6 +48,8 @@ pub enum ExtensionValue {
     SupportedSignatureAlgorithms = 13,
     /// `USE_SRTP` (`14`).
     UseSrtp = 14,
+    /// `APPLICATION_LAYER_PROTOCOL_NEGOTIATION` (`16`).
+    Alpn = 16,
     /// `USE_EXTENDED_MASTER_SECRET` (`23`).
     UseExtendedMasterSecret = 23,
     /// `RENEGOTIATION_INFO` (`65281`).
@@ -59,6 +66,7 @@ impl From<u16> for ExtensionValue {
             11 => ExtensionValue::SupportedPointFormats,
             13 => ExtensionValue::SupportedSignatureAlgorithms,
             14 => ExtensionValue::UseSrtp,
+            16 => ExtensionValue::Alpn,
             23 => ExtensionValue::UseExtendedMasterSecret,
             65281 => ExtensionValue::RenegotiationInfo,
             _ => ExtensionValue::Unsupported,
@@ -80,6 +88,8 @@ pub enum Extension {
     SupportedSignatureAlgorithms(ExtensionSupportedSignatureAlgorithms),
     /// The SRTP protection profiles offered or selected.
     UseSrtp(ExtensionUseSrtp),
+    /// The application protocols offered or selected.
+    Alpn(ExtensionAlpn),
     /// The extended master secret extension.
     UseExtendedMasterSecret(ExtensionUseExtendedMasterSecret),
     /// The renegotiation info extension.
@@ -95,6 +105,7 @@ impl Extension {
             Extension::SupportedPointFormats(ext) => ext.extension_value(),
             Extension::SupportedSignatureAlgorithms(ext) => ext.extension_value(),
             Extension::UseSrtp(ext) => ext.extension_value(),
+            Extension::Alpn(ext) => ext.extension_value(),
             Extension::UseExtendedMasterSecret(ext) => ext.extension_value(),
             Extension::RenegotiationInfo(ext) => ext.extension_value(),
         }
@@ -110,6 +121,7 @@ impl Extension {
             Extension::SupportedPointFormats(ext) => ext.size(),
             Extension::SupportedSignatureAlgorithms(ext) => ext.size(),
             Extension::UseSrtp(ext) => ext.size(),
+            Extension::Alpn(ext) => ext.size(),
             Extension::UseExtendedMasterSecret(ext) => ext.size(),
             Extension::RenegotiationInfo(ext) => ext.size(),
         };
@@ -130,6 +142,7 @@ impl Extension {
             Extension::SupportedPointFormats(ext) => ext.marshal(writer),
             Extension::SupportedSignatureAlgorithms(ext) => ext.marshal(writer),
             Extension::UseSrtp(ext) => ext.marshal(writer),
+            Extension::Alpn(ext) => ext.marshal(writer),
             Extension::UseExtendedMasterSecret(ext) => ext.marshal(writer),
             Extension::RenegotiationInfo(ext) => ext.marshal(writer),
         }
@@ -158,6 +171,7 @@ impl Extension {
                 ))
             }
             ExtensionValue::UseSrtp => Ok(Extension::UseSrtp(ExtensionUseSrtp::unmarshal(reader)?)),
+            ExtensionValue::Alpn => Ok(Extension::Alpn(ExtensionAlpn::unmarshal(reader)?)),
             ExtensionValue::UseExtendedMasterSecret => Ok(Extension::UseExtendedMasterSecret(
                 ExtensionUseExtendedMasterSecret::unmarshal(reader)?,
             )),

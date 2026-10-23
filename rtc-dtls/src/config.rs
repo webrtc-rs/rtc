@@ -113,6 +113,7 @@ pub struct ConfigBuilder {
     cipher_suites: Vec<CipherSuiteId>,
     signature_schemes: Vec<SignatureScheme>,
     srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+    supported_protocols: Vec<String>,
     client_auth: ClientAuthType,
     extended_master_secret: ExtendedMasterSecretType,
     flight_interval: Duration,
@@ -139,6 +140,7 @@ impl Default for ConfigBuilder {
             cipher_suites: vec![],
             signature_schemes: vec![],
             srtp_protection_profiles: vec![],
+            supported_protocols: vec![],
             client_auth: ClientAuthType::default(),
             extended_master_secret: ExtendedMasterSecretType::default(),
             flight_interval: Duration::default(),
@@ -198,6 +200,20 @@ impl ConfigBuilder {
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     ) -> Self {
         self.srtp_protection_profiles = srtp_protection_profiles;
+        self
+    }
+
+    /// The application protocols this endpoint speaks, most preferred first, for ALPN
+    /// ([RFC 7301]). Clients offer them in the ClientHello; servers pick the first of their own
+    /// that the client offered, and refuse the handshake with a `no_application_protocol` alert
+    /// when both sides offered protocols and none matches. Empty (the default) disables ALPN.
+    ///
+    /// [`build`](Self::build) rejects empty names, names longer than 255 bytes, and lists too long
+    /// for the extension.
+    ///
+    /// [RFC 7301]: https://www.rfc-editor.org/rfc/rfc7301
+    pub fn with_supported_protocols(mut self, supported_protocols: Vec<String>) -> Self {
+        self.supported_protocols = supported_protocols;
         self
     }
 
@@ -429,6 +445,15 @@ impl ConfigBuilder {
             )
         })?;
         self.validate(is_client)?;
+        let alpn_len: usize = self.supported_protocols.iter().map(|p| 1 + p.len()).sum();
+        if self
+            .supported_protocols
+            .iter()
+            .any(|p| p.is_empty() || p.len() > 255)
+            || alpn_len + 2 > 0xffff
+        {
+            return Err(Error::ErrAlpnInvalidFormat);
+        }
 
         // Each id is paired with the suite's own `is_psk`, so the checks below can tell the two
         // families apart without a second definition of which suites are psk.
@@ -591,6 +616,7 @@ impl ConfigBuilder {
             local_signature_schemes,
             extended_master_secret: self.extended_master_secret,
             local_srtp_protection_profiles: self.srtp_protection_profiles,
+            local_supported_protocols: self.supported_protocols,
             server_name,
             client_auth: self.client_auth,
             local_certificates: self.certificates,
@@ -737,6 +763,7 @@ pub struct HandshakeConfig {
     pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
     pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
+    pub(crate) local_supported_protocols: Vec<String>, // ALPN protocols, if empty no ALPN
     pub(crate) server_name: String,
     pub(crate) client_auth: ClientAuthType, // If we are a client should we request a client certificate
     pub(crate) local_certificates: Vec<Certificate>,
@@ -769,6 +796,7 @@ impl fmt::Debug for HandshakeConfig {
                 "local_srtp_protection_profiles",
                 &self.local_srtp_protection_profiles,
             )
+            .field("local_supported_protocols", &self.local_supported_protocols)
             .field("server_name", &self.server_name)
             .field("client_auth", &self.client_auth)
             .field("local_certificates", &self.local_certificates)
@@ -796,6 +824,7 @@ impl HandshakeConfig {
             local_signature_schemes: vec![],
             extended_master_secret: ExtendedMasterSecretType::Disable,
             local_srtp_protection_profiles: vec![],
+            local_supported_protocols: vec![],
             server_name: String::new(),
             client_auth: ClientAuthType::NoClientCert,
             local_certificates: vec![],

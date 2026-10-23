@@ -4,6 +4,7 @@ use crate::compression_methods::*;
 use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
+use crate::extension::extension_alpn::*;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -146,6 +147,12 @@ impl Flight for Flight1 {
         if !cfg.local_srtp_protection_profiles.is_empty() {
             extensions.push(Extension::UseSrtp(ExtensionUseSrtp {
                 protection_profiles: cfg.local_srtp_protection_profiles.clone(),
+            }));
+        }
+
+        if !cfg.local_supported_protocols.is_empty() {
+            extensions.push(Extension::Alpn(ExtensionAlpn {
+                protocols: cfg.local_supported_protocols.clone(),
             }));
         }
 
