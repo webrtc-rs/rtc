@@ -1,8 +1,10 @@
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
 use crate::TimerConfig;
+use crate::association::timer::DEFAULT_RTO_MAX;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// MTU for inbound packet (from DTLS)
 pub(crate) const RECEIVE_MTU: usize = 8192;
@@ -74,6 +76,33 @@ pub struct TransportConfig {
     ///
     /// [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
     enable_rack: bool,
+    /// Upper bound of the retransmission timeout, as pion's `SetSCTPRTOMax`.
+    ///
+    /// [`Duration::ZERO`] (the default) keeps the RFC 9260 recommended 60 s.
+    /// The value floors at 1 ms when set: the RTO arithmetic is whole
+    /// milliseconds, and a configured sub-millisecond ceiling would otherwise
+    /// round back up to the 60 s default.
+    rto_max: Duration,
+    /// Congestion-window floor, as pion's `SetSCTPMinCwnd`.
+    ///
+    /// `0` (the default) keeps the RFC 9260 resets (`cwnd = mtu` on a T3-rtx
+    /// timeout, `cwnd = ssthresh` on fast recovery). Non-zero raises every
+    /// congestion-window write to at least this many bytes — including the
+    /// initial `min(4*MTU, max(2*MTU, 4380))`.
+    min_cwnd: u32,
+    /// Bundling budget for fast retransmissions, as pion's `SetSCTPFastRtxWnd`.
+    ///
+    /// The effective budget is `max(MTU, fast_rtx_wnd)` bytes: `0` (the
+    /// default) retransmits within one MTU-sized packet as before, larger
+    /// values let a single fast-retransmit flight carry more of the chunks
+    /// reported missing by three gap reports.
+    fast_rtx_wnd: u32,
+    /// Congestion-window growth per round trip in congestion avoidance, as
+    /// pion's `SetSCTPCwndCAStep`.
+    ///
+    /// The effective step is `max(MTU, cwnd_ca_step)`: `0` (the default) keeps
+    /// the RFC 9260 `cwnd += MTU` growth.
+    cwnd_ca_step: u32,
 }
 
 impl Default for TransportConfig {
@@ -87,6 +116,10 @@ impl Default for TransportConfig {
             timer_config: TimerConfig::default(),
             enable_zero_checksum: false,
             enable_rack: true,
+            rto_max: Duration::ZERO,
+            min_cwnd: 0,
+            fast_rtx_wnd: 0,
+            cwnd_ca_step: 0,
         }
     }
 }
@@ -161,6 +194,46 @@ impl TransportConfig {
         self
     }
 
+    /// Sets the upper bound of the retransmission timeout; zero keeps the default.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPRTOMax`: the RTO manager's estimate clamp, the
+    /// backoff ceiling, and the retransmission timers' exponential doubling are all capped by
+    /// this value. `Duration::ZERO` keeps the RFC 9260 recommended 60 s.
+    pub fn with_rto_max(mut self, value: Duration) -> Self {
+        self.rto_max = value;
+        self
+    }
+
+    /// Sets the congestion-window floor in bytes; zero keeps the RFC resets.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPMinCwnd`: with a non-zero value the congestion
+    /// window never drops below it — T3-rtx timeouts, fast-recovery resets and the initial
+    /// window are all raised to the floor. `0` preserves the previous behaviour exactly.
+    pub fn with_min_cwnd(mut self, value: u32) -> Self {
+        self.min_cwnd = value;
+        self
+    }
+
+    /// Sets the fast-retransmission bundling budget in bytes; zero keeps one MTU.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPFastRtxWnd`: the budget for a fast-retransmit
+    /// flight is `max(MTU, fast_rtx_wnd)` bytes. `0` preserves the previous MTU-sized
+    /// bundling exactly.
+    pub fn with_fast_rtx_wnd(mut self, value: u32) -> Self {
+        self.fast_rtx_wnd = value;
+        self
+    }
+
+    /// Sets the congestion-avoidance growth step in bytes; zero keeps `cwnd += MTU`.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPCwndCAStep`: each congestion-avoidance increase
+    /// grows the window by `max(MTU, cwnd_ca_step)` bytes. `0` preserves the previous
+    /// behaviour exactly.
+    pub fn with_cwnd_ca_step(mut self, value: u32) -> Self {
+        self.cwnd_ca_step = value;
+        self
+    }
+
     /// Overrides the retransmission limits; see [`TimerConfig`].
     pub fn with_timer_config(mut self, value: TimerConfig) -> Self {
         self.timer_config = value;
@@ -195,6 +268,38 @@ impl TransportConfig {
     /// The configured retransmission limits.
     pub fn timer_config(&self) -> TimerConfig {
         self.timer_config
+    }
+
+    /// The configured RTO ceiling. Zero means "not set".
+    pub fn rto_max(&self) -> Duration {
+        self.rto_max
+    }
+
+    /// The configured RTO ceiling in whole milliseconds, defaulting to 60 s when unset.
+    ///
+    /// This is the form the RTO arithmetic consumes: a set value below one
+    /// millisecond reads as 1 ms, not as the default.
+    pub(crate) fn rto_max_millis(&self) -> u64 {
+        if self.rto_max.is_zero() {
+            DEFAULT_RTO_MAX
+        } else {
+            (self.rto_max.as_millis() as u64).max(1)
+        }
+    }
+
+    /// The configured congestion-window floor in bytes; `0` means no floor.
+    pub fn min_cwnd(&self) -> u32 {
+        self.min_cwnd
+    }
+
+    /// The configured fast-retransmission bundling budget; `0` means one MTU.
+    pub fn fast_rtx_wnd(&self) -> u32 {
+        self.fast_rtx_wnd
+    }
+
+    /// The configured congestion-avoidance growth step; `0` means one MTU.
+    pub fn cwnd_ca_step(&self) -> u32 {
+        self.cwnd_ca_step
     }
 }
 
@@ -358,6 +463,25 @@ mod tests {
         let padded_chunk =
             (DATA_CHUNK_HEADER_SIZE + config.get_max_payload_size()).next_multiple_of(4);
         assert!(COMMON_HEADER_SIZE + padded_chunk <= INITIAL_MTU);
+    }
+
+    #[test]
+    fn sctp_tuning_knobs_default_to_the_previous_behaviour() {
+        // pion parity: every knob is opt-in, and 0/unset must reproduce the
+        // hard-coded values the association used before they existed.
+        let config = TransportConfig::default();
+        assert_eq!(config.rto_max(), Duration::ZERO);
+        assert_eq!(config.rto_max_millis(), DEFAULT_RTO_MAX);
+        assert_eq!(config.min_cwnd(), 0);
+        assert_eq!(config.fast_rtx_wnd(), 0);
+        assert_eq!(config.cwnd_ca_step(), 0);
+
+        // A set RTO ceiling below one millisecond must not round back up to
+        // the 60 s default.
+        let config = TransportConfig::default().with_rto_max(Duration::from_micros(500));
+        assert_eq!(config.rto_max_millis(), 1);
+        let config = TransportConfig::default().with_rto_max(Duration::from_secs(2));
+        assert_eq!(config.rto_max_millis(), 2000);
     }
 
     #[test]

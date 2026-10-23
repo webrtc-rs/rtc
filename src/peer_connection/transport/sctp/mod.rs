@@ -59,7 +59,28 @@ pub(crate) struct SctpTransport {
     // from SettingEngine.
     pub(crate) enable_zero_checksum: bool,
 
+    // SCTP congestion/timer tuning knobs forwarded from the setting engine
+    // (pion's SetSCTPRTOMax / SetSCTPMinCwnd / SetSCTPFastRtxWnd /
+    // SetSCTPCwndCAStep). `None` everywhere keeps the rtc-sctp defaults.
+    pub(crate) congestion: SctpCongestionControls,
+
     pub(crate) internal_buffer: Vec<u8>,
+}
+
+/// The four SCTP congestion/timer knobs a [`SettingEngine`](crate::peer_connection::configuration::setting_engine::SettingEngine)
+/// may override, forwarded verbatim into the association's
+/// [`TransportConfig`](sctp::TransportConfig). Every `None` keeps that knob's
+/// default, matching pion's "0 means default" convention.
+#[derive(Default, Clone, Copy, Debug)]
+pub(crate) struct SctpCongestionControls {
+    /// Upper bound of the retransmission timeout.
+    pub(crate) rto_max: Option<std::time::Duration>,
+    /// Congestion-window floor in bytes.
+    pub(crate) min_cwnd: Option<u32>,
+    /// Fast-retransmission burst budget in bytes; effective `max(MTU, n)`.
+    pub(crate) fast_rtx_wnd: Option<u32>,
+    /// Congestion-avoidance growth step in bytes; effective `max(MTU, n)`.
+    pub(crate) cwnd_ca_step: Option<u32>,
 }
 
 impl SctpTransport {
@@ -68,6 +89,7 @@ impl SctpTransport {
         max_receive_buffer_size: Option<u32>,
         mtu: Option<u32>,
         enable_zero_checksum: bool,
+        congestion: SctpCongestionControls,
         id: RTCTransportId,
         dtls_transport_id: RTCTransportId,
     ) -> Self {
@@ -84,6 +106,7 @@ impl SctpTransport {
             max_receive_buffer_size,
             mtu,
             enable_zero_checksum,
+            congestion,
             internal_buffer: vec![],
         }
     }
@@ -222,6 +245,18 @@ impl SctpTransport {
         if let Some(recv_buf) = self.max_receive_buffer_size {
             sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
         }
+        if let Some(rto_max) = self.congestion.rto_max {
+            sctp_transport_config = sctp_transport_config.with_rto_max(rto_max);
+        }
+        if let Some(min_cwnd) = self.congestion.min_cwnd {
+            sctp_transport_config = sctp_transport_config.with_min_cwnd(min_cwnd);
+        }
+        if let Some(fast_rtx_wnd) = self.congestion.fast_rtx_wnd {
+            sctp_transport_config = sctp_transport_config.with_fast_rtx_wnd(fast_rtx_wnd);
+        }
+        if let Some(cwnd_ca_step) = self.congestion.cwnd_ca_step {
+            sctp_transport_config = sctp_transport_config.with_cwnd_ca_step(cwnd_ca_step);
+        }
         if self.enable_zero_checksum {
             sctp_transport_config = sctp_transport_config.with_enable_zero_checksum(true);
         }
@@ -268,6 +303,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -290,6 +326,52 @@ mod tests {
     fn max_message_size_reports_the_negotiated_value_not_the_configured_one() {
         let transport = started_transport(SctpMaxMessageSize::Bounded(65536), 16384);
         assert_eq!(Some(16384), transport.max_message_size());
+    }
+
+    // The four pion SetSCTP* congestion/timer knobs must survive the trip from
+    // SettingEngineBuilder through start() into the association's
+    // TransportConfig (pion: sctptransport.go gatherOptions forwards each one
+    // only when set).
+    #[test]
+    fn sctp_congestion_knobs_flow_into_the_transport_config() {
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            false,
+            SctpCongestionControls {
+                rto_max: Some(std::time::Duration::from_secs(2)),
+                min_cwnd: Some(64 * 1024),
+                fast_rtx_wnd: Some(16 * 1024),
+                cwnd_ca_step: Some(8 * 1024),
+            },
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        let config = transport.sctp_transport_config.as_ref().unwrap();
+        assert_eq!(config.rto_max(), std::time::Duration::from_secs(2));
+        assert_eq!(config.min_cwnd(), 64 * 1024);
+        assert_eq!(config.fast_rtx_wnd(), 16 * 1024);
+        assert_eq!(config.cwnd_ca_step(), 8 * 1024);
+
+        // Unset knobs keep the defaults everywhere (pion forwards only the
+        // ones explicitly set; leaving the rest at 0 means "default").
+        let transport = started_transport(SctpMaxMessageSize::default(), 0);
+        let config = transport.sctp_transport_config.as_ref().unwrap();
+        assert_eq!(config.rto_max(), std::time::Duration::ZERO);
+        assert_eq!(config.min_cwnd(), 0);
+        assert_eq!(config.fast_rtx_wnd(), 0);
+        assert_eq!(config.cwnd_ca_step(), 0);
     }
 
     // The reverse direction, so the test cannot pass by simply echoing the remote's number.
@@ -325,6 +407,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -339,6 +422,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -356,6 +440,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -379,6 +464,7 @@ mod tests {
             Some(200_000),
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -408,6 +494,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -441,6 +528,7 @@ mod tests {
             None,
             Some(1500),
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );

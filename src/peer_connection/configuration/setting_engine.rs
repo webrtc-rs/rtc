@@ -398,6 +398,20 @@ pub struct SettingEngine {
     ///
     /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
     pub(crate) sctp_enable_zero_checksum: bool,
+    /// Upper bound of the SCTP retransmission timeout, as pion's
+    /// `SettingEngine.SetSCTPRTOMax`. `None` keeps the RFC 9260 default (60 s).
+    pub(crate) sctp_rto_max: Option<Duration>,
+    /// SCTP congestion-window floor in bytes, as pion's `SettingEngine.SetSCTPMinCwnd`.
+    /// `None` keeps the RFC 9260 congestion-control resets.
+    pub(crate) sctp_min_cwnd: Option<u32>,
+    /// SCTP fast-retransmission burst budget in bytes, as pion's
+    /// `SettingEngine.SetSCTPFastRtxWnd`; the effective budget is `max(MTU, n)`.
+    /// `None` keeps the one-MTU default.
+    pub(crate) sctp_fast_rtx_wnd: Option<u32>,
+    /// SCTP congestion-avoidance growth step in bytes, as pion's
+    /// `SettingEngine.SetSCTPCwndCAStep`; the effective step is `max(MTU, n)`.
+    /// `None` keeps the one-MTU default.
+    pub(crate) sctp_cwnd_ca_step: Option<u32>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1495,6 +1509,58 @@ impl SettingEngineBuilder {
     /// default, leave this unset.
     pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
         self.0.sctp_mtu = Some(mtu);
+        self
+    }
+
+    /// Sets the maximum SCTP retransmission timeout (pion's
+    /// `SettingEngine.SetSCTPRTOMax`).
+    ///
+    /// The RTO estimate clamp, the T3-rtx backoff ceiling and the retransmission
+    /// timers' exponential doubling are all capped by this value. The default
+    /// (leave unset) is the RFC 9260 recommendation of 60 s. Tuning this down
+    /// trades resilience on lossy, long-RTT paths for faster failure detection —
+    /// for example a 2 s ceiling fails a dead path after a handful of
+    /// retransmissions instead of backing off toward a minute.
+    pub fn with_sctp_rto_max(mut self, rto_max: Duration) -> Self {
+        self.0.sctp_rto_max = Some(rto_max);
+        self
+    }
+
+    /// Sets the minimum SCTP congestion window (pion's `SettingEngine.SetSCTPMinCwnd`).
+    ///
+    /// The congestion window never drops below this many bytes: the T3-rtx reset
+    /// (`cwnd = MTU`), the fast-recovery reset (`cwnd = ssthresh`) and the initial
+    /// window are all floored here. Leave unset for the RFC 9260 behaviour. Useful
+    /// on paths with a known bandwidth-delay product where collapsing to one MTU
+    /// starves the pipe and slow-start recovery costs seconds.
+    pub fn with_sctp_min_cwnd(mut self, min_cwnd: u32) -> Self {
+        self.0.sctp_min_cwnd = Some(min_cwnd);
+        self
+    }
+
+    /// Sets the SCTP fast-retransmission window (pion's
+    /// `SettingEngine.SetSCTPFastRtxWnd`).
+    ///
+    /// The total byte budget a single fast-retransmit burst may retransmit when
+    /// three gap reports mark chunks missing; the effective budget is
+    /// `max(MTU, fast_rtx_wnd)` and each packet within the burst is still
+    /// MTU-bounded. Leave unset for the one-MTU default, which retransmits at
+    /// most one packet's worth per fast-retransmit event.
+    pub fn with_sctp_fast_rtx_wnd(mut self, fast_rtx_wnd: u32) -> Self {
+        self.0.sctp_fast_rtx_wnd = Some(fast_rtx_wnd);
+        self
+    }
+
+    /// Sets the SCTP congestion-avoidance growth step (pion's
+    /// `SettingEngine.SetSCTPCwndCAStep`).
+    ///
+    /// Each congestion-avoidance round grows the congestion window by
+    /// `max(MTU, cwnd_ca_step)` bytes instead of one MTU. Leave unset for the
+    /// RFC 9260 `cwnd += MTU` growth. Larger steps probe for bandwidth faster
+    /// on high-BDP paths at the cost of being more aggressive toward the
+    /// network.
+    pub fn with_sctp_cwnd_ca_step(mut self, cwnd_ca_step: u32) -> Self {
+        self.0.sctp_cwnd_ca_step = Some(cwnd_ca_step);
         self
     }
 

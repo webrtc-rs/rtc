@@ -241,6 +241,14 @@ pub struct Association {
     partial_bytes_acked: u32,
     pub(crate) in_fast_recovery: bool,
     fast_recover_exit_point: u32,
+    /// Congestion-window floor (pion's `SetSCTPMinCwnd`); 0 keeps the RFC resets.
+    min_cwnd: u32,
+    /// Fast-retransmission bundling budget (pion's `SetSCTPFastRtxWnd`); the
+    /// effective budget is `max(mtu, fast_rtx_wnd)`.
+    fast_rtx_wnd: u32,
+    /// Congestion-avoidance growth step (pion's `SetSCTPCwndCAStep`); the
+    /// effective step is `max(mtu, cwnd_ca_step)`.
+    cwnd_ca_step: u32,
 
     // Chunks stored for retransmission
     stored_init: Option<ChunkInit>,
@@ -344,6 +352,9 @@ impl Default for Association {
             partial_bytes_acked: 0,
             in_fast_recovery: false,
             fast_recover_exit_point: 0,
+            min_cwnd: 0,
+            fast_rtx_wnd: 0,
+            cwnd_ca_step: 0,
 
             // Chunks stored for retransmission
             stored_init: None,
@@ -416,6 +427,9 @@ impl Association {
         // min > max) and overflowed near `u32::MAX`, both reachable through
         // `EndpointConfig::max_payload_size` and MTU-derived payload budgets.
         let cwnd = mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4));
+        // pion applies the minCwnd clamp to the initial window too
+        // (association.go newAssociation: setCWND(min32(4*MTU, ...))).
+        let cwnd = cwnd.max(config.min_cwnd());
         // RFC 4960 requires an unpredictable initial TSN. SCTP remains usable without an RTC
         // crypto provider, so this deliberately uses `rand`'s thread-local CSPRNG.
         let mut tsn = random::<u32>();
@@ -443,14 +457,18 @@ impl Association {
             my_max_num_inbound_streams: config.max_num_inbound_streams(),
             max_payload_size,
 
-            rto_mgr: RtoManager::new(),
-            timers: TimerTable::new(config.timer_config()),
+            rto_mgr: RtoManager::new(config.rto_max_millis()),
+            timers: TimerTable::new(config.timer_config(), config.rto_max_millis()),
 
             mtu,
             cwnd,
             remote_addr,
             local_addr,
             transport_protocol: protocol,
+
+            min_cwnd: config.min_cwnd(),
+            fast_rtx_wnd: config.fast_rtx_wnd(),
+            cwnd_ca_step: config.cwnd_ca_step(),
 
             my_verification_tag: local_aid,
             my_next_tsn: tsn,
@@ -487,6 +505,18 @@ impl Association {
         }
 
         this
+    }
+
+    /// pion's `setCWND`: every congestion-window write floors at the
+    /// configured `min_cwnd` (0 keeps the written value), so the window can
+    /// never drop below it — not on a T3-rtx reset, not in fast recovery, not
+    /// while growing.
+    fn set_cwnd(&mut self, cwnd: u32) {
+        self.cwnd = if cwnd < self.min_cwnd {
+            self.min_cwnd
+        } else {
+            cwnd
+        };
     }
 
     /// Returns application-facing event
@@ -2048,7 +2078,8 @@ impl Association {
             //      outstanding DATA chunk(s) acknowledged, and 2) the destination's
             //      path MTU.
             if !self.in_fast_recovery && !self.pending_queue.is_empty() {
-                self.cwnd += std::cmp::min(total_bytes_acked as u32, self.cwnd); // TCP way
+                let grown = self.cwnd + std::cmp::min(total_bytes_acked as u32, self.cwnd); // TCP way
+                self.set_cwnd(grown);
                 // self.cwnd += min32(uint32(total_bytes_acked), self.mtu) // SCTP way (slow)
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} acked={} (SS)",
@@ -2081,7 +2112,10 @@ impl Association {
             //      reset partial_bytes_acked to (partial_bytes_acked - cwnd).
             if self.partial_bytes_acked >= self.cwnd && !self.pending_queue.is_empty() {
                 self.partial_bytes_acked -= self.cwnd;
-                self.cwnd += self.mtu;
+                // pion's SetSCTPCwndCAStep: the growth step is max(MTU, step).
+                let step = self.mtu.max(self.cwnd_ca_step);
+                let grown = self.cwnd + step;
+                self.set_cwnd(grown);
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} acked={} (CA)",
                     self.side, self.cwnd, self.ssthresh, total_bytes_acked
@@ -2126,7 +2160,7 @@ impl Association {
                             self.in_fast_recovery = true;
                             self.fast_recover_exit_point = htna;
                             self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                            self.cwnd = self.ssthresh;
+                            self.set_cwnd(self.ssthresh);
                             self.partial_bytes_acked = 0;
                             self.will_retransmit_fast = true;
 
@@ -2589,6 +2623,9 @@ impl Association {
 
             let mut to_fast_retrans: Vec<ChunkPayloadData> = vec![];
             let mut fast_retrans_size = COMMON_HEADER_SIZE;
+            // pion's SetSCTPFastRtxWnd: the bundling budget for a fast-retransmit
+            // flight is max(MTU, fastRtxWnd) bytes.
+            let fast_rtx_wnd = self.mtu.max(self.fast_rtx_wnd);
 
             let mut i = 0;
             loop {
@@ -2644,7 +2681,7 @@ impl Association {
                     // decisions.
                     let data_chunk_size =
                         (DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32).next_multiple_of(4);
-                    if self.mtu < fast_retrans_size + data_chunk_size {
+                    if fast_rtx_wnd < fast_retrans_size + data_chunk_size {
                         break;
                     }
 
@@ -3541,7 +3578,7 @@ impl Association {
                 //      cwnd = 1*MTU
 
                 self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                self.cwnd = self.mtu;
+                self.set_cwnd(self.mtu);
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} inflight={} (RTO)",
                     self.side,

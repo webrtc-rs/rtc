@@ -120,6 +120,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the new `ErrNackInvalidSize` where the infallible `build` stays inert.
 - `rtc-rtp`: `Header::get_extension_payload`, the borrowed form of
   `Header::get_extension`.
+- `rtc-sctp` + `rtc`: four SCTP congestion/timer tuning knobs, mirroring pion's
+  `SettingEngine.SetSCTPRTOMax` / `SetSCTPMinCwnd` / `SetSCTPFastRtxWnd` / `SetSCTPCwndCAStep`.
+  `TransportConfig::{with_rto_max, with_min_cwnd, with_fast_rtx_wnd, with_cwnd_ca_step}`
+  (zero/unset = today's behaviour exactly: rto_max defaults to the RFC 9260 60 s, min_cwnd
+  keeps the `cwnd = MTU` / `cwnd = ssthresh` resets, fast_rtx_wnd keeps the one-MTU
+  fast-retransmit budget, cwnd_ca_step keeps `cwnd += MTU` in congestion avoidance), and
+  `SettingEngineBuilder::{with_sctp_rto_max, with_sctp_min_cwnd, with_sctp_fast_rtx_wnd,
+  with_sctp_cwnd_ca_step}` forwarding into the association's transport config. pion's
+  `TestRTOManager` and `TestRtxTimer` (rtx_timer_test.go) are ported, plus one behaviour
+  test per knob.
 - `rtc-interceptor`: `PacketDump`, the belt-shaped port of pion's `interceptor/pkg/packetdump`:
   one interceptor sees both directions and forwards every packet unchanged, while writing a
   line per RTP/RTCP packet through pluggable filters, formatters and a `PacketDumpSink`

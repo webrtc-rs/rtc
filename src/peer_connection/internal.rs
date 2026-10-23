@@ -152,6 +152,12 @@ impl RTCPeerConnection {
             setting_engine.sctp_max_receive_buffer_size,
             setting_engine.sctp_mtu,
             setting_engine.sctp_enable_zero_checksum,
+            SctpCongestionControls {
+                rto_max: setting_engine.sctp_rto_max,
+                min_cwnd: setting_engine.sctp_min_cwnd,
+                fast_rtx_wnd: setting_engine.sctp_fast_rtx_wnd,
+                cwnd_ca_step: setting_engine.sctp_cwnd_ca_step,
+            },
             sctp_transport_id,
             dtls_transport_id,
         );
@@ -1282,7 +1288,7 @@ impl RTCPeerConnection {
                 // https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
                 // Step 5.1
                 // if t.stopping && !t.stopped {
-                // 	return true
+                //      return true
                 // }
                 let m = transceiver
                     .mid()

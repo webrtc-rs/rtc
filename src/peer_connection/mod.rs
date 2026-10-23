@@ -293,6 +293,7 @@ use crate::peer_connection::transport::ice::IceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
+use crate::peer_connection::transport::sctp::SctpCongestionControls;
 use crate::peer_connection::transport::sctp::SctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
@@ -2680,6 +2681,7 @@ mod tests {
     use crate::peer_connection::transport::RTCIceComponent;
     use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
     use sctp::AssociationHandle;
+    use std::time::Duration;
 
     #[test]
     fn with_sctp_receive_buffer_size_sets_and_clamps() {
@@ -2706,6 +2708,30 @@ mod tests {
                 "input {input} should clamp up to the 1500-byte floor"
             );
         }
+    }
+
+    // The four pion SCTP congestion/timer setters land on the engine verbatim;
+    // the transport forwards them into the association's TransportConfig (see
+    // `sctp_congestion_knobs_flow_into_the_transport_config`).
+    #[test]
+    fn sctp_congestion_setters_land_on_the_setting_engine() {
+        let setting_engine = SettingEngineBuilder::new()
+            .with_sctp_rto_max(Duration::from_secs(2))
+            .with_sctp_min_cwnd(64 * 1024)
+            .with_sctp_fast_rtx_wnd(16 * 1024)
+            .with_sctp_cwnd_ca_step(8 * 1024)
+            .build();
+        assert_eq!(setting_engine.sctp_rto_max, Some(Duration::from_secs(2)));
+        assert_eq!(setting_engine.sctp_min_cwnd, Some(64 * 1024));
+        assert_eq!(setting_engine.sctp_fast_rtx_wnd, Some(16 * 1024));
+        assert_eq!(setting_engine.sctp_cwnd_ca_step, Some(8 * 1024));
+
+        // Everything unset stays None — "keep the default", pion's 0 convention.
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert_eq!(setting_engine.sctp_rto_max, None);
+        assert_eq!(setting_engine.sctp_min_cwnd, None);
+        assert_eq!(setting_engine.sctp_fast_rtx_wnd, None);
+        assert_eq!(setting_engine.sctp_cwnd_ca_step, None);
     }
 
     // The graph the spec exposes: `pc.sctp` is the only way in, and the rest is walked.

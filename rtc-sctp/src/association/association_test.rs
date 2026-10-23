@@ -1759,3 +1759,252 @@ fn test_max_tsn_offset_scales_with_the_receive_buffer_within_bounds() {
     assert_eq!(max_tsn_offset(512 * 1024), 512 * 1024 * 4 / 500);
     assert_eq!(max_tsn_offset(u32::MAX), 40000);
 }
+
+// ---------------------------------------------------------------------------
+// pion SettingEngine SCTP tuning knobs (issue #2 / pion SetSCTPRTOMax,
+// SetSCTPMinCwnd, SetSCTPFastRtxWnd, SetSCTPCwndCAStep). Each test proves the
+// knob changes behaviour; `sctp_tuning_knobs_default_to_the_previous_behaviour`
+// in config.rs and the tests above pin the defaults.
+// ---------------------------------------------------------------------------
+
+/// A T3-rtx timeout on an association with `min_cwnd` configured must reset
+/// the congestion window to the floor, not to one MTU (pion: `setCWND(MTU)`
+/// with the minCwnd clamp). The default association keeps `cwnd == mtu`.
+#[test]
+fn sctp_min_cwnd_floors_the_t3_timeout_reset() -> Result<()> {
+    let mut a = timed_test_association();
+    let mtu = a.mtu;
+    assert_eq!(
+        a.cwnd,
+        mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4))
+    );
+
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"x"), ppi)?;
+    a.gather_outbound(now);
+    let due = a.poll_timeout().unwrap(); // T3 armed by the in-flight chunk
+    a.handle_timeout(due);
+    assert_eq!(a.cwnd, mtu, "default: T3 resets cwnd to one MTU");
+
+    let floor = 8 * mtu;
+    let mut tuned = create_association(
+        TransportConfig::default()
+            .with_enable_rack(false)
+            .with_min_cwnd(floor),
+    );
+    tuned.control_queue.clear();
+    tuned.timers.stop(Timer::T1Init);
+    tuned.set_state(AssociationState::Established);
+    tuned.rwnd = 65536;
+    tuned.rto_mgr.set_rto(1000, true);
+    assert_eq!(tuned.cwnd, floor, "the initial window is clamped up too");
+    tuned
+        .open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"x"), ppi)?;
+    tuned.gather_outbound(now);
+    let due = tuned.poll_timeout().unwrap();
+    tuned.handle_timeout(due);
+    assert_eq!(tuned.cwnd, floor, "T3 reset must respect the floor");
+    Ok(())
+}
+
+/// Fast recovery's `cwnd = ssthresh` reset is floored as well: with
+/// `min_cwnd > ssthresh` the window stays at the floor when three gap reports
+/// trigger fast retransmission.
+#[test]
+fn sctp_min_cwnd_floors_the_fast_recovery_reset() -> Result<()> {
+    let mut a = timed_test_association();
+    let floor = 16 * a.mtu;
+    a.min_cwnd = floor;
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"lost"), ppi)?;
+    let old = transmitted_data(&a.gather_outbound(now).0).remove(0);
+    // Three later chunks, then three gap ACK reports marking `old` missing
+    // three times — the classic fast-retransmit trigger.
+    for _ in 0..3 {
+        a.stream(1)?
+            .write_sctp(now, &Bytes::from_static(b"recv"), ppi)?;
+    }
+    a.gather_outbound(now);
+    for end in 2..=4u16 {
+        a.handle_sack(
+            &ChunkSelectiveAck {
+                cumulative_tsn_ack: old.tsn - 1,
+                advertised_receiver_window_credit: 1 << 20,
+                gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                    start: 2,
+                    end,
+                }],
+                ..Default::default()
+            },
+            now + Duration::from_millis(50),
+        )?;
+    }
+    assert!(a.in_fast_recovery, "three gap reports enter fast recovery");
+    assert!(
+        a.ssthresh < floor,
+        "the floor must exceed the computed ssthresh"
+    );
+    assert_eq!(a.cwnd, floor, "fast recovery's cwnd = ssthresh is floored");
+    Ok(())
+}
+
+/// `cwnd_ca_step` grows the window by `max(MTU, step)` per congestion-avoidance
+/// round instead of one MTU (pion: `step := max(a.MTU(), a.cwndCAStep)`).
+#[test]
+fn sctp_cwnd_ca_step_grows_the_window_in_congestion_avoidance() -> Result<()> {
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+
+    let mut a = timed_test_association();
+    let mtu = a.mtu;
+    a.cwnd_ca_step = 4 * mtu;
+    // Congestion avoidance: ssthresh below cwnd, partial bytes already at the
+    // window, more data pending.
+    a.ssthresh = mtu;
+    a.cwnd = 2 * mtu;
+    a.partial_bytes_acked = 2 * mtu;
+    let first_tsn = a.my_next_tsn;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from(vec![0u8; 4 * mtu as usize]), ppi)?;
+    a.gather_outbound(now);
+    assert!(!a.pending_queue.is_empty(), "data remains pending");
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: first_tsn,
+            advertised_receiver_window_credit: 1 << 20,
+            ..Default::default()
+        },
+        now + Duration::from_millis(50),
+    )?;
+    assert_eq!(a.cwnd, 6 * mtu, "CA growth must use max(MTU, cwnd_ca_step)");
+
+    // Default: step 0 keeps the classic cwnd += MTU.
+    let mut a = timed_test_association();
+    a.ssthresh = mtu;
+    a.cwnd = 2 * mtu;
+    a.partial_bytes_acked = 2 * mtu;
+    let first_tsn = a.my_next_tsn;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from(vec![0u8; 4 * mtu as usize]), ppi)?;
+    a.gather_outbound(now);
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: first_tsn,
+            advertised_receiver_window_credit: 1 << 20,
+            ..Default::default()
+        },
+        now + Duration::from_millis(60),
+    )?;
+    assert_eq!(a.cwnd, 3 * mtu, "default CA growth is one MTU");
+    Ok(())
+}
+
+/// `fast_rtx_wnd` lifts the total bundling budget of a fast-retransmit burst
+/// from one MTU to `max(MTU, fast_rtx_wnd)` (pion:
+/// `fastRetransWnd := int(max(a.MTU(), a.fastRtxWnd))` — the burst budget;
+/// each packet inside the burst is still MTU-bounded, exactly as pion's
+/// MTU-bundling tracker and our `bundle_data_chunks_into_packets` do).
+#[test]
+fn sctp_fast_rtx_wnd_widens_the_fast_retransmission_bundle() -> Result<()> {
+    // Three missing chunks (sent once, three gap reports each): the flight
+    // retransmits as many of them as the budget allows.
+    let run = |fast_rtx_wnd: u32| -> Result<Vec<u32>> {
+        let mut a = timed_test_association();
+        a.fast_rtx_wnd = fast_rtx_wnd;
+        let now = Instant::now();
+        let ppi = PayloadProtocolIdentifier::Binary;
+        a.open_stream(1, ppi)?
+            .write_sctp(now, &Bytes::from(vec![0u8; 500]), ppi)?;
+        for _ in 0..7 {
+            a.stream(1)?
+                .write_sctp(now, &Bytes::from(vec![0u8; 500]), ppi)?;
+        }
+        let sent = transmitted_data(&a.gather_outbound(now).0);
+        assert_eq!(8, sent.len(), "cwnd admits the whole flight");
+        // The first three chunks go missing; three SACKs, each newly
+        // acknowledging one more of the landed chunks (only a SACK that
+        // newly acks something increments the miss indications), drive the
+        // missing chunks' miss count to three.
+        for end in 4..=6u16 {
+            a.handle_sack(
+                &ChunkSelectiveAck {
+                    cumulative_tsn_ack: sent[0].tsn - 1,
+                    advertised_receiver_window_credit: 1 << 20,
+                    gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                        start: 4,
+                        end,
+                    }],
+                    ..Default::default()
+                },
+                now + Duration::from_millis(50),
+            )?;
+        }
+        assert!(a.in_fast_recovery, "three gap reports enter fast recovery");
+        let flight = a.gather_outbound(now + Duration::from_millis(60));
+        Ok(transmitted_data(&flight.0).iter().map(|c| c.tsn).collect())
+    };
+
+    let mtu = create_association(TransportConfig::default().with_enable_rack(false)).mtu;
+    // Default budget = one MTU: 12 (common header) + 2 * 516 fits, the third
+    // chunk (1560 total) does not.
+    let retransmitted = run(0)?;
+    assert_eq!(
+        retransmitted.len(),
+        2,
+        "the default MTU budget admits only two of the three missing chunks"
+    );
+
+    // A four-MTU budget carries all three in the same burst.
+    let retransmitted = run(4 * mtu)?;
+    assert_eq!(
+        retransmitted.len(),
+        3,
+        "a 4*MTU budget bundles all three missing chunks into one burst"
+    );
+    Ok(())
+}
+
+/// `rto_max` caps the association's retransmission machinery: with a 2 s
+/// ceiling the RTO manager's backoff pins at 2 s and an armed T3 deadline is
+/// never more than 2 s out, while the default association keeps the RFC 60 s
+/// cap.
+#[test]
+fn sctp_rto_max_caps_association_timers() {
+    let mut a = create_association(
+        TransportConfig::default()
+            .with_enable_rack(false)
+            .with_rto_max(Duration::from_secs(2)),
+    );
+    a.control_queue.clear();
+    a.timers.stop(Timer::T1Init);
+    a.set_state(AssociationState::Established);
+    a.rwnd = 65536;
+    assert_eq!(a.rto_mgr.rto_max(), 2000);
+    assert_eq!(a.rto_mgr.get_rto(), 1000, "RTO.Initial before any RTT");
+
+    // Repeated T3 backoffs double the RTO up to the configured ceiling and
+    // never past it, however many timeouts pile up.
+    for expected in [2000, 2000, 2000, 2000, 2000] {
+        a.rto_mgr.backoff();
+        assert_eq!(expected, a.rto_mgr.get_rto());
+        let now = Instant::now();
+        a.timers.start(Timer::T3RTX, now, a.rto_mgr.get_rto());
+        assert!(
+            a.timers.get(Timer::T3RTX).unwrap() <= now + Duration::from_secs(2),
+            "the armed T3 deadline respects the 2 s ceiling"
+        );
+    }
+
+    // Default: the ceiling is the RFC 60 s, reached by enough backoffs.
+    let mut a = create_association(TransportConfig::default().with_enable_rack(false));
+    assert_eq!(a.rto_mgr.rto_max(), 60000);
+    for _ in 0..6 {
+        a.rto_mgr.backoff();
+    }
+    assert_eq!(60000, a.rto_mgr.get_rto());
+}

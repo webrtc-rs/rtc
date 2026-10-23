@@ -883,6 +883,7 @@ mod tests {
     };
     use crate::peer_connection::message::internal::DataChannelEvent;
     use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+    use crate::peer_connection::transport::sctp::SctpCongestionControls;
     use crate::peer_connection::transport::{RTCTransportId, TransportKind};
     use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
@@ -1268,6 +1269,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1838,6 +1840,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1904,6 +1907,7 @@ mod tests {
             None,
             None,
             false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
