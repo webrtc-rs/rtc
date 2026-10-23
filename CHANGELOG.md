@@ -80,6 +80,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sent): when a renegotiation stops announcing a receive track, its streams leave the
   interceptor chain, both events fire, and the transceiver can receive a later track with a
   fresh `OnTrack`.
+- `rtc-mdns`: the DNS-SD helper layer of pion/mdns v2.2.2 `dns_sd.go` and `records.go`
+  (issue #21), in the new public `dnssd` module: `ServiceInstance` with its
+  `service_instance_name()`/`service_name()` derivation, `escape_instance_name` /
+  `unescape_instance_name` / `parse_service_instance_name` (RFC 6763 §4.3), the
+  `validate_service_*`/`validate_instance_name` rules (RFC 6763 §7), the `TxtEntry`
+  key/value model with `new_txt_string`/`new_txt_binary`/`new_txt_flag` constructors and
+  `encode_txt_record_strings`/`decode_txt_record_strings`/`validate_txt_entries`
+  (RFC 6763 §6), and the crate-private PTR/SRV/TXT/A/AAAA record builders and parsers.
+  The 70 pion tests (`dns_sd_test.go`, `records_test.go`) are ported, plus byte-compat
+  vectors: nine records and record-sets packed by golang.org/x/net v0.35.0 `dns/dnsmessage`
+  (the version pion pins) are reproduced byte-for-byte, compression pointers included.
+  Known gap: TXT values that are not valid UTF-8 are rejected
+  (`ErrTXTValueNotUtf8`) rather than carried, because the crate's TXT wire type is
+  string-based (Go strings hold arbitrary bytes).
 - `rtc`: `RTCConfigurationBuilder::with_always_negotiate_data_channels` (pion's
   `AlwaysNegotiateDataChannels`): offer an `m=application` section before any data channel
   exists, so the first channel created later needs no renegotiation. `set_configuration` can

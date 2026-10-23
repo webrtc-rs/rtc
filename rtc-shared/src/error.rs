@@ -1787,6 +1787,51 @@ pub enum Error {
     /// MDNS: empty builder msg.
     #[error("mDNS: empty builder msg")]
     ErrEmptyBuilderMsg,
+    /// MDNS: invalid DNS-SD service name.
+    #[error("mDNS: invalid DNS-SD service name")]
+    ErrInvalidServiceName,
+    /// MDNS: service instance name exceeds 63 bytes.
+    #[error("mDNS: service instance name exceeds 63 bytes")]
+    ErrInstanceNameTooLong,
+    /// MDNS: service instance name must not be empty.
+    #[error("mDNS: service instance name must not be empty")]
+    ErrInstanceNameEmpty,
+    /// MDNS: service instance name contains ASCII control character.
+    #[error("mDNS: service instance name contains ASCII control character")]
+    ErrInstanceNameHasControl,
+    /// MDNS: TXT record string exceeds 255 bytes.
+    #[error("mDNS: TXT record string exceeds 255 bytes")]
+    ErrTXTStringTooLong,
+    /// MDNS: TXT record key must not be empty.
+    #[error("mDNS: TXT record key must not be empty")]
+    ErrTXTKeyEmpty,
+    /// MDNS: TXT record key must not contain '='.
+    #[error("mDNS: TXT record key must not contain '='")]
+    ErrTXTKeyHasEquals,
+    /// MDNS: TXT record key must be printable US-ASCII (0x20-0x7E).
+    #[error("mDNS: TXT record key must be printable US-ASCII (0x20-0x7E)")]
+    ErrTXTKeyNotASCII,
+    /// MDNS: TXT record keys must be unique (case-insensitive).
+    #[error("mDNS: TXT record keys must be unique (case-insensitive)")]
+    ErrTXTDuplicateKey,
+    /// MDNS: TXT value is not valid UTF-8; the wire layer encodes strings.
+    #[error("mDNS: TXT value is not valid UTF-8; the wire layer encodes strings")]
+    ErrTXTValueNotUtf8,
+    /// MDNS: resource body is not PTR.
+    #[error("mDNS: resource body is not PTR")]
+    ErrNotPTRResource,
+    /// MDNS: resource body is not SRV.
+    #[error("mDNS: resource body is not SRV")]
+    ErrNotSRVResource,
+    /// MDNS: resource body is not TXT.
+    #[error("mDNS: resource body is not TXT")]
+    ErrNotTXTResource,
+    /// MDNS: address is not IPv4.
+    #[error("mDNS: address is not IPv4")]
+    ErrNotIPv4Address,
+    /// MDNS: address is not IPv6.
+    #[error("mDNS: address is not IPv6")]
+    ErrNotIPv6Address,
 
     //RTC
     /// ErrConnectionClosed indicates an operation executed after connection

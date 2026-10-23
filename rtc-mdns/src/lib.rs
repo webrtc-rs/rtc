@@ -191,6 +191,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod config;
+pub mod dnssd;
 pub(crate) mod message;
 pub(crate) mod proto;
 pub(crate) mod socket;
