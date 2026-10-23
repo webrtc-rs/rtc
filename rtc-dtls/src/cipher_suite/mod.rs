@@ -4,6 +4,8 @@ pub mod cipher_suite_aes_128_ccm;
 pub mod cipher_suite_aes_128_gcm_sha256;
 /// Shared implementation for the AES-256-CBC-SHA suites.
 pub mod cipher_suite_aes_256_cbc_sha;
+/// Shared implementation for the AES-256-CCM suites.
+pub mod cipher_suite_aes_256_ccm;
 /// Shared implementation for the ChaCha20-Poly1305-SHA256 suites.
 pub mod cipher_suite_chacha20_poly1305_sha256;
 /// An ECDHE-ECDSA suite with AES-128, the pairing WebRTC normally negotiates.
@@ -11,12 +13,18 @@ pub mod cipher_suite_chacha20_poly1305_sha256;
 pub mod cipher_suite_tls_ecdhe_ecdsa_with_aes_128_ccm;
 /// An ECDHE-ECDSA suite with AES-128-CCM and a full 16-byte tag.
 pub mod cipher_suite_tls_ecdhe_ecdsa_with_aes_128_ccm8;
+/// `TLS_PSK_WITH_AES_128_CBC_SHA256` (RFC 5487), for pre-shared-key handshakes.
+pub mod cipher_suite_tls_psk_with_aes_128_cbc_sha256;
 /// `TLS_PSK_WITH_AES_128_CCM`, for pre-shared-key handshakes.
 pub mod cipher_suite_tls_psk_with_aes_128_ccm;
 /// `TLS_PSK_WITH_AES_128_CCM_8`, with a truncated 8-byte tag.
 pub mod cipher_suite_tls_psk_with_aes_128_ccm8;
 /// `TLS_PSK_WITH_AES_128_GCM_SHA256`, for pre-shared-key handshakes.
 pub mod cipher_suite_tls_psk_with_aes_128_gcm_sha256;
+/// `TLS_PSK_WITH_AES_256_CCM_8`, with a truncated 8-byte tag.
+pub mod cipher_suite_tls_psk_with_aes_256_ccm8;
+/// `TLS_PSK_WITH_CHACHA20_POLY1305_SHA256`, for pre-shared-key handshakes.
+pub mod cipher_suite_tls_psk_with_chacha20_poly1305_sha256;
 
 use crypto::RTCCryptoProvider;
 use crypto::{
@@ -34,9 +42,12 @@ use cipher_suite_aes_256_cbc_sha::*;
 use cipher_suite_chacha20_poly1305_sha256::*;
 use cipher_suite_tls_ecdhe_ecdsa_with_aes_128_ccm::*;
 use cipher_suite_tls_ecdhe_ecdsa_with_aes_128_ccm8::*;
+use cipher_suite_tls_psk_with_aes_128_cbc_sha256::*;
 use cipher_suite_tls_psk_with_aes_128_ccm::*;
 use cipher_suite_tls_psk_with_aes_128_ccm8::*;
 use cipher_suite_tls_psk_with_aes_128_gcm_sha256::*;
+use cipher_suite_tls_psk_with_aes_256_ccm8::*;
+use cipher_suite_tls_psk_with_chacha20_poly1305_sha256::*;
 
 // CipherSuiteID is an ID for our supported CipherSuites
 // Supported Cipher Suites
@@ -69,6 +80,12 @@ pub enum CipherSuiteId {
     Tls_Psk_With_Aes_128_Ccm_8 = 0xc0a8,
     /// `TLS_PSK_WITH_AES_128_GCM_SHA256` (`0x00a8`).
     Tls_Psk_With_Aes_128_Gcm_Sha256 = 0x00a8,
+    /// `TLS_PSK_WITH_AES_256_CCM_8` (`0xc0a9`, RFC 6655).
+    Tls_Psk_With_Aes_256_Ccm_8 = 0xc0a9,
+    /// `TLS_PSK_WITH_AES_128_CBC_SHA256` (`0x00ae`, RFC 5487).
+    Tls_Psk_With_Aes_128_Cbc_Sha256 = 0x00ae,
+    /// `TLS_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccab`, RFC 7905).
+    Tls_Psk_With_ChaCha20_Poly1305_Sha256 = 0xccab,
 
     // CHACHA20_POLY1305_SHA256
     /// `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256` (`0xcca8`).
@@ -110,6 +127,13 @@ impl fmt::Display for CipherSuiteId {
             CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256 => {
                 write!(f, "TLS_PSK_WITH_AES_128_GCM_SHA256")
             }
+            CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8 => write!(f, "TLS_PSK_WITH_AES_256_CCM_8"),
+            CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256 => {
+                write!(f, "TLS_PSK_WITH_AES_128_CBC_SHA256")
+            }
+            CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256 => {
+                write!(f, "TLS_PSK_WITH_CHACHA20_POLY1305_SHA256")
+            }
             CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
                 write!(f, "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256")
             }
@@ -143,6 +167,9 @@ impl From<u16> for CipherSuiteId {
             0xc0a4 => CipherSuiteId::Tls_Psk_With_Aes_128_Ccm,
             0xc0a8 => CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8,
             0x00a8 => CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256,
+            0xc0a9 => CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8,
+            0x00ae => CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256,
+            0xccab => CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256,
 
             // CHACHA20_POLY1305_SHA256
             0xcca8 => CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256,
@@ -177,6 +204,11 @@ impl From<&str> for CipherSuiteId {
             "TLS_PSK_WITH_AES_128_CCM" => CipherSuiteId::Tls_Psk_With_Aes_128_Ccm,
             "TLS_PSK_WITH_AES_128_CCM_8" => CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8,
             "TLS_PSK_WITH_AES_128_GCM_SHA256" => CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256,
+            "TLS_PSK_WITH_AES_256_CCM_8" => CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8,
+            "TLS_PSK_WITH_AES_128_CBC_SHA256" => CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256,
+            "TLS_PSK_WITH_CHACHA20_POLY1305_SHA256" => {
+                CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256
+            }
             "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256" => {
                 CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256
             }
@@ -197,6 +229,7 @@ impl CipherSuiteId {
             Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm_8 | Self::Tls_Psk_With_Aes_128_Ccm_8 => {
                 CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Ccm8)
             }
+            Self::Tls_Psk_With_Aes_256_Ccm_8 => CryptoAlgorithm::Aead(AeadAlgorithm::Aes256Ccm8),
             Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256
             | Self::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256
             | Self::Tls_Psk_With_Aes_128_Gcm_Sha256 => {
@@ -206,17 +239,25 @@ impl CipherSuiteId {
             | Self::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha => {
                 CryptoAlgorithm::Cbc(CbcAlgorithm::Aes256Cbc)
             }
+            Self::Tls_Psk_With_Aes_128_Cbc_Sha256 => CryptoAlgorithm::Cbc(CbcAlgorithm::Aes128Cbc),
             Self::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256
-            | Self::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
+            | Self::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256
+            | Self::Tls_Psk_With_ChaCha20_Poly1305_Sha256 => {
                 CryptoAlgorithm::Aead(AeadAlgorithm::ChaCha20Poly1305)
             }
             Self::Tls_Empty_Renegotiation_Info_Scsv | Self::Unsupported => return false,
         };
+        // The certificate-based AES-256-CBC-SHA suites MAC records with HMAC-SHA-1; every other
+        // suite — including the PSK CBC-SHA-256 one (RFC 5487), whose MAC is HMAC-SHA-256 — is
+        // covered by the global SHA-256 hash and HMAC checks below.
+        let mac_is_sha1 = matches!(
+            self,
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha | Self::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha
+        );
         crypto.supports(CryptoAlgorithm::Hash(HashAlgorithm::Sha256))
             && crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha256))
             && crypto.supports(record_algorithm)
-            && (!matches!(record_algorithm, CryptoAlgorithm::Cbc(_))
-                || crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1)))
+            && (!mac_is_sha1 || crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1)))
     }
 }
 
@@ -318,6 +359,15 @@ pub fn cipher_suite_for_id(id: CipherSuiteId) -> Result<Box<dyn CipherSuite>> {
         CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256 => {
             Ok(Box::<CipherSuiteTlsPskWithAes128GcmSha256>::default())
         }
+        CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8 => {
+            Ok(Box::new(new_cipher_suite_tls_psk_with_aes_256_ccm8()))
+        }
+        CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256 => {
+            Ok(Box::<CipherSuiteTlsPskWithAes128CbcSha256>::default())
+        }
+        CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256 => Ok(Box::new(
+            new_cipher_suite_tls_psk_with_chacha20_poly1305_sha256(),
+        )),
         CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
             Ok(Box::new(CipherSuiteChaCha20Poly1305Sha256::new(true)))
         }
@@ -351,8 +401,11 @@ fn all_cipher_suites() -> Vec<Box<dyn CipherSuite>> {
         Box::new(new_cipher_suite_tls_psk_with_aes_128_ccm()),
         Box::new(new_cipher_suite_tls_psk_with_aes_128_ccm8()),
         Box::<CipherSuiteTlsPskWithAes128GcmSha256>::default(),
+        Box::new(new_cipher_suite_tls_psk_with_aes_256_ccm8()),
+        Box::<CipherSuiteTlsPskWithAes128CbcSha256>::default(),
         Box::new(CipherSuiteChaCha20Poly1305Sha256::new(false)),
         Box::new(CipherSuiteChaCha20Poly1305Sha256::new(true)),
+        Box::new(new_cipher_suite_tls_psk_with_chacha20_poly1305_sha256()),
     ]
 }
 

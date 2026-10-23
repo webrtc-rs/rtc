@@ -17,6 +17,7 @@ const CCM_NONCE_LEN: usize = 12;
 
 type Aes128Ccm = Ccm<Aes128, U16, U12>;
 type Aes128Ccm8 = Ccm<Aes128, U8, U12>;
+type Aes256Ccm8 = Ccm<Aes256, U8, U12>;
 
 // SRTP counter mode (RFC 3711 section 4.1.1) is AES-CTR with a big-endian 128-bit counter.
 type Aes128Ctr<'a> = ctr::Ctr128BE<&'a Aes128>;
@@ -90,6 +91,9 @@ pub(crate) fn new_cbc(
     key: &[u8],
 ) -> Result<Box<dyn CbcCipher>, CryptoError> {
     match algorithm {
+        CbcAlgorithm::Aes128Cbc => Ok(Box::new(AesCbc {
+            key: ExpandedAesKey::new_128(key)?,
+        })),
         CbcAlgorithm::Aes256Cbc => Ok(Box::new(AesCbc {
             key: ExpandedAesKey::new_256(key)?,
         })),
@@ -100,14 +104,23 @@ pub(crate) fn new_ccm(
     algorithm: AeadAlgorithm,
     key: &[u8],
 ) -> Result<Box<dyn AeadCipher>, CryptoError> {
-    check_key_len(16, key.len())?;
     let cipher = match algorithm {
         AeadAlgorithm::Aes128Ccm => {
+            check_key_len(16, key.len())?;
             CommonCcm::Full(Aes128Ccm::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?)
         }
-        AeadAlgorithm::Aes128Ccm8 => CommonCcm::Short(
-            Aes128Ccm8::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
-        ),
+        AeadAlgorithm::Aes128Ccm8 => {
+            check_key_len(16, key.len())?;
+            CommonCcm::Short(
+                Aes128Ccm8::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
+            )
+        }
+        AeadAlgorithm::Aes256Ccm8 => {
+            check_key_len(32, key.len())?;
+            CommonCcm::Short256(
+                Aes256Ccm8::new_from_slice(key).map_err(|_| invalid_key(32, key.len()))?,
+            )
+        }
         _ => {
             return Err(CryptoError::UnsupportedAlgorithm(
                 crate::CryptoAlgorithm::Aead(algorithm),
@@ -118,14 +131,21 @@ pub(crate) fn new_ccm(
 }
 
 // Stores an expanded key inside an already boxed cipher object, avoiding another allocation in
-// every constructed state object. Only AES-256 is needed: `CbcAlgorithm` has a single variant,
-// and CTR now goes through the `ctr` crate.
+// every constructed state object.
 #[allow(clippy::large_enum_variant)]
 enum ExpandedAesKey {
+    Aes128(Aes128),
     Aes256(Aes256),
 }
 
 impl ExpandedAesKey {
+    fn new_128(key: &[u8]) -> Result<Self, CryptoError> {
+        check_key_len(16, key.len())?;
+        Ok(Self::Aes128(
+            Aes128::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
+        ))
+    }
+
     fn new_256(key: &[u8]) -> Result<Self, CryptoError> {
         check_key_len(32, key.len())?;
         Ok(Self::Aes256(
@@ -135,12 +155,14 @@ impl ExpandedAesKey {
 
     fn encrypt(&self, block: &mut [u8; AES_BLOCK_LEN]) {
         match self {
+            Self::Aes128(cipher) => cipher.encrypt_block(block.into()),
             Self::Aes256(cipher) => cipher.encrypt_block(block.into()),
         }
     }
 
     fn decrypt(&self, block: &mut [u8; AES_BLOCK_LEN]) {
         match self {
+            Self::Aes128(cipher) => cipher.decrypt_block(block.into()),
             Self::Aes256(cipher) => cipher.decrypt_block(block.into()),
         }
     }
@@ -233,16 +255,21 @@ impl CbcCipher for AesCbc {
     }
 }
 
+// The AES-256 variant is larger than the AES-128 ones, but as with `AesCtr` above the cipher
+// already lives behind one `Box<dyn AeadCipher>`; boxing it again would add a pointer chase to
+// every packet.
+#[allow(clippy::large_enum_variant)]
 enum CommonCcm {
     Full(Aes128Ccm),
     Short(Aes128Ccm8),
+    Short256(Aes256Ccm8),
 }
 
 impl AeadCipher for CommonCcm {
     fn tag_len(&self) -> usize {
         match self {
             Self::Full(_) => 16,
-            Self::Short(_) => 8,
+            Self::Short(_) | Self::Short256(_) => 8,
         }
     }
 
@@ -276,6 +303,16 @@ impl AeadCipher for CommonCcm {
                     .map_err(|_| CryptoError::AuthenticationFailed)?;
                 tag_out.copy_from_slice(&tag);
             }
+            Self::Short256(cipher) => {
+                let tag = cipher
+                    .encrypt_inout_detached(
+                        array_ref(nonce, invalid_nonce)?,
+                        aad,
+                        plaintext_and_ciphertext.into(),
+                    )
+                    .map_err(|_| CryptoError::AuthenticationFailed)?;
+                tag_out.copy_from_slice(&tag);
+            }
         }
         Ok(())
     }
@@ -299,6 +336,14 @@ impl AeadCipher for CommonCcm {
                 )
                 .map_err(|_| CryptoError::AuthenticationFailed),
             Self::Short(cipher) => cipher
+                .decrypt_inout_detached(
+                    array_ref(nonce, invalid_nonce)?,
+                    aad,
+                    ciphertext_and_plaintext.into(),
+                    array_ref(tag, tag_error)?,
+                )
+                .map_err(|_| CryptoError::AuthenticationFailed),
+            Self::Short256(cipher) => cipher
                 .decrypt_inout_detached(
                     array_ref(nonce, invalid_nonce)?,
                     aad,

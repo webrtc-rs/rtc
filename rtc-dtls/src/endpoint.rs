@@ -398,6 +398,9 @@ mod tests {
                 CipherSuiteId::Tls_Psk_With_Aes_128_Ccm
                     | CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8
                     | CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256
+                    | CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8
+                    | CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256
+                    | CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256
             )
         };
         if suites.iter().any(is_psk) {
@@ -556,6 +559,9 @@ mod tests {
             CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256,
             CipherSuiteId::Tls_Psk_With_Aes_128_Ccm,
             CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8,
+            CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8,
+            CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256,
+            CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256,
         ] {
             handshake_and_exchange(ring.clone(), aws.clone(), suite, &[suite])?;
             handshake_and_exchange(aws.clone(), ring.clone(), suite, &[suite])?;

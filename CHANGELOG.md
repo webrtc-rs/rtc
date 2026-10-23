@@ -80,6 +80,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom detector factories, `SetROC` burst-loss recovery, the 2^48/2^31 packet limits),
   truncated and crafted packets on both legs, the all-profiles `TestSrtpCipher` vector
   table, DTLS keying-material order, and Cryptex runtime flips on both legs.
+- `rtc-dtls`: three plain-PSK cipher suites, as in pion/dtls v3.1.15:
+  `TLS_PSK_WITH_AES_256_CCM_8` (`0xc0a9`, RFC 6655),
+  `TLS_PSK_WITH_AES_128_CBC_SHA256` (`0x00ae`, RFC 5487) and
+  `TLS_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccab`, RFC 7905); each negotiates with pion in
+  both directions over UDP and with rtc-dtls itself, with ring and with aws-lc-rs. The
+  identity cases of pion's `TestPSK` now cover the three new suites too, and pion-encrypted
+  records for them are decrypted as known-answer vectors. New public items: the three
+  `CipherSuiteId` variants, `CipherSuiteAes256Ccm`,
+  `CipherSuiteTlsPskWithAes128CbcSha256`, `CipherSuiteChaCha20Poly1305Sha256::new_psk`,
+  `CryptoCbcSuite`, and the `new_cipher_suite_tls_psk_with_*` constructors.
+- `rtc-crypto`: `AeadAlgorithm::Aes256Ccm8` and `CbcAlgorithm::Aes128Cbc`, implemented for both
+  providers (ring and aws-lc-rs) with NIST known-answer vectors and cross-provider
+  interoperability tests. `CryptoCcm` now selects the AES variant from the key length, as
+  pion's `aes.NewCipher` does; `CryptoCbc` is parameterized over the cipher and record-MAC
+  pairing, so AES-128-CBC with HMAC-SHA-256 (RFC 5487) sits beside AES-256-CBC with HMAC-SHA-1.
 - `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
 - `rtc-interceptor`: pion's interceptor test suite is ported (issue #15): the twcc recorder
   (full feedback content, rolling wrap, min input, counts, duplicates, short and reordered
@@ -115,6 +130,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rtc-shared`: H.266 error variants (`ErrH266*`).
 
 [RFC 9328]: https://datatracker.ietf.org/doc/html/rfc9328
+
+### Fixed
+- `rtc-dtls`: a PSK client with an empty identity was refused with
+  `ErrInvalidClientKeyExchange`; an empty identity is legal (pion's `TestPSK` "Client identity
+  empty" case) and now marshals as the two zero length bytes.
+- `rtc-dtls`: `ConfigBuilder::build` checked `ErrServerMustHaveCertificate` before
+  `ErrIdentityNoPsk`, so a server configured with an identity but no PSK and no certificate
+  reported the wrong error; as in pion's `validateConfig`, the identity-without-PSK check now
+  comes first (pion's `TestPSKConfiguration` "No PSK and identity specified" case).
 
 ### Changed (breaking, hence 0.22.0)
 - `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.

@@ -70,6 +70,7 @@ impl RTCCrypto for AwsLcRsCrypto {
                         | AeadAlgorithm::Aes256Gcm
                         | AeadAlgorithm::Aes128Ccm
                         | AeadAlgorithm::Aes128Ccm8
+                        | AeadAlgorithm::Aes256Ccm8
                         | AeadAlgorithm::ChaCha20Poly1305,
                 )
                 | CryptoAlgorithm::StreamCipher(
@@ -78,7 +79,7 @@ impl RTCCrypto for AwsLcRsCrypto {
                 | CryptoAlgorithm::BlockCipher(
                     BlockCipherAlgorithm::Aes128 | BlockCipherAlgorithm::Aes256,
                 )
-                | CryptoAlgorithm::Cbc(CbcAlgorithm::Aes256Cbc)
+                | CryptoAlgorithm::Cbc(CbcAlgorithm::Aes128Cbc | CbcAlgorithm::Aes256Cbc)
                 | CryptoAlgorithm::KeyExchange(
                     KeyExchangeAlgorithm::P256
                         | KeyExchangeAlgorithm::P384
@@ -142,7 +143,9 @@ impl RTCCrypto for AwsLcRsCrypto {
         key: &[u8],
     ) -> Result<Box<dyn AeadCipher>, CryptoError> {
         match algorithm {
-            AeadAlgorithm::Aes128Ccm | AeadAlgorithm::Aes128Ccm8 => common::new_ccm(algorithm, key),
+            AeadAlgorithm::Aes128Ccm | AeadAlgorithm::Aes128Ccm8 | AeadAlgorithm::Aes256Ccm8 => {
+                common::new_ccm(algorithm, key)
+            }
             AeadAlgorithm::Aes128Gcm => AwsLcRsAead::create(&aead::AES_128_GCM, key),
             AeadAlgorithm::Aes256Gcm => AwsLcRsAead::create(&aead::AES_256_GCM, key),
             AeadAlgorithm::ChaCha20Poly1305 => AwsLcRsAead::create(&aead::CHACHA20_POLY1305, key),

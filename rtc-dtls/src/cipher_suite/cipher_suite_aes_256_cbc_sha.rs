@@ -80,6 +80,7 @@ impl CipherSuite for CipherSuiteAes256CbcSha {
         if is_client {
             self.cbc = Some(CryptoCbc::new(
                 provider,
+                CryptoCbcSuite::Aes256CbcSha1,
                 &keys.client_write_key,
                 &keys.client_mac_key,
                 &keys.server_write_key,
@@ -88,6 +89,7 @@ impl CipherSuite for CipherSuiteAes256CbcSha {
         } else {
             self.cbc = Some(CryptoCbc::new(
                 provider,
+                CryptoCbcSuite::Aes256CbcSha1,
                 &keys.server_write_key,
                 &keys.server_mac_key,
                 &keys.client_write_key,

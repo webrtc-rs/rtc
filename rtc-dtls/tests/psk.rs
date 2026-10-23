@@ -75,6 +75,25 @@ fn test_psk_identities_are_exchanged() {
             b"id".to_vec(),
             CipherSuiteId::Tls_Psk_With_Aes_128_Ccm,
         ),
+        // The three plain-PSK suites of iamleson98/rtc#23.
+        (
+            "aes-256-ccm-8",
+            Some(b"hint".to_vec()),
+            b"id".to_vec(),
+            CipherSuiteId::Tls_Psk_With_Aes_256_Ccm_8,
+        ),
+        (
+            "aes-128-cbc-sha256",
+            Some(b"hint".to_vec()),
+            b"id".to_vec(),
+            CipherSuiteId::Tls_Psk_With_Aes_128_Cbc_Sha256,
+        ),
+        (
+            "chacha20-poly1305",
+            None,
+            b"id".to_vec(),
+            CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256,
+        ),
     ] {
         let (client_cb, client_seen) = expecting(Some(server_hint.clone().unwrap_or_default()));
         let (server_cb, server_seen) = expecting(Some(client_identity.clone()));

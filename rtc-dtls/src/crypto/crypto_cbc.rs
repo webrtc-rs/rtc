@@ -16,6 +16,35 @@ use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 use shared::error::*;
 
+/// The cipher and record-MAC pairing a CBC suite uses.
+///
+/// The certificate-based `AES_256_CBC_SHA` suites (RFC 5246) MAC with HMAC-SHA-1, while the
+/// pre-shared-key `TLS_PSK_WITH_AES_128_CBC_SHA256` (RFC 5487) pairs AES-128-CBC with HMAC-SHA-256
+/// and a 32-byte MAC key.
+#[derive(Clone, Copy)]
+pub enum CryptoCbcSuite {
+    /// AES-256-CBC with an HMAC-SHA-1 record MAC.
+    Aes256CbcSha1,
+    /// AES-128-CBC with an HMAC-SHA-256 record MAC.
+    Aes128CbcSha256,
+}
+
+impl CryptoCbcSuite {
+    fn cbc_algorithm(self) -> CbcAlgorithm {
+        match self {
+            Self::Aes256CbcSha1 => CbcAlgorithm::Aes256Cbc,
+            Self::Aes128CbcSha256 => CbcAlgorithm::Aes128Cbc,
+        }
+    }
+
+    fn mac_algorithm(self) -> HmacAlgorithm {
+        match self {
+            Self::Aes256CbcSha1 => HmacAlgorithm::Sha1,
+            Self::Aes128CbcSha256 => HmacAlgorithm::Sha256,
+        }
+    }
+}
+
 /// AES-CBC encryption with a separate HMAC for DTLS records, holding the per-direction keys.
 pub struct CryptoCbc {
     provider: Arc<dyn RTCCryptoProvider>,
@@ -25,15 +54,16 @@ pub struct CryptoCbc {
     /// slower on this path; see `rtc-srtp/benches/README.md` for the equivalent SRTP data.
     write_mac: Box<dyn Mac>,
     read_mac: Box<dyn Mac>,
+    mac_size: usize,
 }
 
 impl CryptoCbc {
     const BLOCK_SIZE: usize = 16;
-    const MAC_SIZE: usize = 20;
 
-    /// Builds the cipher from the local and remote keys and salts.
+    /// Builds the cipher from the local and remote keys and MAC keys.
     pub fn new(
         provider: Arc<dyn RTCCryptoProvider>,
+        suite: CryptoCbcSuite,
         local_key: &[u8],
         local_mac: &[u8],
         remote_key: &[u8],
@@ -41,27 +71,29 @@ impl CryptoCbc {
     ) -> Result<Self> {
         let local_cipher = provider
             .crypto()
-            .new_cbc(CbcAlgorithm::Aes256Cbc, local_key)
+            .new_cbc(suite.cbc_algorithm(), local_key)
             .map_err(crypto_error)?;
         let remote_cipher = provider
             .crypto()
-            .new_cbc(CbcAlgorithm::Aes256Cbc, remote_key)
+            .new_cbc(suite.cbc_algorithm(), remote_key)
             .map_err(crypto_error)?;
         // Key the record MACs once per epoch, alongside the ciphers.
         let write_mac = provider
             .crypto()
-            .new_hmac(HmacAlgorithm::Sha1, local_mac)
+            .new_hmac(suite.mac_algorithm(), local_mac)
             .map_err(crypto_error)?;
         let read_mac = provider
             .crypto()
-            .new_hmac(HmacAlgorithm::Sha1, remote_mac)
+            .new_hmac(suite.mac_algorithm(), remote_mac)
             .map_err(crypto_error)?;
+        let mac_size = read_mac.output_len();
         Ok(CryptoCbc {
             provider,
             local_cipher,
             write_mac,
             remote_cipher,
             read_mac,
+            mac_size,
         })
     }
 
@@ -149,12 +181,12 @@ impl CryptoCbc {
         let padding_valid = constant_time_eq(&decrypted[padding_start..], &expected_padding);
         decrypted.truncate(padding_start);
 
-        if decrypted.len() < Self::MAC_SIZE {
+        if decrypted.len() < self.mac_size {
             return Err(Error::ErrInvalidMac);
         }
 
-        let recv_mac = &decrypted[decrypted.len() - Self::MAC_SIZE..];
-        let decrypted = &decrypted[0..decrypted.len() - Self::MAC_SIZE];
+        let recv_mac = &decrypted[decrypted.len() - self.mac_size..];
+        let decrypted = &decrypted[0..decrypted.len() - self.mac_size];
         let mac = prf_mac(
             self.read_mac.as_mut(),
             h.epoch,
@@ -188,14 +220,22 @@ mod tests {
         let remote_mac = [0x44; 20];
         let sender = CryptoCbc::new(
             provider.clone(),
+            CryptoCbcSuite::Aes256CbcSha1,
             &local_key,
             &local_mac,
             &remote_key,
             &remote_mac,
         )
         .unwrap();
-        let receiver =
-            CryptoCbc::new(provider, &remote_key, &remote_mac, &local_key, &local_mac).unwrap();
+        let receiver = CryptoCbc::new(
+            provider,
+            CryptoCbcSuite::Aes256CbcSha1,
+            &remote_key,
+            &remote_mac,
+            &local_key,
+            &local_mac,
+        )
+        .unwrap();
         (sender, receiver)
     }
 

@@ -33,3 +33,42 @@ fn test_handshake_message_client_key_exchange() -> Result<()> {
 
     Ok(())
 }
+
+/// A PSK client may carry an empty identity (pion `TestPSK`, "Client identity empty"): the
+/// marshaled message is just the two zero length bytes, and it unmarshals back.
+#[test]
+fn test_handshake_message_client_key_exchange_empty_psk_identity() -> Result<()> {
+    let empty_identity = HandshakeMessageClientKeyExchange {
+        identity_hint: vec![],
+        public_key: vec![],
+    };
+
+    let mut raw = vec![];
+    {
+        let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+        empty_identity.marshal(&mut writer)?;
+    }
+    assert_eq!(raw, vec![0x00, 0x00], "an empty identity is a zero length");
+
+    let mut reader = BufReader::new(raw.as_slice());
+    let parsed = HandshakeMessageClientKeyExchange::unmarshal(&mut reader)?;
+    assert_eq!(parsed, empty_identity);
+
+    Ok(())
+}
+
+/// A message carrying both an identity and a public key is not one this crate can produce, and
+/// marshaling it stays an error.
+#[test]
+fn test_handshake_message_client_key_exchange_rejects_both_fields() -> Result<()> {
+    let both = HandshakeMessageClientKeyExchange {
+        identity_hint: vec![0x00, 0x01],
+        public_key: vec![0x02; 32],
+    };
+
+    let mut raw = vec![];
+    let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+    assert!(both.marshal(&mut writer).is_err());
+
+    Ok(())
+}
