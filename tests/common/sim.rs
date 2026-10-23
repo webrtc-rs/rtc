@@ -10,6 +10,7 @@ use bytes::BytesMut;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
+use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate, RTCIceCandidateInit,
@@ -44,6 +45,8 @@ pub struct Sim {
     candidates_exchanged: bool,
     /// While set, every datagram is dropped (a dead network path, as pion's vnet chunk filter).
     pub blackhole: bool,
+    /// Called with `(sent by a, datagram)` for every datagram; returning `true` drops it.
+    pub drop_if: Option<Box<dyn FnMut(bool, &[u8]) -> bool>>,
 }
 
 fn host_candidate(addr: SocketAddr) -> RTCIceCandidateInit {
@@ -84,6 +87,7 @@ impl Sim {
             now: Instant::now(),
             candidates_exchanged: false,
             blackhole: false,
+            drop_if: None,
         }
     }
 
@@ -93,9 +97,36 @@ impl Sim {
         self.negotiate_with(a_offers, false);
     }
 
+    /// A full offer/answer exchange from `a` to `b` and the candidates, without running the
+    /// network afterwards.
+    pub fn negotiate_without_waiting(&mut self) {
+        self.negotiate_edited_inner(true, false, |sdp| sdp, false);
+    }
+
     /// Like [`negotiate`](Self::negotiate); with `ice_restart` the offer restarts ICE and both
     /// sides learn each other's host candidate again for the new generation.
     pub fn negotiate_with(&mut self, a_offers: bool, ice_restart: bool) {
+        self.negotiate_edited(a_offers, ice_restart, |sdp| sdp);
+    }
+
+    /// Like [`negotiate_with`](Self::negotiate_with), delivering the offer to the answerer after
+    /// `edit_offer` rewrote its text (the offerer keeps the original as its local description).
+    pub fn negotiate_edited(
+        &mut self,
+        a_offers: bool,
+        ice_restart: bool,
+        edit_offer: impl FnOnce(String) -> String,
+    ) {
+        self.negotiate_edited_inner(a_offers, ice_restart, edit_offer, true);
+    }
+
+    fn negotiate_edited_inner(
+        &mut self,
+        a_offers: bool,
+        ice_restart: bool,
+        edit_offer: impl FnOnce(String) -> String,
+        run: bool,
+    ) {
         let now = self.now;
         {
             let (offerer, answerer) = if a_offers {
@@ -112,9 +143,11 @@ impl Sim {
                 .pc
                 .set_local_description(now, offer.clone())
                 .expect("set local offer");
+            let delivered = RTCSessionDescription::offer(edit_offer(offer.sdp.clone()))
+                .expect("the edited offer parses");
             answerer
                 .pc
-                .set_remote_description(now, offer)
+                .set_remote_description(now, delivered)
                 .expect("set remote offer");
             let answer = answerer.pc.create_answer(None).expect("create_answer");
             answerer
@@ -127,14 +160,29 @@ impl Sim {
                 .expect("set remote answer");
         }
         if !self.candidates_exchanged || ice_restart {
-            self.candidates_exchanged = true;
-            let (ca, cb) = (host_candidate(self.a.addr), host_candidate(self.b.addr));
-            self.a.pc.add_local_candidate(ca.clone()).unwrap();
-            self.b.pc.add_local_candidate(cb.clone()).unwrap();
-            self.a.pc.add_remote_candidate(cb).unwrap();
-            self.b.pc.add_remote_candidate(ca).unwrap();
+            self.exchange_candidates_now();
+            if run {
+                self.run_for(Duration::from_secs(1));
+            }
+        } else if run {
+            self.run_for(Duration::from_secs(1));
         }
+    }
+
+    /// Tells each side the other's host candidate and lets ICE, DTLS and SCTP run for a virtual
+    /// second. For a test that applied an offer and answer by hand.
+    pub fn exchange_candidates(&mut self) {
+        self.exchange_candidates_now();
         self.run_for(Duration::from_secs(1));
+    }
+
+    fn exchange_candidates_now(&mut self) {
+        self.candidates_exchanged = true;
+        let (ca, cb) = (host_candidate(self.a.addr), host_candidate(self.b.addr));
+        self.a.pc.add_local_candidate(ca.clone()).unwrap();
+        self.b.pc.add_local_candidate(cb.clone()).unwrap();
+        self.a.pc.add_remote_candidate(cb).unwrap();
+        self.b.pc.add_remote_candidate(ca).unwrap();
     }
 
     /// Moves datagrams, events and timers until nothing is left to do right now.
@@ -154,6 +202,11 @@ impl Sim {
                     moved = true;
                     // Datagrams for an address the other side does not own go nowhere.
                     if self.blackhole || msg.transport.peer_addr != dst.addr {
+                        continue;
+                    }
+                    if let Some(drop_if) = self.drop_if.as_mut()
+                        && drop_if(from_a, &msg.message)
+                    {
                         continue;
                     }
                     let _ = dst.pc.handle_read(TaggedBytesMut {

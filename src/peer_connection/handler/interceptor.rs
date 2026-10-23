@@ -1,5 +1,5 @@
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
@@ -9,7 +9,9 @@ use crate::peer_connection::message::internal::{
 };
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{find_fec_payload_type, find_rtx_payload_type};
-use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
+    RTCRtpCodingParameters, RTCRtpRtxParameters,
+};
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::{
     PayloadType, RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal,
@@ -27,6 +29,7 @@ use shared::error::{Error, Result};
 use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
+use unicase::UniCase;
 
 #[derive(Default)]
 pub(crate) struct InterceptorHandlerContext {
@@ -239,7 +242,10 @@ impl<'a> InterceptorHandler<'a> {
         if self.bind_undeclared_ssrc(now, ssrc, payload_type) {
             return;
         }
-        self.bind_by_rid(now, ssrc, payload_type, rtp_header);
+        if self.bind_by_rid(now, ssrc, payload_type, rtp_header) {
+            return;
+        }
+        self.bind_undeclared_by_payload_type(now, ssrc, payload_type);
     }
 
     /// RTX SSRC of one of this endpoint's receive codings (declared via
@@ -430,7 +436,55 @@ impl<'a> InterceptorHandler<'a> {
             return false;
         }
 
-        let Some(transceiver) = self.rtp_transceivers.first_mut() else {
+        self.bind_placeholder_receiver(now, 0, ssrc, payload_type)
+    }
+
+    /// For legacy clients that declare neither `a=ssrc` nor the `mid`/`rid` header extensions, in
+    /// a description with several media sections: the first section that offered the packet's
+    /// payload type is taken to carry the stream, as pion's `findMediaSectionByPayloadType`.
+    /// Only sections that declared no SSRC and no RID are candidates (their receiver holds an
+    /// empty placeholder track), and with the `mid` extension negotiated the stream is left to
+    /// the rid path: an ambiguous payload type would otherwise land on the wrong section.
+    fn bind_undeclared_by_payload_type(
+        &mut self,
+        now: Instant,
+        ssrc: SSRC,
+        payload_type: PayloadType,
+    ) -> bool {
+        let (_, mid_audio, mid_video) =
+            self.media_engine
+                .get_header_extension_id(RTCRtpHeaderExtensionCapability {
+                    uri: ::sdp::extmap::SDES_MID_URI.to_owned(),
+                });
+        if mid_audio || mid_video {
+            return false;
+        }
+        let Some(index) = self.rtp_transceivers.iter().position(|transceiver| {
+            transceiver.direction().has_recv()
+                && transceiver.receiver().as_ref().is_some_and(|receiver| {
+                    receiver.track().codings().is_empty()
+                        && receiver.get_coding_parameters().is_empty()
+                        && receiver
+                            .get_codec_preferences()
+                            .iter()
+                            .any(|codec| codec.payload_type == payload_type)
+                })
+        }) else {
+            return false;
+        };
+        self.bind_placeholder_receiver(now, index, ssrc, payload_type)
+    }
+
+    /// Binds `ssrc` to the receiver of transceiver `index`, whose track is a placeholder that
+    /// carries only the ids from the remote SDP, and fires `OnTrack`.
+    fn bind_placeholder_receiver(
+        &mut self,
+        now: Instant,
+        index: usize,
+        ssrc: SSRC,
+        payload_type: PayloadType,
+    ) -> bool {
+        let Some(transceiver) = self.rtp_transceivers.get_mut(index) else {
             return false;
         };
         // Get kind and mid before borrowing receiver mutably
@@ -483,12 +537,88 @@ impl<'a> InterceptorHandler<'a> {
 
         // Create inbound stream accumulator before firing OnOpen event
         // Note: undeclared SSRC case doesn't have RTX/FEC info
-        self.stats.get_or_create_inbound_rtp_streams(
-            ssrc, kind, &track_id, &mid, None, None,
-            0, // Undeclared SSRC is always for the first transceiver
+        self.stats
+            .get_or_create_inbound_rtp_streams(ssrc, kind, &track_id, &mid, None, None, index);
+
+        self.emit_on_open(now, index, track_id, stream_id, ssrc, None);
+        true
+    }
+
+    /// Simulcast retransmission: an unknown SSRC whose packets name the layer they repair with
+    /// the `repaired-rtp-stream-id` extension (RFC 8853) is that layer's RTX flow. The association
+    /// is recorded on the layer, so later packets are de-encapsulated into it, and the flow is
+    /// bound to the interceptors like a declared repair flow. A layer whose primary stream has not
+    /// been seen yet cannot be repaired, so the packet is dropped.
+    fn bind_repair_by_rrid(
+        &mut self,
+        ssrc: SSRC,
+        payload_type: PayloadType,
+        mid: &str,
+        rrid: &str,
+    ) -> bool {
+        let Some((id, transceiver)) = self
+            .rtp_transceivers
+            .iter_mut()
+            .enumerate()
+            .find(|(_, transceiver)| transceiver.mid().as_deref() == Some(mid))
+        else {
+            return false;
+        };
+        let kind = transceiver.kind();
+        let Some(receiver) = transceiver.receiver_mut() else {
+            return false;
+        };
+        let Some(codec) = receiver
+            .get_codec_preferences()
+            .iter()
+            .find(|codec| {
+                codec.payload_type == payload_type
+                    && UniCase::new(codec.rtp_codec.mime_type.as_str())
+                        == UniCase::new(MIME_TYPE_RTX)
+            })
+            .cloned()
+        else {
+            return false;
+        };
+
+        let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rrid) else {
+            return false;
+        };
+        let Some(primary_ssrc) = coding.ssrc else {
+            return false;
+        };
+        match coding.rtx.as_ref() {
+            Some(rtx) if rtx.ssrc == ssrc => return true,
+            Some(_) => return false,
+            None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
+        }
+
+        let parameters = receiver.get_parameters(self.media_engine);
+        RTCRtpReceiverInternal::interceptor_remote_stream_op(
+            self.interceptor,
+            true,
+            ssrc,
+            None,
+            None,
+            payload_type,
+            None,
+            None,
+            &codec.rtp_codec,
+            &parameters.rtp_parameters.header_extensions,
         );
 
-        self.emit_on_open(now, 0, track_id, stream_id, ssrc, None);
+        let track_id = receiver.track().track_id().to_owned();
+        self.stats
+            .get_or_create_inbound_rtp_streams(
+                primary_ssrc,
+                kind,
+                &track_id,
+                mid,
+                Some(ssrc),
+                None,
+                id,
+            )
+            .rtx_ssrc = Some(ssrc);
         true
     }
 
@@ -508,8 +638,7 @@ impl<'a> InterceptorHandler<'a> {
             return false;
         }
         if !rrid.is_empty() {
-            //TODO: Add support of handling repair rtp stream id (rrid) #12
-            return false;
+            return self.bind_repair_by_rrid(ssrc, payload_type, &mid, &rrid);
         }
 
         // If rtp header extension has valid mid, find receiver based on mid, instead of rid,
@@ -537,11 +666,18 @@ impl<'a> InterceptorHandler<'a> {
         let Some(codec) = receiver
             .get_codec_preferences()
             .iter()
-            .find(|codec| codec.payload_type == payload_type) //TODO: what about RTX/FEC stream?
+            .find(|codec| codec.payload_type == payload_type)
             .cloned()
         else {
             return false;
         };
+
+        // A retransmission that names its layer with `rid` instead of `rrid` (the extension is
+        // copied from the original packet) is a repair flow, not a new layer: taking it for the
+        // layer's primary stream would hand the layer to the RTX SSRC.
+        if UniCase::new(codec.rtp_codec.mime_type.as_str()) == UniCase::new(MIME_TYPE_RTX) {
+            return self.bind_repair_by_rrid(ssrc, payload_type, &mid, &rid);
+        }
 
         // Validate rid against SDP. If invalid then drop it.
         match receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
@@ -1548,5 +1684,253 @@ mod stream_binding_tests {
             recorder.bound_ssrcs(),
             "the layer and its retransmission stream are both real streams"
         );
+    }
+
+    /// A media engine with mid, rid and rrid negotiated (ids 1, 2 and 3), and a transceiver `0`
+    /// with one simulcast layer `h` whose SSRCs are not yet known.
+    fn rid_fixture() -> (MediaEngine, Vec<RTCRtpTransceiverInternal>) {
+        let mut media_engine = media_engine_with_rtx();
+        for (id, uri) in [
+            (1, ::sdp::extmap::SDES_MID_URI),
+            (2, ::sdp::extmap::SDES_RTP_STREAM_ID_URI),
+            (3, ::sdp::extmap::SDES_REPAIR_RTP_STREAM_ID_URI),
+        ] {
+            media_engine
+                .register_header_extension(
+                    RTCRtpHeaderExtensionCapability {
+                        uri: uri.to_owned(),
+                    },
+                    RtpCodecKind::Video,
+                    None,
+                )
+                .expect("register");
+            media_engine
+                .update_header_extension(id, uri, RtpCodecKind::Video)
+                .expect("negotiate");
+        }
+
+        let mut transceiver = RTCRtpTransceiverInternal::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            },
+        );
+        transceiver.set_mid("0".to_owned()).expect("mid");
+        let layer = RTCRtpCodingParameters {
+            rid: "h".to_owned(),
+            ssrc: None,
+            rtx: None,
+            fec: None,
+        };
+        {
+            let receiver = transceiver.receiver_mut().as_mut().unwrap();
+            receiver.set_coding_parameters(vec![layer.clone()]);
+            receiver.set_codec_preferences(vec![
+                codec(96, "video/VP8", ""),
+                codec(97, MIME_TYPE_RTX, "apt=96"),
+            ]);
+            receiver.set_track(MediaStreamTrack::new(
+                "stream".to_string(),
+                "track".to_string(),
+                "label".to_string(),
+                RtpCodecKind::Video,
+                vec![RTCRtpEncodingParameters {
+                    rtp_coding_parameters: layer,
+                    active: true,
+                    codec: RTCRtpCodec::default(),
+                    max_bitrate: 0,
+                    max_framerate: None,
+                    scale_resolution_down_by: None,
+                }],
+            ));
+        }
+        (media_engine, vec![transceiver])
+    }
+
+    /// Feeds one packet with the given extensions through the handler.
+    fn feed_with_extensions(
+        media_engine: &MediaEngine,
+        transceivers: &mut Vec<RTCRtpTransceiverInternal>,
+        interceptor: &mut Recorder,
+        ssrc: u32,
+        payload_type: u8,
+        extensions: &[(u8, &'static [u8])],
+    ) {
+        let mut stats = RTCStatsAccumulator::new();
+        let mut ctx = InterceptorHandlerContext {
+            is_dtls_handshake_complete: true,
+            ..Default::default()
+        };
+        let mut header = rtp::Header {
+            extension: true,
+            extension_profile: 0xBEDE,
+            payload_type,
+            sequence_number: 1,
+            timestamp: 12_345,
+            ssrc,
+            ..Default::default()
+        };
+        for (id, value) in extensions {
+            header
+                .set_extension(*id, Bytes::from_static(value))
+                .expect("extension");
+        }
+        let mut handler = InterceptorHandler::new(
+            &mut ctx,
+            transceivers,
+            media_engine,
+            interceptor,
+            &mut stats,
+        );
+        handler
+            .handle_read(TaggedRTCMessageInternal {
+                now: Instant::now(),
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp::Packet {
+                    header,
+                    payload: Bytes::from_static(&[0xDE, 0xAD]),
+                }))),
+            })
+            .expect("handle_read");
+    }
+
+    fn layer(transceivers: &mut [RTCRtpTransceiverInternal]) -> RTCRtpCodingParameters {
+        transceivers[0]
+            .receiver_mut()
+            .as_mut()
+            .unwrap()
+            .get_coding_parameters()[0]
+            .clone()
+    }
+
+    /// pion `TestPeerConnection_Simulcast_RTX`: the retransmission flow of a simulcast layer,
+    /// which names the layer with `repaired-rtp-stream-id`, is learned from its first packet,
+    /// bound to the interceptors, and resolves to the layer's primary stream so its packets are
+    /// de-encapsulated into it.
+    #[test]
+    fn a_repair_flow_named_by_rrid_is_learned_and_resolves_to_its_layer() {
+        let (media_engine, mut transceivers) = rid_fixture();
+        let recorder = Recorder::default();
+        let mut interceptor = recorder.clone();
+
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            1000,
+            96,
+            &[(1, b"0"), (2, b"h")],
+        );
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            2000,
+            97,
+            &[(1, b"0"), (3, b"h")],
+        );
+
+        assert_eq!(vec![1000, 2000], recorder.bound_ssrcs());
+        let layer = layer(&mut transceivers);
+        assert_eq!(layer.ssrc, Some(1000));
+        assert_eq!(layer.rtx.as_ref().map(|rtx| rtx.ssrc), Some(2000));
+
+        let receiver = transceivers[0].receiver().as_ref().unwrap();
+        assert_eq!(
+            resolve_rtx_primary(
+                receiver.get_coding_parameters(),
+                receiver.get_codec_preferences(),
+                2000,
+                97
+            ),
+            Some((1000, 96))
+        );
+    }
+
+    /// A retransmission whose packets carry the layer's `rid` (copied from the original) must not
+    /// take the layer over from its primary stream.
+    #[test]
+    fn a_retransmission_naming_its_layer_with_rid_does_not_replace_the_primary() {
+        let (media_engine, mut transceivers) = rid_fixture();
+        let recorder = Recorder::default();
+        let mut interceptor = recorder.clone();
+
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            1000,
+            96,
+            &[(1, b"0"), (2, b"h")],
+        );
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            2000,
+            97,
+            &[(1, b"0"), (2, b"h")],
+        );
+
+        let layer = layer(&mut transceivers);
+        assert_eq!(layer.ssrc, Some(1000), "the primary stream keeps the layer");
+        assert_eq!(layer.rtx.as_ref().map(|rtx| rtx.ssrc), Some(2000));
+    }
+
+    /// Before the layer's primary stream has been seen there is nothing to repair: the packet is
+    /// dropped and learns nothing.
+    #[test]
+    fn a_repair_flow_seen_before_its_layer_is_dropped() {
+        let (media_engine, mut transceivers) = rid_fixture();
+        let recorder = Recorder::default();
+        let mut interceptor = recorder.clone();
+
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            2000,
+            97,
+            &[(1, b"0"), (3, b"h")],
+        );
+
+        assert!(recorder.bound_ssrcs().is_empty());
+        let layer = layer(&mut transceivers);
+        assert!(layer.ssrc.is_none() && layer.rtx.is_none());
+    }
+
+    /// pion `TestPeerConnection_Simulcast_RTX`, the probe part: packets that do not name their
+    /// layer (padding only, no `mid`/`rid`) do not bind a stream; the first packet that does, does.
+    #[test]
+    fn packets_without_mid_and_rid_do_not_bind_a_simulcast_layer() {
+        let (media_engine, mut transceivers) = rid_fixture();
+        let recorder = Recorder::default();
+        let mut interceptor = recorder.clone();
+
+        for _ in 0..20 {
+            feed_with_extensions(
+                &media_engine,
+                &mut transceivers,
+                &mut interceptor,
+                1000,
+                96,
+                &[],
+            );
+        }
+        assert!(recorder.bound_ssrcs().is_empty());
+        assert!(layer(&mut transceivers).ssrc.is_none());
+
+        feed_with_extensions(
+            &media_engine,
+            &mut transceivers,
+            &mut interceptor,
+            1000,
+            96,
+            &[(1, b"0"), (2, b"h")],
+        );
+        assert_eq!(vec![1000], recorder.bound_ssrcs());
     }
 }

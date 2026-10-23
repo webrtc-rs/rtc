@@ -25,6 +25,7 @@ use crate::peer_connection::message::{
         TaggedRTCMessageInternal,
     },
 };
+use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -589,6 +590,17 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             close_errs.push(Error::new(format!("ice_transport: {err}")));
         }
          */
+
+        // The ICE transport is closed with the connection (W3C close() steps 8 to 10), and, as
+        // in pion, the application is told: it may be waiting for exactly this.
+        if self.ice_transport().ice_connection_state != RTCIceConnectionState::Closed {
+            self.ice_transport_mut().ice_connection_state = RTCIceConnectionState::Closed;
+            self.pipeline_context.event_outs.push_back(
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(
+                    RTCIceConnectionState::Closed,
+                ),
+            );
+        }
 
         self.update_connection_state(true);
 

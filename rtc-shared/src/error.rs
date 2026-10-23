@@ -1982,6 +1982,11 @@ pub enum Error {
     #[error("codec not found")]
     ErrCodecNotFound,
 
+    /// ErrCodecAlreadyRegistered is returned when a codec is registered with a payload type
+    /// another codec already uses
+    #[error("codec is already registered")]
+    ErrCodecAlreadyRegistered,
+
     /// ErrNoRemoteDescription indicates that an operation was rejected because
     /// the remote description is not set
     #[error("remote description is not set")]

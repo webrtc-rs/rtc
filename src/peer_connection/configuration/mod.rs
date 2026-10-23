@@ -229,6 +229,9 @@ pub(crate) mod rtp_header_encryption_policy;
 pub(crate) mod sdp_semantics;
 pub mod setting_engine;
 
+#[cfg(test)]
+mod pion_media_engine_test;
+
 pub use bundle_policy::RTCBundlePolicy;
 pub use ice_transport_policy::{ICEGatherPolicy, RTCIceTransportPolicy};
 pub use offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};

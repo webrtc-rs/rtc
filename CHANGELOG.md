@@ -33,7 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section 5.3); two ICE-lite peers now connect (the remote's lite flag reaches the ICE agent);
   writing RTCP before DTLS has connected returns `ErrDtlsTransportNotStarted`; a remote offer's
   codec order is kept for sections whose codec differs only in level, with equivalent payloads
-  keeping their identity.
+  keeping their identity; registering a codec on a payload type another codec holds returns
+  `ErrCodecAlreadyRegistered` (before, both were kept); flexfec detection ignores case; an offer
+  with several media sections and no `a=ssrc` no longer fails `set_local_description` (the first
+  packet is matched to its section by payload type, as pion does for legacy clients); the
+  retransmission flow of a simulcast layer that names the layer with `repaired-rtp-stream-id` is
+  now learned from its first packet, bound and de-encapsulated into the layer (before, every
+  such packet was dropped, so simulcast NACK recovery did nothing); `close()` moves the ICE
+  connection state to `closed` and reports it.
 - `rtc-ice`, from pion's current behaviour: connectivity checks carry the priority of a
   peer-reflexive candidate (RFC 8445 §7.1.1), and a peer-reflexive candidate takes the `PRIORITY`
   of the request that revealed it; TCP candidates sit 27 below UDP in type preference

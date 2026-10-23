@@ -995,8 +995,6 @@ impl RTCPeerConnection {
             self.close_remote_track(index);
         }
 
-        let only_one_rtp_transceiver = self.rtp_transceivers.len() == 1;
-
         for incoming_track in incoming_tracks.into_iter() {
             if let Some(transceiver) = self.rtp_transceivers.iter_mut().find(|transceiver| {
                 transceiver.mid().as_ref() == Some(&incoming_track.mid)
@@ -1079,10 +1077,13 @@ impl RTCPeerConnection {
                     //
                     // The bind happens once the codec is known, in the endpoint handler's
                     // `find_track_id_by_ssrc`.
-                } else if only_one_rtp_transceiver {
-                    // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
-                    // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
-                    // when received the first RTP packet. So, it is placeholder here.
+                } else {
+                    // No `a=ssrc` and no rid. With a single media rtp transceiver the ssrc doesn't
+                    // have to be declared; with several, a legacy client may still leave it out
+                    // and the first packet is matched to its section by payload type (pion's
+                    // `findMediaSectionByPayloadType`). Either way add a track with no codings:
+                    // the stream_id and track_id from the SDP are kept for the first RTP packet,
+                    // so it is a placeholder here.
                     receiver.set_track(MediaStreamTrack::new(
                         incoming_track.stream_id,
                         incoming_track.track_id,
@@ -1090,8 +1091,6 @@ impl RTCPeerConnection {
                         incoming_track.kind,
                         vec![], // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
                     ));
-                } else {
-                    return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                 }
 
                 receiver.set_coding_parameters(receive_codings);
