@@ -643,7 +643,7 @@ impl Header {
     pub fn set_extension(&mut self, id: u8, payload: Bytes) -> Result<()> {
         let payload_len = payload.len() as isize;
         if self.extension {
-            let extension_profile_len = match self.extension_profile {
+            match self.extension_profile {
                 EXTENSION_PROFILE_ONE_BYTE => {
                     if !(1..=14).contains(&id) {
                         return Err(Error::ErrRfc8285oneByteHeaderIdrange);
@@ -651,7 +651,6 @@ impl Header {
                     if payload_len > 16 {
                         return Err(Error::ErrRfc8285oneByteHeaderSize);
                     }
-                    1
                 }
                 EXTENSION_PROFILE_TWO_BYTE => {
                     if id < 1 {
@@ -660,67 +659,36 @@ impl Header {
                     if payload_len > 255 {
                         return Err(Error::ErrRfc8285twoByteHeaderSize);
                     }
-                    2
                 }
                 _ => {
                     if id != 0 {
                         return Err(Error::ErrRfc3550headerIdrange);
                     }
-                    0
                 }
-            };
+            }
 
-            let delta;
             // Update existing if it exists else add new extension
             if let Some(extension) = self
                 .extensions
                 .iter_mut()
                 .find(|extension| extension.id == id)
             {
-                delta = payload_len - extension.payload.len() as isize;
                 extension.payload = payload;
             } else {
-                delta = payload_len + extension_profile_len;
                 self.extensions.push(Extension { id, payload });
             }
-
-            match delta.cmp(&0) {
-                std::cmp::Ordering::Less => {
-                    self.extensions_padding =
-                        ((self.extensions_padding as isize - delta) % 4) as usize;
-                }
-                std::cmp::Ordering::Greater => {
-                    let extension_padding = (delta % 4) as usize;
-                    if self.extensions_padding < extension_padding {
-                        self.extensions_padding = (self.extensions_padding + 4) - extension_padding;
-                    } else {
-                        self.extensions_padding -= extension_padding
-                    }
-                }
-                _ => {}
-            }
+            // Pion pads to the next word boundary and nothing more; padding
+            // preserved from a parsed header no longer applies once it is edited.
+            self.extensions_padding = 0;
         } else {
             // No existing header extensions
             self.extension = true;
-            let mut extension_profile_len = 0;
             self.extension_profile = match payload_len {
-                0..=16 => {
-                    extension_profile_len = 1;
-                    EXTENSION_PROFILE_ONE_BYTE
-                }
-                17..=255 => {
-                    extension_profile_len = 2;
-                    EXTENSION_PROFILE_TWO_BYTE
-                }
+                0..=16 => EXTENSION_PROFILE_ONE_BYTE,
+                17..=255 => EXTENSION_PROFILE_TWO_BYTE,
                 _ => self.extension_profile,
             };
-
-            let extension_padding = (payload.len() + extension_profile_len) % 4;
-            if self.extensions_padding < extension_padding {
-                self.extensions_padding = self.extensions_padding + 4 - extension_padding;
-            } else {
-                self.extensions_padding -= extension_padding
-            }
+            self.extensions_padding = 0;
             self.extensions.push(Extension { id, payload });
         }
         Ok(())
@@ -777,7 +745,7 @@ impl Header {
                 .iter()
                 .position(|extension| extension.id == id)
             {
-                let extension = self.extensions.remove(index);
+                self.extensions.remove(index);
 
                 if self.extensions.is_empty() {
                     self.extension = false;
@@ -786,14 +754,7 @@ impl Header {
                     return Ok(());
                 }
 
-                let extension_profile_len = match self.extension_profile {
-                    EXTENSION_PROFILE_ONE_BYTE => 1,
-                    EXTENSION_PROFILE_TWO_BYTE => 2,
-                    _ => 0,
-                };
-
-                let extension_padding = (extension.payload.len() + extension_profile_len) % 4;
-                self.extensions_padding = (self.extensions_padding + extension_padding) % 4;
+                self.extensions_padding = 0;
 
                 Ok(())
             } else {

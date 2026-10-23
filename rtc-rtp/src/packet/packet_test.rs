@@ -1579,6 +1579,44 @@ fn test_deprecated_padding_size_field() -> Result<()> {
     Ok(())
 }
 
+// Found by a differential run against pion v1.10.6: switching profile after an
+// extension was set used to leave stale padding that marshaled an extra word.
+#[test]
+fn test_profile_switch_pads_like_pion() -> Result<()> {
+    use shared::marshal::Marshal;
+
+    let mut header = Header {
+        version: 2,
+        payload_type: 96,
+        sequence_number: 1,
+        timestamp: 2,
+        ssrc: 3,
+        ..Default::default()
+    };
+    header.set_extension(14, Bytes::from_static(&[0x98]))?;
+    header.set_extension_with_profile(
+        14,
+        Bytes::from_static(&[0xac, 0xbf, 0x7e, 0x7d]),
+        EXTENSION_PROFILE_TWO_BYTE,
+    )?;
+    let raw = header.marshal()?;
+    assert_eq!(
+        raw.as_ref(),
+        &[
+            0x90, 0x60, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0x10, 0x00, 0, 2, 0x0e, 4, 0xac, 0xbf, 0x7e,
+            0x7d, 0, 0
+        ][..]
+    );
+    assert_eq!(raw.len(), header.marshal_size());
+
+    // Deleting down to the last extension leaves no stale padding either.
+    header.set_extension(1, Bytes::from_static(&[1, 2, 3]))?;
+    header.del_extension(14)?;
+    let raw = header.marshal()?;
+    assert_eq!(raw.len(), 12 + 4 + 8);
+    Ok(())
+}
+
 // pion TestSetExtensionWithProfile.
 #[test]
 fn test_set_extension_with_profile() -> Result<()> {

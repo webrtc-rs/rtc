@@ -6,6 +6,8 @@ use shared::{
     marshal::{Marshal, MarshalSize},
 };
 
+/// Absolute capture time (and optional clock offset), for audio/video sync across relays.
+pub mod abs_capture_time_extension;
 /// Absolute send time, for one-way-delay based bandwidth estimation.
 pub mod abs_send_time_extension;
 /// Per-packet audio loudness and voice activity ([RFC 6464]).
@@ -20,6 +22,8 @@ pub mod video_orientation_extension;
 /// A generic RTP header extension.
 #[non_exhaustive]
 pub enum HeaderExtension {
+    /// The absolute-capture-time extension.
+    AbsCaptureTime(abs_capture_time_extension::AbsCaptureTimeExtension),
     /// The absolute-send-time extension.
     AbsSendTime(abs_send_time_extension::AbsSendTimeExtension),
     /// The audio-level extension.
@@ -46,6 +50,9 @@ impl HeaderExtension {
         use HeaderExtension::*;
 
         match self {
+            AbsCaptureTime(_) => {
+                "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time".into()
+            }
             AbsSendTime(_) => "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time".into(),
             AudioLevel(_) => "urn:ietf:params:rtp-hdrext:ssrc-audio-level".into(),
             PlayoutDelay(_) => "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay".into(),
@@ -61,8 +68,10 @@ impl HeaderExtension {
     pub fn is_same(&self, other: &Self) -> bool {
         use HeaderExtension::*;
         match (self, other) {
+            (AbsCaptureTime(_), AbsCaptureTime(_)) => true,
             (AbsSendTime(_), AbsSendTime(_)) => true,
             (AudioLevel(_), AudioLevel(_)) => true,
+            (PlayoutDelay(_), PlayoutDelay(_)) => true,
             (TransportCc(_), TransportCc(_)) => true,
             (VideoOrientation(_), VideoOrientation(_)) => true,
             (Custom { uri, .. }, Custom { uri: other_uri, .. }) => uri == other_uri,
@@ -75,6 +84,7 @@ impl MarshalSize for HeaderExtension {
     fn marshal_size(&self) -> usize {
         use HeaderExtension::*;
         match self {
+            AbsCaptureTime(ext) => ext.marshal_size(),
             AbsSendTime(ext) => ext.marshal_size(),
             AudioLevel(ext) => ext.marshal_size(),
             PlayoutDelay(ext) => ext.marshal_size(),
@@ -89,6 +99,7 @@ impl Marshal for HeaderExtension {
     fn marshal_to(&self, buf: &mut [u8]) -> Result<usize> {
         use HeaderExtension::*;
         match self {
+            AbsCaptureTime(ext) => ext.marshal_to(buf),
             AbsSendTime(ext) => ext.marshal_to(buf),
             AudioLevel(ext) => ext.marshal_to(buf),
             PlayoutDelay(ext) => ext.marshal_to(buf),
@@ -104,6 +115,7 @@ impl fmt::Debug for HeaderExtension {
         use HeaderExtension::*;
 
         match self {
+            AbsCaptureTime(ext) => f.debug_tuple("AbsCaptureTime").field(ext).finish(),
             AbsSendTime(ext) => f.debug_tuple("AbsSendTime").field(ext).finish(),
             AudioLevel(ext) => f.debug_tuple("AudioLevel").field(ext).finish(),
             PlayoutDelay(ext) => f.debug_tuple("PlayoutDelay").field(ext).finish(),
