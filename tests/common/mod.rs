@@ -1,4 +1,7 @@
 //! Shared helpers for the interop tests.
+#![allow(dead_code)]
+
+pub mod sim;
 
 /// Installs a process-wide rustls `CryptoProvider` if one is not already installed.
 ///

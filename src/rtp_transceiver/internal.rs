@@ -79,11 +79,10 @@ impl RTCRtpTransceiverInternal {
             } else {
                 None
             },
-            receiver: if init.direction.has_recv() {
-                Some(RTCRtpReceiverInternal::new(kind, vec![]))
-            } else {
-                None
-            },
+            // Always present, whatever the initial direction: a transceiver created `sendonly`
+            // (the local half of a `recvonly` offer, say) becomes able to receive when a later
+            // negotiation makes it `sendrecv`, and with no receiver it never could.
+            receiver: Some(RTCRtpReceiverInternal::new(kind, vec![])),
             direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],

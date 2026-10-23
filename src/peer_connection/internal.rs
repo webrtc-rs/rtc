@@ -999,17 +999,27 @@ impl RTCPeerConnection {
 
                     receive_codings.push(rtp_coding_parameters.clone());
 
-                    receiver.set_track(MediaStreamTrack::new(
-                        incoming_track.stream_id,
-                        incoming_track.track_id,
-                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                        incoming_track.kind,
-                        vec![RTCRtpEncodingParameters {
-                            rtp_coding_parameters,
-                            codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                            ..Default::default()
-                        }],
-                    ));
+                    // A renegotiation lists the tracks that were already there again. Replacing
+                    // the track would forget the codec it settled on, and the next packet would
+                    // bind the stream and fire `OnTrack` a second time (pion fires it once per
+                    // track).
+                    let already_established = receiver.track().track_id()
+                        == &incoming_track.track_id
+                        && receiver.track().stream_id() == &incoming_track.stream_id
+                        && receiver.track().ssrcs().eq([ssrc]);
+                    if !already_established {
+                        receiver.set_track(MediaStreamTrack::new(
+                            incoming_track.stream_id,
+                            incoming_track.track_id,
+                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                            incoming_track.kind,
+                            vec![RTCRtpEncodingParameters {
+                                rtp_coding_parameters,
+                                codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                                ..Default::default()
+                            }],
+                        ));
+                    }
 
                     // Deliberately no `interceptor_remote_streams_op` here. It bound nothing: that
                     // walks the track's codings and skips any whose codec does not resolve, and the

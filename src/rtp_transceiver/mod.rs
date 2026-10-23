@@ -252,15 +252,18 @@ impl RTCRtpTransceiver<'_> {
         }
     }
 
-    /// Returns the id of this transceiver's [`RTCRtpReceiver`], if it has one.
+    /// Returns the id of this transceiver's [`RTCRtpReceiver`], if its direction receives.
     ///
     /// [`RTCRtpReceiver`]: crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver
     pub fn receiver(&self) -> Option<RTCRtpReceiverId> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
         if self.peer_connection.rtp_transceivers[self.id]
-            .receiver()
-            .is_some()
+            .direction()
+            .has_recv()
+            && self.peer_connection.rtp_transceivers[self.id]
+                .receiver()
+                .is_some()
         {
             Some(RTCRtpReceiverId::from(self.id))
         } else {

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `rtc`, found by porting pion's `peerconnection_renegotiation_test.go` onto a deterministic
+  in-memory network: every renegotiation replaced the receive track of a stream it already knew,
+  so the next packet fired `OnTrack` again for the same track (it now fires once per track); a
+  transceiver created `sendonly` (the local half of a `recvonly` offer, or one the application
+  made) had no receiver, so when a later negotiation made it `sendrecv` it could never receive;
+  the receiver now always exists and `RTCRtpTransceiver::receiver()` reports it while the
+  direction receives.
 - `rtc`, from pion's `peerconnection_go_test.go`: a remote candidate of an unknown type or
   transport (`ssltcp`) failed `add_remote_candidate` and the whole `set_remote_description`; both
   now discard it with a warning, and a description fails only when no usable candidate is left.
