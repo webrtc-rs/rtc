@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rtc-ice`: ICE renomination (draft-thatcher-ice-renomination-01), as in pion: the controlling
+  agent can move a live call to another pair with `Agent::renominate_candidate`, optionally by
+  itself (`AgentConfig::automatic_renomination`: a direct path replacing a relayed one, an RTT
+  better by more than 10 ms, or a quality score better by 15 %). The controlled agent follows the
+  highest nomination value. New `AgentConfig` fields: `renomination`, `nomination_attribute`,
+  `automatic_renomination`, `enable_use_candidate_check_priority`, `tcp_priority_offset`,
+  `binding_request_handler` (an application hook that can take over pair selection), and
+  `CandidateRelayConfig::relay_protocol`. `Agent::set_remote_ice_lite` and a real lite selector
+  (two lite agents select the best pair themselves).
+- `rtc-rtp`: the abs-capture-time header extension (`AbsCaptureTimeExtension`).
+
+### Changed
+- `rtc-ice`, from pion's current behaviour: connectivity checks carry the priority of a
+  peer-reflexive candidate (RFC 8445 §7.1.1), and a peer-reflexive candidate takes the `PRIORITY`
+  of the request that revealed it; TCP candidates sit 27 below UDP in type preference
+  (`tcp_priority_offset`); relay candidates rank by the protocol used to reach the relay (UDP over
+  DTLS over TCP over TLS); nomination waits `>=` the acceptance minimum rather than `>`; a
+  controlled agent selects a pair nominated before its own check succeeded as soon as it does,
+  and stops answering every request with a check once connected; role conflicts follow
+  RFC 8445 §7.3.1.1 exactly (one side answers 487, the other switches) and a 487 response is
+  handled (role switch, new tiebreaker, pair re-queued).
+- `rtc-rtp`: header-extension padding after a profile switch or a delete now matches pion byte
+  for byte (found by a differential run against pion rtp v1.10.6).
+
 ### Fixed
 - `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
   negotiated media-only never opened, because the SCTP client side was started only by the

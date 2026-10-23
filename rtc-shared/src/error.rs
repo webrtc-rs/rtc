@@ -866,6 +866,22 @@ pub enum Error {
     #[error("lite agents must only use host candidates")]
     ErrLiteUsingNonHostCandidates,
 
+    /// Indicates that only the controlling agent can renominate a candidate pair.
+    #[error("only controlling agent can renominate")]
+    ErrOnlyControllingAgentCanRenominate,
+
+    /// Indicates that renomination was requested but is not enabled on the agent.
+    #[error("renomination is not enabled")]
+    ErrRenominationNotEnabled,
+
+    /// Indicates that an invalid nomination attribute type was provided.
+    #[error("invalid nomination attribute type")]
+    ErrInvalidNominationAttribute,
+
+    /// Indicates that the requested candidate pair does not exist.
+    #[error("candidate pair not found")]
+    ErrCandidatePairNotFound,
+
     /// Indicates that current ice agent supports Lite only
     #[error("lite support only")]
     ErrLiteSupportOnly,

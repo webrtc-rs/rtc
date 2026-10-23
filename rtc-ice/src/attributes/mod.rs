@@ -1,5 +1,7 @@
 /// `ICE-CONTROLLING` and `ICE-CONTROLLED`, which resolve role conflicts.
 pub mod control;
+/// The nomination attribute of draft-thatcher-ice-renomination.
+pub mod nomination;
 /// The `PRIORITY` attribute carried in connectivity checks.
 pub mod priority;
 /// The `USE-CANDIDATE` flag, by which the controlling agent nominates a pair.

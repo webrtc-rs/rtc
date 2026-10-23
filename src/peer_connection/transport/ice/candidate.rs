@@ -199,6 +199,12 @@ impl RTCIceCandidate {
                     base_config,
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
+                    relay_protocol: self
+                        .url
+                        .as_deref()
+                        .map(ice::candidate::candidate_relay::relay_protocol_from_url)
+                        .unwrap_or("udp")
+                        .to_owned(),
                     url: self.url.clone(),
                 };
                 config.new_candidate_relay()?

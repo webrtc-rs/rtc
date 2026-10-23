@@ -7,6 +7,53 @@ use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig
 use crate::candidate::{Candidate, unmarshal_candidate};
 use std::time::Instant;
 
+// A Binding request's PRIORITY is the candidate's own priority with the peer-reflexive type
+// preference (RFC 8445 §7.1.1), and the TCP offset applies to TCP transports only.
+#[test]
+fn test_prflx_priority_and_tcp_offset() {
+    let host = Candidate {
+        candidate_type: CandidateType::Host,
+        component: COMPONENT_RTP,
+        ..Default::default()
+    };
+    assert_eq!(2130706431, host.priority());
+    // 110 << 24 | host's low 24 bits
+    assert_eq!(
+        110 * (1 << 24) + 2130706431 % (1 << 24),
+        host.prflx_priority()
+    );
+
+    let tcp = Candidate {
+        network_type: NetworkType::Tcp4,
+        tcp_type: TcpType::Active,
+        ..host.clone()
+    };
+    // 126 - 27 for TCP host, 110 - 27 for TCP prflx
+    assert_eq!(99, tcp.type_preference(CandidateType::Host));
+    assert_eq!(83, tcp.type_preference(CandidateType::PeerReflexive));
+    assert_eq!(0, tcp.type_preference(CandidateType::Relay));
+    assert_eq!(
+        83 * (1 << 24) + tcp.priority() % (1 << 24),
+        tcp.prflx_priority()
+    );
+
+    let wide_gap = Candidate {
+        tcp_priority_offset: 50,
+        ..tcp
+    };
+    assert_eq!(76, wide_gap.type_preference(CandidateType::Host));
+}
+
+#[test]
+fn test_relay_protocol_from_url() {
+    use candidate_relay::relay_protocol_from_url as f;
+    assert_eq!("udp", f("turn:example.com:3478"));
+    assert_eq!("tcp", f("turn:example.com:3478?transport=tcp"));
+    assert_eq!("tls", f("turns:example.com:5349?transport=tcp"));
+    assert_eq!("dtls", f("turns:example.com:5349?transport=udp"));
+    assert_eq!("udp", f("garbage"));
+}
+
 #[test]
 fn test_candidate_priority() -> Result<()> {
     let tests = vec![
@@ -26,7 +73,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::Active,
                 ..Default::default()
             },
-            2128609279,
+            1675624447,
         ),
         (
             Candidate {
@@ -36,7 +83,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::Passive,
                 ..Default::default()
             },
-            2124414975,
+            1671430143,
         ),
         (
             Candidate {
@@ -46,7 +93,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::SimultaneousOpen,
                 ..Default::default()
             },
-            2120220671,
+            1667235839,
         ),
         (
             Candidate {
@@ -64,7 +111,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::SimultaneousOpen,
                 ..Default::default()
             },
-            1860173823,
+            1407188991,
         ),
         (
             Candidate {
@@ -74,7 +121,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::Active,
                 ..Default::default()
             },
-            1855979519,
+            1402994687,
         ),
         (
             Candidate {
@@ -84,7 +131,7 @@ fn test_candidate_priority() -> Result<()> {
                 tcp_type: TcpType::Passive,
                 ..Default::default()
             },
-            1851785215,
+            1398800383,
         ),
         (
             Candidate {
@@ -94,13 +141,24 @@ fn test_candidate_priority() -> Result<()> {
             },
             1694498815,
         ),
+        // The relay's local preference follows the protocol used to reach the relay.
         (
             Candidate {
                 candidate_type: CandidateType::Relay,
                 component: COMPONENT_RTP,
+                relay_local_preference: candidate_relay::relay_protocol_preference("udp"),
                 ..Default::default()
             },
-            16777215,
+            1023,
+        ),
+        (
+            Candidate {
+                candidate_type: CandidateType::Relay,
+                component: COMPONENT_RTP,
+                relay_local_preference: candidate_relay::relay_protocol_preference("tcp"),
+                ..Default::default()
+            },
+            511,
         ),
     ];
 

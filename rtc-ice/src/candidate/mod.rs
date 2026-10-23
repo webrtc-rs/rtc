@@ -151,6 +151,10 @@ impl fmt::Display for CandidateRelatedAddress {
     }
 }
 
+/// How far a TCP candidate's type preference sits below the UDP one by default (pion's
+/// `defaultTCPPriorityOffset`).
+pub const DEFAULT_TCP_PRIORITY_OFFSET: u16 = 27;
+
 #[derive(Default)]
 /// The fields common to every candidate type, used when constructing one.
 pub struct CandidateConfig {
@@ -195,6 +199,11 @@ pub struct Candidate {
 
     pub(crate) foundation_override: String,
     pub(crate) priority_override: u32,
+    /// Subtracted from the type preference of TCP candidates so UDP is preferred (pion's
+    /// `TCPPriorityOffset`); the agent sets it when the candidate is added.
+    pub(crate) tcp_priority_offset: u16,
+    /// A relay candidate's local preference, set from the protocol used to reach the relay.
+    pub(crate) relay_local_preference: u16,
 
     pub(crate) network: String,
 
@@ -221,6 +230,8 @@ impl Default for Candidate {
 
             foundation_override: String::new(),
             priority_override: 0,
+            tcp_priority_offset: DEFAULT_TCP_PRIORITY_OFFSET,
+            relay_local_preference: 0,
             network: String::new(),
 
             url: None,
@@ -330,9 +341,37 @@ impl Candidate {
         // candidates for a particular component for a particular data stream
         // that have the same type, the local preference MUST be unique for each
         // one.
-        (1 << 24) * u32::from(self.candidate_type().preference())
+        (1 << 24) * u32::from(self.type_preference(self.candidate_type()))
             + (1 << 8) * u32::from(self.local_preference())
             + (256 - u32::from(self.component()))
+    }
+
+    /// The type preference a candidate of `candidate_type` has on this candidate's transport:
+    /// the RFC 8445 §5.1.2.2 value, lowered by the TCP priority offset for TCP candidates.
+    /// Relay candidates (preference 0) are unaffected.
+    pub(crate) fn type_preference(&self, candidate_type: CandidateType) -> u16 {
+        let pref = candidate_type.preference();
+        if pref == 0 {
+            return 0;
+        }
+
+        if self.network_type.is_tcp() {
+            pref.saturating_sub(self.tcp_priority_offset)
+        } else {
+            pref
+        }
+    }
+
+    /// The value a Binding request sent from this candidate carries in its `PRIORITY`
+    /// attribute: the candidate's priority recomputed with the type preference of a
+    /// peer-reflexive candidate (RFC 8445 §7.1.1).
+    ///
+    /// The remote agent gives this priority to the peer-reflexive candidate it learns from the
+    /// request (§7.3.1.3); sending the candidate's own type preference would let that candidate
+    /// rank equal to the host candidate it was discovered through.
+    pub(crate) fn prflx_priority(&self) -> u32 {
+        (1 << 24) * u32::from(self.type_preference(CandidateType::PeerReflexive))
+            + self.priority() % (1 << 24)
     }
 
     /// Returns `Option<CandidateRelatedAddress>`.
@@ -477,6 +516,10 @@ impl Candidate {
 
     /// Returns the local preference for this candidate.
     pub fn local_preference(&self) -> u16 {
+        if self.candidate_type == CandidateType::Relay {
+            return self.relay_local_preference;
+        }
+
         if self.network_type().is_tcp() {
             // RFC 6544, section 4.2
             //
@@ -667,6 +710,7 @@ pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
                 rel_addr,
                 rel_port,
                 url: None,
+                relay_protocol: String::new(),
             };
             config.new_candidate_relay()
         }

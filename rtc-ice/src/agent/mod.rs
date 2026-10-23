@@ -10,6 +10,8 @@
 //! two must not agree — see [`Credentials`] and [`Agent::set_role`].
 #[cfg(test)]
 mod agent_test;
+#[cfg(test)]
+mod selection_test;
 
 /// Configuration for a new [`Agent`]: servers, timeouts and role.
 pub mod agent_config;
@@ -36,6 +38,8 @@ use stun::message::*;
 use stun::textattrs::*;
 use stun::xoraddr::*;
 
+use crate::attributes::nomination::{DEFAULT_NOMINATION_ATTRIBUTE, NominationAttribute};
+use crate::attributes::priority::PriorityAttr;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::{candidate_pair::*, *};
 use crate::mdns::{MulticastDnsMode, create_multicast_dns, generate_multicast_dns_name};
@@ -55,6 +59,10 @@ pub(crate) struct BindingRequest {
     pub(crate) transaction_id: TransactionId,
     pub(crate) destination: SocketAddr,
     pub(crate) is_use_candidate: bool,
+    /// Whether the request carried `ICE-CONTROLLING` (so a 487 tells us which role to take).
+    pub(crate) is_controlling: bool,
+    /// The renomination value this request carried, if any.
+    pub(crate) nomination_value: Option<u32>,
 }
 
 #[derive(Default, Clone)]
@@ -137,6 +145,8 @@ pub struct Agent {
     pub(crate) tie_breaker: u64,
     pub(crate) is_controlling: bool,
     pub(crate) lite: bool,
+    /// Whether signaling said the remote agent is ICE-lite (pion's `SetRemoteICELite`).
+    pub(crate) remote_lite: bool,
 
     pub(crate) start_time: Instant,
 
@@ -151,6 +161,18 @@ pub struct Agent {
     pub(crate) candidate_pairs: Vec<CandidatePair>,
     pub(crate) nominated_pair: Option<usize>,
     pub(crate) selected_pair: Option<usize>,
+
+    // Renomination (draft-thatcher-ice-renomination)
+    pub(crate) nomination_value_generator: Option<NominationValueGenerator>,
+    pub(crate) nomination_attribute: AttrType,
+    pub(crate) automatic_renomination: bool,
+    pub(crate) renomination_interval: Duration,
+    pub(crate) last_renomination_time: Option<Instant>,
+    /// Controlled side: the highest nomination value accepted so far.
+    pub(crate) last_nomination: Option<u32>,
+    pub(crate) enable_use_candidate_check_priority: bool,
+    pub(crate) tcp_priority_offset: u16,
+    pub(crate) binding_request_handler: Option<BindingRequestHandler>,
 
     // LRU of outbound Binding request Transaction IDs
     pub(crate) pending_binding_requests: Vec<BindingRequest>,
@@ -240,6 +262,10 @@ impl Agent {
             None
         });
 
+        if config.nomination_attribute == Some(0) {
+            return Err(Error::ErrInvalidNominationAttribute);
+        }
+
         let candidate_types = if config.candidate_types.is_empty() {
             default_candidate_types()
         } else {
@@ -263,8 +289,26 @@ impl Agent {
             tie_breaker,
             is_controlling: config.is_controlling,
             lite: config.lite,
+            remote_lite: false,
 
             start_time: now,
+
+            nomination_value_generator: config.renomination.clone(),
+            nomination_attribute: config
+                .nomination_attribute
+                .map_or(DEFAULT_NOMINATION_ATTRIBUTE, AttrType),
+            automatic_renomination: config.automatic_renomination.is_some(),
+            renomination_interval: match config.automatic_renomination {
+                Some(interval) if !interval.is_zero() => interval,
+                _ => DEFAULT_RENOMINATION_INTERVAL,
+            },
+            last_renomination_time: None,
+            last_nomination: None,
+            enable_use_candidate_check_priority: config.enable_use_candidate_check_priority,
+            binding_request_handler: config.binding_request_handler.clone(),
+            tcp_priority_offset: config
+                .tcp_priority_offset
+                .unwrap_or(DEFAULT_TCP_PRIORITY_OFFSET),
 
             nominated_pair: None,
             selected_pair: None,
@@ -386,6 +430,8 @@ impl Agent {
 
     /// Adds a new local candidate.
     pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<bool> {
+        c.tcp_priority_offset = self.tcp_priority_offset;
+
         // Filter by network type if network_types is configured
         if !self.network_types.is_empty() {
             let candidate_network_type = c.network_type();
@@ -564,7 +610,26 @@ impl Agent {
     ///
     /// Determined by which side offered; the two agents must not agree, or nomination stalls.
     pub fn set_role(&mut self, is_controlling: bool) {
+        self.apply_role(is_controlling);
+    }
+
+    /// Signals whether the remote agent is ICE-lite, as its SDP says (pion's `SetRemoteICELite`).
+    ///
+    /// Call this before starting connectivity checks. Remote agents are assumed to run full ICE
+    /// by default. A lite agent facing another lite agent has nobody to run checks with, so it
+    /// selects the best available pair directly.
+    pub fn set_remote_ice_lite(&mut self, lite: bool) {
+        self.remote_lite = lite;
+        self.request_connectivity_check();
+    }
+
+    /// Takes `is_controlling` and recomputes every pair's priority, which depends on the role.
+    pub(crate) fn apply_role(&mut self, is_controlling: bool) {
         self.is_controlling = is_controlling;
+        for pair in &mut self.candidate_pairs {
+            pair.ice_role_controlling = is_controlling;
+        }
+        self.nominated_pair = None;
     }
 
     /// The agent's current connection state.
@@ -1068,11 +1133,19 @@ impl Agent {
 
         self.invalidate_pending_binding_requests(now);
 
+        let mut nomination = NominationAttribute::default();
+        let nomination_value = nomination
+            .get_from_with_type(m, self.nomination_attribute)
+            .ok()
+            .map(|()| nomination.value);
+
         self.pending_binding_requests.push(BindingRequest {
             timestamp: now,
             transaction_id: m.transaction_id,
             destination: self.remote_candidates[remote_index].addr(),
             is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
+            is_controlling: m.contains(ATTR_ICE_CONTROLLING),
+            nomination_value,
         });
 
         // Track request sent on the candidate pair
@@ -1176,22 +1249,16 @@ impl Agent {
     /// Switches the ICE agent role and recomputes all candidate pair priorities.
     /// RFC 8445 Section 7.3.1.1
     pub(crate) fn switch_role(&mut self, now: Instant) {
-        self.is_controlling = !self.is_controlling;
-
-        // Recompute priorities for all candidate pairs
-        // The priority calculation depends on ice_role_controlling
-        for pair in &mut self.candidate_pairs {
-            pair.ice_role_controlling = self.is_controlling;
-        }
-
-        // Clear nominated pair when switching roles
-        self.nominated_pair = None;
+        self.apply_role(!self.is_controlling);
 
         info!(
             "[{}]: Role switched, recomputed {} candidate pair priorities",
             self.get_name(),
             self.candidate_pairs.len()
         );
+
+        // A new role means a new selector: it starts afresh, as pion's `setSelector` does.
+        self.start(now);
 
         self.event_outs.push_back(TaggedEvent {
             now,
@@ -1261,7 +1328,8 @@ impl Agent {
         if m.typ.method != METHOD_BINDING
             || !(m.typ.class == CLASS_SUCCESS_RESPONSE
                 || m.typ.class == CLASS_REQUEST
-                || m.typ.class == CLASS_INDICATION)
+                || m.typ.class == CLASS_INDICATION
+                || m.typ.class == CLASS_ERROR_RESPONSE)
         {
             trace!(
                 "[{}]: unhandled STUN from {} to {} class({}) method({})",
@@ -1274,99 +1342,16 @@ impl Agent {
             return Err(Error::ErrUnhandledStunpacket);
         }
 
-        // RFC 8445 Section 7.3.1.1 - Detecting and Repairing Role Conflicts
-        if self.is_controlling {
-            if m.contains(ATTR_ICE_CONTROLLING) {
-                // Both agents are controlling - role conflict detected
-                let mut remote_controlling = crate::attributes::control::AttrControlling::default();
-                if let Err(err) = remote_controlling.get_from(m) {
-                    warn!(
-                        "[{}]: Failed to get remote ICE-CONTROLLING attribute: {}",
-                        self.get_name(),
-                        err
-                    );
-                    return Err(err);
-                }
-
-                debug!(
-                    "[{}]: Role conflict detected (both controlling), local tiebreaker: {}, remote tiebreaker: {}",
-                    self.get_name(),
-                    self.tie_breaker,
-                    remote_controlling.0
-                );
-
-                // Only process if this is a request (not a response)
-                if m.typ.class == CLASS_REQUEST {
-                    // Send 487 Role Conflict error
-                    if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
-                        self.send_role_conflict_error(now, m, local_index, remote_index);
-                    }
-
-                    // Compare tiebreakers - if ours is smaller, we switch to controlled
-                    if self.tie_breaker < remote_controlling.0 {
-                        info!(
-                            "[{}]: Switching from controlling to controlled due to role conflict (smaller tiebreaker)",
-                            self.get_name()
-                        );
-                        self.switch_role(now);
-                    }
-                }
-                // Continue processing the message after handling role conflict
-            } else if m.contains(ATTR_USE_CANDIDATE) {
-                debug!(
-                    "[{}]: useCandidate && a.isControlling == true",
-                    self.get_name(),
-                );
-                return Err(Error::ErrUnexpectedStunrequestMessage);
-            }
-        } else if m.contains(ATTR_ICE_CONTROLLED) {
-            // Both agents are controlled - role conflict detected
-            let mut remote_controlled = crate::attributes::control::AttrControlled::default();
-            if let Err(err) = remote_controlled.get_from(m) {
-                warn!(
-                    "[{}]: Failed to get remote ICE-CONTROLLED attribute: {}",
-                    self.get_name(),
-                    err
-                );
-                return Err(err);
-            }
-
-            debug!(
-                "[{}]: Role conflict detected (both controlled), local tiebreaker: {}, remote tiebreaker: {}",
-                self.get_name(),
-                self.tie_breaker,
-                remote_controlled.0
-            );
-
-            // Only process if this is a request (not a response)
-            if m.typ.class == CLASS_REQUEST {
-                // Send 487 Role Conflict error
-                if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
-                    self.send_role_conflict_error(now, m, local_index, remote_index);
-                }
-
-                // Compare tiebreakers - if ours is larger, we switch to controlling
-                if self.tie_breaker > remote_controlled.0 {
-                    info!(
-                        "[{}]: Switching from controlled to controlling due to role conflict (larger tiebreaker)",
-                        self.get_name()
-                    );
-                    self.switch_role(now);
-                }
-            }
-            // Continue processing the message after handling role conflict
-        }
-
-        let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
-            debug!(
-                "[{}]: ufrag_pwd.remote_credentials.is_none",
-                self.get_name(),
-            );
-            return Err(Error::ErrPasswordEmpty);
-        };
-
         let mut remote_candidate_index = self.find_remote_candidate(remote_addr);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
+            let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+                debug!(
+                    "[{}]: ufrag_pwd.remote_credentials.is_none",
+                    self.get_name(),
+                );
+                return Err(Error::ErrPasswordEmpty);
+            };
+
             if let Err(err) = assert_inbound_message_integrity(
                 m,
                 remote_credentials.pwd.as_bytes(),
@@ -1392,93 +1377,292 @@ impl Agent {
                 return Err(Error::ErrUnhandledStunpacket);
             }
         } else if m.typ.class == CLASS_REQUEST {
-            {
-                let username = self.ufrag_pwd.local_credentials.ufrag.clone()
-                    + ":"
-                    + remote_credentials.ufrag.as_str();
-                if let Err(err) = assert_inbound_username(m, &username) {
-                    warn!(
-                        "[{}]: discard message from ({}), {}",
-                        self.get_name(),
-                        remote_addr,
-                        err
-                    );
-                    return Err(err);
-                } else if let Err(err) = assert_inbound_message_integrity(
-                    m,
-                    self.ufrag_pwd.local_credentials.pwd.as_bytes(),
-                    self.crypto_provider.crypto(),
-                ) {
-                    warn!(
-                        "[{}]: discard message from ({}), {}",
-                        self.get_name(),
-                        remote_addr,
-                        err
-                    );
-                    return Err(err);
-                }
-            }
-
-            if remote_candidate_index.is_none() {
-                // Use the local candidate's network type for the peer-reflexive candidate
-                let network_type = self.local_candidates[local_index].network_type();
-                let (ip, port) = (remote_addr.ip(), remote_addr.port());
-
-                let prflx_candidate_config = CandidatePeerReflexiveConfig {
-                    base_config: CandidateConfig {
-                        network: network_type.to_string(),
-                        address: ip.to_string(),
-                        port,
-                        component: self.local_candidates[local_index].component(),
-                        ..CandidateConfig::default()
-                    },
-                    rel_addr: "".to_owned(),
-                    rel_port: 0,
-                };
-
-                match prflx_candidate_config.new_candidate_peer_reflexive() {
-                    Ok(prflx_candidate) => {
-                        if let Ok(added) = self.add_remote_candidate(prflx_candidate)
-                            && added
-                        {
-                            // Look the candidate up by address rather than assuming it
-                            // is the last element: `add_remote_candidate` may not have
-                            // appended it (e.g. a duplicate), and this stays correct if
-                            // the vector is ever mutated underneath us. See issue #88.
-                            remote_candidate_index = self.find_remote_candidate(remote_addr);
-                        }
-                    }
-                    Err(err) => {
-                        error!(
-                            "[{}]: Failed to create new remote prflx candidate ({})",
-                            self.get_name(),
-                            err
-                        );
-                        return Err(err);
-                    }
-                };
-
-                debug!(
-                    "[{}]: adding a new peer-reflexive candidate: {} ",
-                    self.get_name(),
-                    remote_addr
-                );
-            }
-
-            trace!(
-                "[{}]: inbound STUN (Request) from {} to {}",
-                self.get_name(),
+            match self.handle_inbound_request(
+                now,
+                m,
+                local_index,
                 remote_addr,
-                self.local_candidates[local_index]
-            );
-
-            if let Some(remote_index) = &remote_candidate_index {
-                self.handle_binding_request(now, m, local_index, *remote_index);
+                remote_candidate_index,
+            )? {
+                Some(remote_index) => remote_candidate_index = Some(remote_index),
+                // A role conflict consumed the request.
+                None => return Ok(()),
             }
+        } else if m.typ.class == CLASS_ERROR_RESPONSE {
+            self.handle_inbound_error_response(
+                now,
+                m,
+                local_index,
+                remote_addr,
+                remote_candidate_index,
+            )?;
+            return Ok(());
         }
 
         if let Some(remote_index) = remote_candidate_index {
             self.remote_candidates[remote_index].seen(now, false);
+        }
+
+        Ok(())
+    }
+
+    /// Handles a Binding request; returns the remote candidate it came from, or `None` when a
+    /// role conflict consumed it.
+    fn handle_inbound_request(
+        &mut self,
+        now: Instant,
+        m: &mut Message,
+        local_index: usize,
+        remote_addr: SocketAddr,
+        mut remote_candidate_index: Option<usize>,
+    ) -> Result<Option<usize>> {
+        let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+            debug!(
+                "[{}]: ufrag_pwd.remote_credentials.is_none",
+                self.get_name(),
+            );
+            return Err(Error::ErrPasswordEmpty);
+        };
+
+        {
+            let username = self.ufrag_pwd.local_credentials.ufrag.clone()
+                + ":"
+                + remote_credentials.ufrag.as_str();
+            if let Err(err) = assert_inbound_username(m, &username) {
+                warn!(
+                    "[{}]: discard message from ({}), {}",
+                    self.get_name(),
+                    remote_addr,
+                    err
+                );
+                return Err(err);
+            } else if let Err(err) = assert_inbound_message_integrity(
+                m,
+                self.ufrag_pwd.local_credentials.pwd.as_bytes(),
+                self.crypto_provider.crypto(),
+            ) {
+                warn!(
+                    "[{}]: discard message from ({}), {}",
+                    self.get_name(),
+                    remote_addr,
+                    err
+                );
+                return Err(err);
+            }
+        }
+
+        if remote_candidate_index.is_none() {
+            // Use the local candidate's network type for the peer-reflexive candidate
+            let network_type = self.local_candidates[local_index].network_type();
+            let (ip, port) = (remote_addr.ip(), remote_addr.port());
+
+            // A peer-reflexive candidate SHOULD take its priority from the PRIORITY
+            // attribute in the Binding request that discovered it (RFC 8445 §7.3.1.3).
+            let mut priority = PriorityAttr::default();
+            let priority = priority.get_from(m).map_or(0, |()| priority.0);
+
+            let prflx_candidate_config = CandidatePeerReflexiveConfig {
+                base_config: CandidateConfig {
+                    network: network_type.to_string(),
+                    address: ip.to_string(),
+                    port,
+                    component: self.local_candidates[local_index].component(),
+                    priority,
+                    ..CandidateConfig::default()
+                },
+                rel_addr: "".to_owned(),
+                rel_port: 0,
+            };
+
+            match prflx_candidate_config.new_candidate_peer_reflexive() {
+                Ok(prflx_candidate) => {
+                    if let Ok(added) = self.add_remote_candidate(prflx_candidate)
+                        && added
+                    {
+                        // Look the candidate up by address rather than assuming it
+                        // is the last element: `add_remote_candidate` may not have
+                        // appended it (e.g. a duplicate), and this stays correct if
+                        // the vector is ever mutated underneath us. See issue #88.
+                        remote_candidate_index = self.find_remote_candidate(remote_addr);
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        "[{}]: Failed to create new remote prflx candidate ({})",
+                        self.get_name(),
+                        err
+                    );
+                    return Err(err);
+                }
+            };
+
+            debug!(
+                "[{}]: adding a new peer-reflexive candidate: {} ",
+                self.get_name(),
+                remote_addr
+            );
+        }
+
+        trace!(
+            "[{}]: inbound STUN (Request) from {} to {}",
+            self.get_name(),
+            remote_addr,
+            self.local_candidates[local_index]
+        );
+
+        let Some(remote_index) = remote_candidate_index else {
+            return Ok(None);
+        };
+
+        // Remotes that don't set a TIE-BREAKER are tolerated: not standards compliant, but
+        // pion keeps accepting them.
+        let remote_tie_breaker = if self.is_controlling && m.contains(ATTR_ICE_CONTROLLING) {
+            let mut remote = crate::attributes::control::AttrControlling::default();
+            remote.get_from(m).ok().map(|()| remote.0)
+        } else if !self.is_controlling && m.contains(ATTR_ICE_CONTROLLED) {
+            let mut remote = crate::attributes::control::AttrControlled::default();
+            remote.get_from(m).ok().map(|()| remote.0)
+        } else {
+            None
+        };
+        if let Some(remote_tie_breaker) = remote_tie_breaker {
+            self.handle_role_conflict(now, m, local_index, remote_index, remote_tie_breaker);
+            return Ok(None);
+        }
+
+        self.handle_binding_request(now, m, local_index, remote_index);
+        Ok(Some(remote_index))
+    }
+
+    /// RFC 8445 §7.3.1.1: both agents took the same role. The one whose tiebreaker is larger
+    /// (when controlling) or smaller (when controlled) keeps its role and answers 487; the other
+    /// switches.
+    fn handle_role_conflict(
+        &mut self,
+        now: Instant,
+        m: &Message,
+        local_index: usize,
+        remote_index: usize,
+        remote_tie_breaker: u64,
+    ) {
+        let local_is_greater_or_equal = self.tie_breaker >= remote_tie_breaker;
+        warn!(
+            "[{}]: Role conflict, local and remote are both {}, local_is_greater_or_equal({})",
+            self.get_name(),
+            self.get_name(),
+            local_is_greater_or_equal
+        );
+
+        if (self.is_controlling && local_is_greater_or_equal)
+            || (!self.is_controlling && !local_is_greater_or_equal)
+        {
+            self.send_role_conflict_error(now, m, local_index, remote_index);
+        } else {
+            self.switch_role(now);
+        }
+    }
+
+    /// A 487 Role Conflict answer to one of our checks: the peer kept its role, so we switch.
+    /// Other error codes are ignored.
+    fn handle_inbound_error_response(
+        &mut self,
+        now: Instant,
+        m: &mut Message,
+        local_index: usize,
+        remote_addr: SocketAddr,
+        remote_candidate_index: Option<usize>,
+    ) -> Result<()> {
+        use stun::error_code::*;
+
+        trace!(
+            "[{}]: inbound STUN (Error) from {} to {}",
+            self.get_name(),
+            remote_addr,
+            self.local_candidates[local_index]
+        );
+
+        let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+            return Err(Error::ErrPasswordEmpty);
+        };
+        if let Err(err) = assert_inbound_message_integrity(
+            m,
+            remote_credentials.pwd.as_bytes(),
+            self.crypto_provider.crypto(),
+        ) {
+            warn!(
+                "[{}]: discard error response with broken integrity from ({}), {}",
+                self.get_name(),
+                remote_addr,
+                err
+            );
+            return Err(err);
+        }
+
+        let mut error_code = ErrorCodeAttribute::default();
+        if let Err(err) = error_code.get_from(m) {
+            warn!(
+                "[{}]: failed to get the error code from the error response: {}",
+                self.get_name(),
+                err
+            );
+            return Err(err);
+        }
+        if error_code.code != CODE_ROLE_CONFLICT {
+            debug!(
+                "[{}]: STUN error response {} from {}",
+                self.get_name(),
+                error_code,
+                remote_addr
+            );
+            return Ok(());
+        }
+
+        warn!(
+            "[{}]: received role conflict error (487) from {}, switching role",
+            self.get_name(),
+            remote_addr
+        );
+
+        let Some(pending_request) = self.handle_inbound_binding_success(now, m.transaction_id)
+        else {
+            debug!(
+                "[{}]: role conflict error for an unknown transaction, ignoring",
+                self.get_name()
+            );
+            return Ok(());
+        };
+
+        if pending_request.destination != remote_addr {
+            debug!(
+                "[{}]: discard message: transaction source and destination does not match expected({}), actual({})",
+                self.get_name(),
+                pending_request.destination,
+                remote_addr
+            );
+            return Ok(());
+        }
+
+        // The new role follows the role the request advertised, not our current one: other
+        // in-flight checks may already have caused the same switch.
+        let new_is_controlling = !pending_request.is_controlling;
+        if self.is_controlling != new_is_controlling {
+            self.switch_role(now);
+        }
+        self.tie_breaker = generate_tie_breaker(self.crypto_provider.random())?;
+
+        // Re-enqueue the pair in the triggered-check queue (RFC 8445 §7.2.5.1).
+        if let Some(remote_index) = remote_candidate_index
+            && let Some(pair_index) = self.find_pair(local_index, remote_index)
+        {
+            let pair = &mut self.candidate_pairs[pair_index];
+            pair.state = CandidatePairState::Waiting;
+            pair.binding_request_count = 0;
+        } else {
+            warn!(
+                "[{}]: cannot re-enqueue the candidate pair for {}, not found",
+                self.get_name(),
+                pending_request.destination
+            );
         }
 
         Ok(())
