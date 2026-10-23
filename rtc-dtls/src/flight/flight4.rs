@@ -9,7 +9,6 @@ use crate::crypto::*;
 use crate::curve::named_curve::*;
 use crate::curve::*;
 use crate::extension::extension_alpn::*;
-use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
 use crate::extension::extension_use_extended_master_secret::*;
 use crate::extension::extension_use_srtp::*;
@@ -533,9 +532,12 @@ impl Flight for Flight4 {
         _cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Vec<Packet>, (Option<Alert>, Option<Error>)> {
-        let mut extensions = vec![Extension::RenegotiationInfo(ExtensionRenegotiationInfo {
-            renegotiated_connection: 0,
-        })];
+        let mut extensions = vec![];
+        if state.peer_renegotiation_info {
+            extensions.push(Extension::RenegotiationInfo(ExtensionRenegotiationInfo {
+                renegotiated_connection: 0,
+            }));
+        }
         if (cfg.extended_master_secret == ExtendedMasterSecretType::Request
             || cfg.extended_master_secret == ExtendedMasterSecretType::Require)
             && state.extended_master_secret
@@ -573,15 +575,14 @@ impl Flight for Flight4 {
             }
         }
 
+        // Only the point formats: a server does not answer with supported_groups (pion drops
+        // it too, `TestSupportedGroupsExtension`).
         if !state.is_cipher_suite_psk() {
-            extensions.extend_from_slice(&[
-                Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: cfg.local_named_curves.clone(),
-                }),
-                Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
+            extensions.push(Extension::SupportedPointFormats(
+                ExtensionSupportedPointFormats {
                     point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
-                }),
-            ]);
+                },
+            ));
         }
 
         let mut pkts = vec![Packet {

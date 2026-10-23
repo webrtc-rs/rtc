@@ -70,6 +70,10 @@ impl Flight for Flight0 {
 
             state.remote_random = client_hello.random.clone();
             state.peer_supported_protocols.clear();
+            // RFC 5746 §3.6: only a client that signalled secure renegotiation is answered in kind.
+            state.peer_renegotiation_info = client_hello
+                .cipher_suites
+                .contains(&CipherSuiteId::Tls_Empty_Renegotiation_Info_Scsv);
 
             if let Ok(id) =
                 find_matching_cipher_suite(&client_hello.cipher_suites, &cfg.local_cipher_suites)
@@ -112,9 +116,10 @@ impl Flight for Flight0 {
                         }
                     }
                     Extension::UseSrtp(e) => {
+                        // The server's preference decides (RFC 5764 §4.1.1), as in pion.
                         if let Ok(profile) = find_matching_srtp_profile(
-                            &e.protection_profiles,
                             &cfg.local_srtp_protection_profiles,
+                            &e.protection_profiles,
                         ) {
                             state.srtp_protection_profile = profile;
                         } else {
@@ -129,6 +134,9 @@ impl Flight for Flight0 {
                     }
                     Extension::Alpn(e) => {
                         state.peer_supported_protocols.clone_from(&e.protocols);
+                    }
+                    Extension::RenegotiationInfo(_) => {
+                        state.peer_renegotiation_info = true;
                     }
                     Extension::UseExtendedMasterSecret(_)
                         if cfg.extended_master_secret != ExtendedMasterSecretType::Disable =>

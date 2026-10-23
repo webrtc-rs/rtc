@@ -44,6 +44,21 @@ mod handshake_test;
 use std::fmt;
 use std::io::{Read, Write};
 
+/// Reads a big-endian `u16` that may be absent: `None` at a clean end of input, an error when
+/// only one byte of it is there. For the extension block of a hello, which is optional.
+pub(crate) fn read_optional_u16<R: Read>(reader: &mut R) -> Result<Option<u16>> {
+    let mut buf = [0u8; 2];
+    let mut read = 0;
+    while read < 2 {
+        match reader.read(&mut buf[read..])? {
+            0 if read == 0 => return Ok(None),
+            0 => return Err(Error::ErrBufferTooSmall),
+            n => read += n,
+        }
+    }
+    Ok(Some(u16::from_be_bytes(buf)))
+}
+
 use super::content::*;
 use shared::error::*;
 

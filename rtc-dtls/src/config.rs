@@ -408,6 +408,12 @@ impl ConfigBuilder {
     }
 
     fn validate(&self, is_client: bool) -> Result<()> {
+        // pion checks this one first, so a server with an identity but no PSK reports it rather
+        // than the missing certificate.
+        if self.psk_identity_hint.is_some() && self.psk.is_none() {
+            return Err(Error::ErrIdentityNoPsk);
+        }
+
         if is_client && self.psk.is_some() && self.psk_identity_hint.is_none() {
             return Err(Error::ErrPskAndIdentityMustBeSetForClient);
         }
@@ -419,10 +425,6 @@ impl ConfigBuilder {
         // A server may hold both and let each handshake pick
         if is_client && !self.certificates.is_empty() && self.psk.is_some() {
             return Err(Error::ErrPskAndCertificate);
-        }
-
-        if self.psk_identity_hint.is_some() && self.psk.is_none() {
-            return Err(Error::ErrIdentityNoPsk);
         }
 
         self.offered_cipher_suites(is_client)?;
@@ -618,6 +620,7 @@ impl ConfigBuilder {
             local_srtp_protection_profiles: self.srtp_protection_profiles,
             local_supported_protocols: self.supported_protocols,
             server_name,
+            sni_server_name: self.server_name.clone(),
             client_auth: self.client_auth,
             local_certificates: self.certificates,
             name_to_certificate: Default::default(),
@@ -765,6 +768,8 @@ pub struct HandshakeConfig {
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
     pub(crate) local_supported_protocols: Vec<String>, // ALPN protocols, if empty no ALPN
     pub(crate) server_name: String,
+    /// The name to send in the `server_name` extension: only one the application configured.
+    pub(crate) sni_server_name: String,
     pub(crate) client_auth: ClientAuthType, // If we are a client should we request a client certificate
     pub(crate) local_certificates: Vec<Certificate>,
     pub(crate) name_to_certificate: HashMap<String, Certificate>,
@@ -826,6 +831,7 @@ impl HandshakeConfig {
             local_srtp_protection_profiles: vec![],
             local_supported_protocols: vec![],
             server_name: String::new(),
+            sni_server_name: String::new(),
             client_auth: ClientAuthType::NoClientCert,
             local_certificates: vec![],
             name_to_certificate: HashMap::new(),

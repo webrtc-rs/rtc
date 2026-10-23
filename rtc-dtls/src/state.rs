@@ -26,7 +26,8 @@ pub struct State {
 
     pub(crate) srtp_protection_profile: SrtpProtectionProfile, // Negotiated srtp_protection_profile
     pub(crate) peer_supported_protocols: Vec<String>,          // ALPN protocols the client offered
-    pub(crate) negotiated_protocol: String,                    // ALPN protocol both sides agreed on
+    pub(crate) peer_renegotiation_info: bool, // the ClientHello carried renegotiation_info or the SCSV
+    pub(crate) negotiated_protocol: String,   // ALPN protocol both sides agreed on
     /// The peer's certificate chain, DER-encoded.
     ///
     /// WebRTC checks its fingerprint against the one signalled in SDP.
@@ -88,6 +89,7 @@ impl State {
 
             srtp_protection_profile: SrtpProtectionProfile::Unsupported,
             peer_supported_protocols: vec![],
+            peer_renegotiation_info: false,
             negotiated_protocol: String::new(),
             peer_certificates: vec![],
             identity_hint: vec![],
@@ -278,6 +280,13 @@ impl State {
     /// The SRTP protection profile negotiated through `use_srtp`.
     pub fn srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.srtp_protection_profile
+    }
+
+    /// Whether the extended master secret extension ([RFC 7627]) was negotiated.
+    ///
+    /// [RFC 7627]: https://www.rfc-editor.org/rfc/rfc7627
+    pub fn extended_master_secret(&self) -> bool {
+        self.extended_master_secret
     }
 
     /// The application protocol negotiated through ALPN, or `""` when none was.

@@ -182,3 +182,37 @@ impl Extension {
         }
     }
 }
+
+/// Parses the body of a hello's extension block. Extension types this crate does not implement
+/// are skipped, but a known type that does not parse rejects the whole message, as in pion.
+///
+/// # Errors
+///
+/// [`Error::ErrBufferTooSmall`] when the block ends inside an extension header or body, or the
+/// error of the extension that failed to parse.
+pub(crate) fn unmarshal_extensions(buffer: &[u8]) -> Result<Vec<Extension>> {
+    let mut extensions = vec![];
+    let mut offset = 0;
+    while offset < buffer.len() {
+        if offset + 4 > buffer.len() {
+            return Err(Error::ErrBufferTooSmall);
+        }
+        let kind = ExtensionValue::from(u16::from_be_bytes([buffer[offset], buffer[offset + 1]]));
+        let len = u16::from_be_bytes([buffer[offset + 2], buffer[offset + 3]]) as usize;
+        if offset + 4 + len > buffer.len() {
+            return Err(Error::ErrBufferTooSmall);
+        }
+        if kind == ExtensionValue::Unsupported {
+            log::warn!(
+                "Unsupported Extension Type {} {}",
+                buffer[offset],
+                buffer[offset + 1]
+            );
+        } else {
+            let mut reader = std::io::BufReader::new(&buffer[offset..offset + 4 + len]);
+            extensions.push(Extension::unmarshal(&mut reader)?);
+        }
+        offset += 4 + len;
+    }
+    Ok(extensions)
+}

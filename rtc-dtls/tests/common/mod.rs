@@ -112,6 +112,13 @@ pub fn handshake(client: ConfigBuilder, server: ConfigBuilder) -> Outcome {
     handshake_configs(client_config, server_config)
 }
 
+/// As [`handshake`], but a configuration that does not build is reported instead of panicking.
+pub fn try_handshake(client: ConfigBuilder, server: ConfigBuilder) -> Result<Outcome, Error> {
+    let client_config = client.build(true, None)?;
+    let server_config = server.build(false, None)?;
+    Ok(handshake_configs(client_config, server_config))
+}
+
 pub fn handshake_configs(
     client_config: HandshakeConfig,
     server_config: HandshakeConfig,
@@ -222,4 +229,141 @@ pub fn client_sends(out: &mut Outcome, payload: &[u8]) -> Vec<u8> {
             _ => None,
         })
         .expect("application data")
+}
+
+/// Hand-built DTLS 1.2 records, for tests that play one side of a handshake by hand.
+pub mod raw {
+    /// `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`.
+    pub const ECDHE_ECDSA_GCM: u16 = 0xc02b;
+    /// The renegotiation_info signalling cipher suite value (RFC 5746).
+    pub const RENEGOTIATION_SCSV: u16 = 0x00ff;
+
+    pub fn record(content_type: u8, epoch: u16, sequence_number: u64, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![content_type, 0xfe, 0xfd];
+        out.extend_from_slice(&epoch.to_be_bytes());
+        out.extend_from_slice(&sequence_number.to_be_bytes()[2..]);
+        out.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// One unfragmented handshake message.
+    pub fn handshake_message(msg_type: u8, message_sequence: u16, body: &[u8]) -> Vec<u8> {
+        let len = body.len() as u32;
+        let mut out = vec![msg_type];
+        out.extend_from_slice(&len.to_be_bytes()[1..]);
+        out.extend_from_slice(&message_sequence.to_be_bytes());
+        out.extend_from_slice(&[0, 0, 0]);
+        out.extend_from_slice(&len.to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    }
+
+    pub struct ClientHello {
+        pub version: [u8; 2],
+        pub cookie: Vec<u8>,
+        pub cipher_suites: Vec<u16>,
+        /// `(extension type, extension data)`
+        pub extensions: Vec<(u16, Vec<u8>)>,
+    }
+
+    impl ClientHello {
+        pub fn new(cookie: &[u8]) -> Self {
+            ClientHello {
+                version: [0xfe, 0xfd],
+                cookie: cookie.to_vec(),
+                cipher_suites: vec![ECDHE_ECDSA_GCM],
+                extensions: vec![],
+            }
+        }
+
+        pub fn body(&self) -> Vec<u8> {
+            let mut out = self.version.to_vec();
+            out.extend_from_slice(&[0u8; 32]); // random
+            out.push(0); // session id
+            out.push(self.cookie.len() as u8);
+            out.extend_from_slice(&self.cookie);
+            out.extend_from_slice(&((self.cipher_suites.len() * 2) as u16).to_be_bytes());
+            for suite in &self.cipher_suites {
+                out.extend_from_slice(&suite.to_be_bytes());
+            }
+            out.extend_from_slice(&[1, 0]); // compression: null
+            if !self.extensions.is_empty() {
+                let mut exts = vec![];
+                for (kind, data) in &self.extensions {
+                    exts.extend_from_slice(&kind.to_be_bytes());
+                    exts.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                    exts.extend_from_slice(data);
+                }
+                out.extend_from_slice(&(exts.len() as u16).to_be_bytes());
+                out.extend_from_slice(&exts);
+            }
+            out
+        }
+
+        /// The ClientHello as a datagram: record `sequence_number`, message sequence the same.
+        pub fn datagram(&self, sequence_number: u64) -> Vec<u8> {
+            record(
+                22,
+                0,
+                sequence_number,
+                &handshake_message(1, sequence_number as u16, &self.body()),
+            )
+        }
+    }
+
+    /// `(handshake type, message body)` for every plaintext handshake message in `datagram`.
+    pub fn handshake_messages(datagram: &[u8]) -> Vec<(u8, Vec<u8>)> {
+        let mut out = vec![];
+        let mut rest = datagram;
+        while rest.len() >= 13 {
+            let len = u16::from_be_bytes([rest[11], rest[12]]) as usize;
+            if rest.len() < 13 + len {
+                break;
+            }
+            let epoch = u16::from_be_bytes([rest[3], rest[4]]);
+            if rest[0] == 22 && epoch == 0 {
+                let mut payload = &rest[13..13 + len];
+                while payload.len() >= 12 {
+                    let frag =
+                        u32::from_be_bytes([0, payload[9], payload[10], payload[11]]) as usize;
+                    if payload.len() < 12 + frag {
+                        break;
+                    }
+                    out.push((payload[0], payload[12..12 + frag].to_vec()));
+                    payload = &payload[12 + frag..];
+                }
+            }
+            rest = &rest[13 + len..];
+        }
+        out
+    }
+
+    /// The extension types in a ClientHello or ServerHello `body` (`server` selects which),
+    /// with their data.
+    pub fn hello_extensions(body: &[u8], server: bool) -> Vec<(u16, Vec<u8>)> {
+        let mut at = 2 + 32;
+        at += 1 + body[at] as usize; // session id
+        if server {
+            at += 2 + 1; // cipher suite, compression
+        } else {
+            at += 1 + body[at] as usize; // cookie
+            at += 2 + u16::from_be_bytes([body[at], body[at + 1]]) as usize; // cipher suites
+            at += 1 + body[at] as usize; // compression methods
+        }
+        let mut out = vec![];
+        if at + 2 > body.len() {
+            return out;
+        }
+        let total = u16::from_be_bytes([body[at], body[at + 1]]) as usize;
+        at += 2;
+        let end = (at + total).min(body.len());
+        while at + 4 <= end {
+            let kind = u16::from_be_bytes([body[at], body[at + 1]]);
+            let len = u16::from_be_bytes([body[at + 2], body[at + 3]]) as usize;
+            out.push((kind, body[at + 4..at + 4 + len].to_vec()));
+            at += 4 + len;
+        }
+        out
+    }
 }

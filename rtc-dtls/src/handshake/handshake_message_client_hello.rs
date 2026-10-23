@@ -10,7 +10,7 @@ use crate::record_layer::record_layer_header::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::fmt;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 
 /*
 When a client first connects to a server it is required to send
@@ -154,8 +154,10 @@ impl HandshakeMessageClientHello {
         let minor = reader.read_u8()?;
         let random = HandshakeRandom::unmarshal(reader)?;
 
-        // Session ID
-        reader.read_u8()?;
+        // Session ID: a resuming or compatibility-minded client may send one; it is not used.
+        let session_id_len = reader.read_u8()? as usize;
+        let mut session_id = vec![0; session_id_len];
+        reader.read_exact(&mut session_id)?;
 
         let cookie_len = reader.read_u8()? as usize;
         let mut cookie = vec![0; cookie_len];
@@ -170,33 +172,17 @@ impl HandshakeMessageClientHello {
         }
 
         let compression_methods = CompressionMethods::unmarshal(reader)?;
-        let mut extensions = vec![];
-
-        let extension_buffer_len = reader.read_u16::<BigEndian>()? as usize;
+        // The extension block is optional (RFC 5246 §7.4.1.2): a hello that ends here has none.
+        let extension_buffer_len = read_optional_u16(reader)?.unwrap_or(0) as usize;
         let mut extension_buffer = vec![0u8; extension_buffer_len];
         reader.read_exact(&mut extension_buffer)?;
 
-        let mut offset = 0;
-        while offset < extension_buffer_len {
-            if offset + 4 > extension_buffer_len {
-                return Err(Error::ErrBufferTooSmall);
-            }
+        let extensions = unmarshal_extensions(&extension_buffer)?;
 
-            let mut extension_reader = BufReader::new(&extension_buffer[offset..]);
-            if let Ok(extension) = Extension::unmarshal(&mut extension_reader) {
-                extensions.push(extension);
-            } else {
-                log::warn!(
-                    "Unsupported Extension Type {} {}",
-                    extension_buffer[offset],
-                    extension_buffer[offset + 1]
-                );
-            }
-
-            let extension_len =
-                u16::from_be_bytes([extension_buffer[offset + 2], extension_buffer[offset + 3]])
-                    as usize;
-            offset += 4 + extension_len;
+        // Nothing may follow the extension block (pion: `errLengthMismatch`).
+        let mut trailing = [0u8; 1];
+        if reader.read(&mut trailing)? != 0 {
+            return Err(Error::ErrLengthMismatch);
         }
 
         Ok(HandshakeMessageClientHello {

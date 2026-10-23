@@ -76,6 +76,10 @@ pub enum CipherSuiteId {
     /// `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256` (`0xcca9`).
     Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256 = 0xcca9,
 
+    /// `TLS_EMPTY_RENEGOTIATION_INFO_SCSV` (`0x00ff`): not a suite, a signal in a ClientHello's
+    /// suite list that the client supports secure renegotiation (RFC 5746 §3.3).
+    Tls_Empty_Renegotiation_Info_Scsv = 0x00ff,
+
     /// A code point this crate does not implement.
     Unsupported,
 }
@@ -112,6 +116,9 @@ impl fmt::Display for CipherSuiteId {
             CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256 => {
                 write!(f, "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256")
             }
+            CipherSuiteId::Tls_Empty_Renegotiation_Info_Scsv => {
+                write!(f, "TLS_EMPTY_RENEGOTIATION_INFO_SCSV")
+            }
 
             _ => write!(f, "Unsupported CipherSuiteID"),
         }
@@ -140,6 +147,8 @@ impl From<u16> for CipherSuiteId {
             // CHACHA20_POLY1305_SHA256
             0xcca8 => CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256,
             0xcca9 => CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
+
+            0x00ff => CipherSuiteId::Tls_Empty_Renegotiation_Info_Scsv,
 
             _ => CipherSuiteId::Unsupported,
         }
@@ -201,7 +210,7 @@ impl CipherSuiteId {
             | Self::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
                 CryptoAlgorithm::Aead(AeadAlgorithm::ChaCha20Poly1305)
             }
-            Self::Unsupported => return false,
+            Self::Tls_Empty_Renegotiation_Info_Scsv | Self::Unsupported => return false,
         };
         crypto.supports(CryptoAlgorithm::Hash(HashAlgorithm::Sha256))
             && crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha256))

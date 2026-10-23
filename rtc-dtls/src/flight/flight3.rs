@@ -89,6 +89,28 @@ impl Flight for Flight3 {
             return Ok(Box::new(Flight3 {}) as Box<dyn Flight>);
         }
 
+        // A ServerHello is judged as soon as it arrives, not when the rest of the flight has
+        // (pion's flight 3 reads the hello alone).
+        if let Ok((_, early)) = cache.full_pull_map(
+            state.handshake_recv_sequence,
+            &[HandshakeCachePullRule {
+                typ: HandshakeType::ServerHello,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            }],
+        ) && let Some(HandshakeMessage::ServerHello(h)) = early.get(&HandshakeType::ServerHello)
+            && h.version != PROTOCOL_VERSION1_2
+        {
+            return Err((
+                Some(Alert {
+                    alert_level: AlertLevel::Fatal,
+                    alert_description: AlertDescription::ProtocolVersion,
+                }),
+                Some(Error::ErrUnsupportedProtocolVersion),
+            ));
+        }
+
         let result = if cfg.local_psk_callback.is_some() {
             cache.full_pull_map(
                 state.handshake_recv_sequence,
@@ -401,9 +423,12 @@ impl Flight for Flight3 {
             ));
         }
 
-        if !cfg.server_name.is_empty() {
+        // RFC 6066 §3: literal IP addresses are not permitted in server_name.
+        if !cfg.sni_server_name.is_empty()
+            && cfg.sni_server_name.parse::<std::net::IpAddr>().is_err()
+        {
             extensions.push(Extension::ServerName(ExtensionServerName {
-                server_name: cfg.server_name.clone(),
+                server_name: cfg.sni_server_name.clone(),
             }));
         }
 

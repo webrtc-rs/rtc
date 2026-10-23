@@ -164,9 +164,12 @@ impl Flight for Flight1 {
             ));
         }
 
-        if !cfg.server_name.is_empty() {
+        // RFC 6066 §3: literal IP addresses are not permitted in server_name.
+        if !cfg.sni_server_name.is_empty()
+            && cfg.sni_server_name.parse::<std::net::IpAddr>().is_err()
+        {
             extensions.push(Extension::ServerName(ExtensionServerName {
-                server_name: cfg.server_name.clone(),
+                server_name: cfg.sni_server_name.clone(),
             }));
         }
 
