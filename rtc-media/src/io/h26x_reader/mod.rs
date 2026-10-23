@@ -396,6 +396,9 @@ pub struct H26xReader<R: Read> {
     nal_prefix_parsed: bool,
     count_of_consecutive_zero_bytes: usize,
     nal_buffer: BytesMut,
+    /// Whether SEI NAL units are yielded to the caller (`pion`'s `WithIncludeSEI`). When
+    /// false (the default) they are skipped: they carry no samples.
+    include_sei: bool,
 }
 
 impl<R: Read> H26xReader<R> {
@@ -409,7 +412,14 @@ impl<R: Read> H26xReader<R> {
             buffer: ReadBuffer::new(capacity),
             count_of_consecutive_zero_bytes: 0,
             nal_buffer: BytesMut::new(),
+            include_sei: false,
         }
+    }
+
+    /// Yields SEI NAL units to the caller instead of skipping them (pion's `WithIncludeSEI`).
+    pub fn with_include_sei(mut self, include_sei: bool) -> Self {
+        self.include_sei = include_sei;
+        self
     }
 
     fn read4(&mut self) -> Result<([u8; 4], usize)> {
@@ -430,7 +440,10 @@ impl<R: Read> H26xReader<R> {
             self.buffer.fill_buffer(&mut self.reader)?;
 
             if self.buffer.in_buffer() == 0 {
-                return Ok((result, result_filled));
+                // The stream ended before a full word was available. pion's reader surfaces
+                // the underlying EOF here — even with partial bytes read — so a truncated
+                // start reports EOF rather than "not a H264 bitstream".
+                return Err(Error::ErrIoEOF);
             }
         }
     }
@@ -512,9 +525,10 @@ impl<R: Read> H26xReader<R> {
                     // H.265 NAL unit type is in the first byte, bits 1-6
                     if !self.nal_buffer.is_empty() {
                         let nal_unit_type = H265NalUnitType::from((self.nal_buffer[0] & 0x7E) >> 1);
-                        // Skip SEI NAL units
-                        if nal_unit_type == H265NalUnitType::PrefixSEI
-                            || nal_unit_type == H265NalUnitType::SuffixSEI
+                        // Skip SEI NAL units unless the caller asked for them.
+                        if !self.include_sei
+                            && (nal_unit_type == H265NalUnitType::PrefixSEI
+                                || nal_unit_type == H265NalUnitType::SuffixSEI)
                         {
                             self.nal_buffer.clear();
                             continue;
@@ -525,7 +539,7 @@ impl<R: Read> H26xReader<R> {
                 } else {
                     // H.264 NAL unit type is in the first byte, bits 3-7
                     let nal_unit_type = H264NalUnitType::from(self.nal_buffer[0] & 0x1F);
-                    if nal_unit_type == H264NalUnitType::SEI {
+                    if !self.include_sei && nal_unit_type == H264NalUnitType::SEI {
                         self.nal_buffer.clear();
                         continue;
                     } else {

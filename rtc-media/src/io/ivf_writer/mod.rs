@@ -98,6 +98,12 @@ impl<W: Write + Seek> IVFWriter<W> {
         let mut depacketizer = rtp::codec::vp8::Vp8Packet::default();
         let payload = depacketizer.depacketize(&packet.payload)?;
 
+        // A VP8 payload can legally consist of the descriptor alone, which leaves the
+        // depacketized payload empty: no frame data to inspect or write.
+        if payload.is_empty() {
+            return Ok(());
+        }
+
         // VP8 keyframe: first bit of first byte is 0
         let is_key_frame = (payload[0] & 0x01) == 0;
 

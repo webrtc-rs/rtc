@@ -187,3 +187,183 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
 
     Ok(())
 }
+
+/// The default header pion's `NewWith` writes: 640x480, 30fps, VP8/VP9/AV1 fourcc, frame
+/// count pre-filled with 900 (updated on close).
+fn default_header(four_cc: [u8; 4]) -> IVFFileHeader {
+    IVFFileHeader {
+        signature: *b"DKIF",
+        version: 0,
+        header_size: 32,
+        four_cc,
+        width: 640,
+        height: 480,
+        timebase_denominator: 30,
+        timebase_numerator: 1,
+        num_frames: 900,
+        unused: 0,
+    }
+}
+
+/// pion TestIVFWriter_EmptyPayload: an empty RTP payload is a no-op.
+#[test]
+fn test_ivf_writer_empty_payload() -> Result<()> {
+    let mut writer = IVFWriter::new(Cursor::new(Vec::new()), &default_header(*b"VP80"))?;
+    writer.write_rtp(&rtp::Packet {
+        payload: Vec::new().into(),
+        ..Default::default()
+    })?;
+    writer.close()
+}
+
+/// pion TestIVFWriter_VP8DescriptorOnlyPayload: a VP8 payload that is only a descriptor
+/// depacketizes to nothing and writes no frame.
+#[test]
+fn test_ivf_writer_vp8_descriptor_only_payload() -> Result<()> {
+    let payloads: [&[u8]; 3] = [&[0x10], &[0x90, 0x00], &[0x90, 0x80, 0x05]];
+
+    for payload in payloads {
+        let mut writer = IVFWriter::new(Cursor::new(Vec::new()), &default_header(*b"VP80"))?;
+
+        writer.write_rtp(&rtp::Packet {
+            header: rtp::Header {
+                marker: true,
+                ..Default::default()
+            },
+            payload: Bytes::copy_from_slice(payload),
+        })?;
+        writer.close()?;
+
+        // Header written at construction, 32 bytes, and nothing after it.
+        assert_eq!(writer.writer.get_ref().len(), 32, "payload {payload:?}");
+    }
+
+    Ok(())
+}
+
+/// pion TestIVFWriter_VP9: non-keyframe and non-start packets are ignored; a complete
+/// frame (start + marker) is written as one IVF frame.
+#[test]
+fn test_ivf_writer_vp9() -> Result<()> {
+    let vp9_header = [
+        0x44, 0x4b, 0x49, 0x46, 0x00, 0x00, 0x20, 0x00, 0x56, 0x50, 0x39, 0x30, 0x80, 0x02, 0xe0,
+        0x01, 0x1e, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x84, 0x03, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+
+    let mut writer = IVFWriter::new(Cursor::new(Vec::new()), &default_header(*b"VP90"))?;
+
+    // No keyframe yet: a P packet is ignored.
+    writer.write_rtp(&rtp::Packet {
+        payload: Bytes::from_static(&[0xD0, 0x02, 0xAA]),
+        ..Default::default()
+    })?;
+    assert_eq!(writer.writer.get_ref(), &vp9_header[..]);
+
+    // No current frame: packets that do not start one (B) are ignored.
+    writer.write_rtp(&rtp::Packet {
+        payload: Bytes::from_static(&[0x00, 0xAA]),
+        ..Default::default()
+    })?;
+    assert_eq!(writer.writer.get_ref(), &vp9_header[..]);
+
+    // B packet without the marker bit.
+    writer.write_rtp(&rtp::Packet {
+        payload: Bytes::from_static(&[0x08, 0xAA]),
+        ..Default::default()
+    })?;
+    assert_eq!(writer.writer.get_ref(), &vp9_header[..]);
+
+    // B packet with the marker bit: the frame completes and is written.
+    writer.write_rtp(&rtp::Packet {
+        header: rtp::Header {
+            marker: true,
+            ..Default::default()
+        },
+        payload: Bytes::from_static(&[0x08, 0xAB]),
+    })?;
+    let mut expected = vp9_header.to_vec();
+    expected.extend_from_slice(&[
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa, 0xab,
+    ]);
+    assert_eq!(writer.writer.get_ref(), &expected[..]);
+
+    writer.close()?;
+    let mut closed = expected;
+    closed[24..28].copy_from_slice(&1u32.to_le_bytes());
+    assert_eq!(writer.writer.get_ref(), &closed[..]);
+
+    Ok(())
+}
+
+/// pion TestIVFWriter_AV1: unfragmented and fragmented OBUs, with the byte-exact IVF output.
+#[test]
+fn test_ivf_writer_av1() -> Result<()> {
+    // Unfragmented: N=1, Length=1, OBU_TYPE=4.
+    {
+        let mut writer = IVFWriter::new(Cursor::new(Vec::new()), &default_header(*b"AV01"))?;
+
+        writer.write_rtp(&rtp::Packet {
+            header: rtp::Header {
+                marker: true,
+                ..Default::default()
+            },
+            payload: Bytes::from_static(&[0x08, 0x01, 0x20]),
+        })?;
+        writer.close()?;
+
+        assert_eq!(
+            writer.writer.get_ref(),
+            &[
+                0x44, 0x4b, 0x49, 0x46, 0x0, 0x0, 0x20, 0x0, 0x41, 0x56, 0x30, 0x31, 0x80, 0x2,
+                0xe0, 0x1, 0x1e, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0,
+                0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x12, 0x0,
+                0x22, 0x0,
+            ][..],
+            "unfragmented AV1 frame with the count updated on close"
+        );
+    }
+
+    // Fragmented: four fragments accumulate until the marker bit flushes the OBU set.
+    {
+        let mut writer = IVFWriter::new(Cursor::new(Vec::new()), &default_header(*b"AV01"))?;
+
+        let fragments: [&[u8]; 4] = [
+            &[0x48, 0x02, 0x00, 0x01], // Y=true
+            &[0xc0, 0x02, 0x02, 0x03], // Z=true, Y=true
+            &[0xc0, 0x02, 0x04, 0x04], // Z=true, Y=true
+            &[0x80, 0x01, 0x05],       // Z=true, Y=false
+        ];
+        for fragment in fragments {
+            writer.write_rtp(&rtp::Packet {
+                header: rtp::Header {
+                    marker: false,
+                    ..Default::default()
+                },
+                payload: Bytes::copy_from_slice(fragment),
+            })?;
+        }
+
+        writer.write_rtp(&rtp::Packet {
+            header: rtp::Header {
+                marker: true,
+                ..Default::default()
+            },
+            payload: Bytes::from_static(&[0x08, 0x01, 0x20]),
+        })?;
+        writer.close()?;
+
+        assert_eq!(
+            writer.writer.get_ref(),
+            &[
+                0x44, 0x4b, 0x49, 0x46, 0x0, 0x0, 0x20, 0x0, 0x41, 0x56, 0x30, 0x31, 0x80, 0x2,
+                0xe0, 0x1, 0x1e, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0,
+                0x0, 0x0, 0xc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x12, 0x0,
+                0x2, 0x6, 0x1, 0x2, 0x3, 0x4, 0x4, 0x5, 0x22, 0x0,
+            ][..],
+            "fragmented AV1 frame"
+        );
+    }
+
+    Ok(())
+}

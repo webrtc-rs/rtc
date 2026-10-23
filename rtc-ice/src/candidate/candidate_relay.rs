@@ -23,17 +23,6 @@ pub struct CandidateRelayConfig {
     pub relay_protocol: String,
 }
 
-/// The local preference of a relay candidate reached over `relay_protocol` (pion's
-/// `relayProtocolPreference`).
-pub(crate) fn relay_protocol_preference(relay_protocol: &str) -> u16 {
-    match relay_protocol {
-        "tls" => 0,
-        "tcp" => 1,
-        "dtls" => 2,
-        _ => 3,
-    }
-}
-
 /// The relay protocol a TURN server URL implies: `turn:` over UDP or TCP, `turns:` over TCP
 /// (TLS) or UDP (DTLS). Anything unparsable is taken as UDP.
 pub fn relay_protocol_from_url(url: &str) -> &'static str {
@@ -56,7 +45,7 @@ impl CandidateRelayConfig {
             candidate_id = generate_cand_id();
         }
 
-        let ip: IpAddr = match self.base_config.address.parse() {
+        let ip: IpAddr = match parse_candidate_ip(&self.base_config.address) {
             Ok(ip) => ip,
             Err(_) => return Err(Error::ErrAddressParseFailed),
         };

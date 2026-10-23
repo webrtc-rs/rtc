@@ -17,8 +17,12 @@ pub trait ReplayDetector: Send + Sync {
     /// Commits the sequence number from the preceding [`Self::check`] call as received.
     ///
     /// Split from `check` so a caller can validate a packet's authenticity first and only then
-    /// record it — a forged packet must not advance the window.
-    fn accept(&mut self);
+    /// record it — a forged packet must not advance the window. A `check` that failed (or no
+    /// `check` at all) makes this a no-op.
+    ///
+    /// Returns whether the committed sequence number became the latest observed one, mirroring
+    /// pion's `accept()`/`Accept(token)` return value.
+    fn accept(&mut self) -> bool;
 }
 
 /// A replay detector over a monotonically increasing sequence number that never wraps.
@@ -62,7 +66,9 @@ impl ReplayDetector for SlidingWindowDetector {
         }
 
         if seq <= self.latest_seq {
-            if self.latest_seq >= self.window_size as u64 + seq {
+            // Subtraction, not `window_size + seq`: the addition would overflow near
+            // `u64::MAX` (pion: `d.latestSeq-seq >= uint64(d.windowSize)`).
+            if self.latest_seq - seq >= self.window_size as u64 {
                 return false;
             }
             if self.mask.bit((self.latest_seq - seq) as usize) != 0 {
@@ -76,18 +82,25 @@ impl ReplayDetector for SlidingWindowDetector {
         true
     }
 
-    fn accept(&mut self) {
+    fn accept(&mut self) -> bool {
         if !self.accepted {
-            return;
+            return false;
         }
 
+        // The very first packet can be sequence 0, which is not greater than the zero-value
+        // head: pion still reports it as the latest observation.
+        let mut latest = self.seq == 0 && self.latest_seq == 0 && self.mask.bit(0) == 0;
         if self.seq > self.latest_seq {
-            // Update the head of the window.
-            self.mask.lsh((self.seq - self.latest_seq) as usize);
+            // Update the head of the window. A jump longer than the window shifts everything
+            // out either way, so clamping the shift keeps huge jumps from doing huge work.
+            self.mask
+                .lsh((self.seq - self.latest_seq).min(self.window_size as u64) as usize);
             self.latest_seq = self.seq;
+            latest = true;
         }
         let diff = (self.latest_seq - self.seq) % self.max_seq;
         self.mask.set_bit(diff as usize);
+        latest
     }
 }
 
@@ -162,9 +175,9 @@ impl ReplayDetector for WrappedSlidingWindowDetector {
         true
     }
 
-    fn accept(&mut self) {
+    fn accept(&mut self) -> bool {
         if !self.accepted {
-            return;
+            return false;
         }
 
         let mut diff = self.latest_seq as i64 - self.seq as i64;
@@ -178,12 +191,15 @@ impl ReplayDetector for WrappedSlidingWindowDetector {
         assert!(diff < self.window_size as i64);
 
         if diff < 0 {
-            // Update the head of the window.
-            self.mask.lsh((-diff) as usize);
+            // Update the head of the window (clamped: a longer jump empties the mask anyway).
+            self.mask
+                .lsh(((-diff) as u64).min(self.window_size as u64) as usize);
             self.latest_seq = self.seq;
             self.mask.set_bit(0);
+            true
         } else {
             self.mask.set_bit(diff as usize);
+            false
         }
     }
 }
@@ -198,5 +214,7 @@ impl ReplayDetector for NoOpReplayDetector {
     fn check(&mut self, _: u64) -> bool {
         true
     }
-    fn accept(&mut self) {}
+    fn accept(&mut self) -> bool {
+        true
+    }
 }

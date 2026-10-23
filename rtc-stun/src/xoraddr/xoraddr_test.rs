@@ -246,3 +246,52 @@ fn test_xormapped_address_string() -> Result<()> {
 
     Ok(())
 }
+
+/// pion/transport v5.1.1 utils/xor TestXOR: `xor_bytes` must equal an independent XOR for
+/// every length (short-mode sizes), every input/output alignment, without touching the
+/// guard byte past the destination. pion fills the inputs from crypto/rand; a fixed
+/// deterministic stream exercises the same assertions offline.
+#[test]
+fn test_xor_matches_pion_xor() {
+    // xorshift64*: deterministic stand-in for pion's crypto/rand fills.
+    let mut state = 0x2545F4914F6CDD1Du64;
+    let mut next_byte = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 32) as u8
+    };
+
+    for j in 1..=16usize {
+        for align_p in 0..2usize {
+            for align_q in 0..2usize {
+                for align_d in 0..2usize {
+                    let mut buf_p = vec![0u8; j + align_p];
+                    let mut buf_q = vec![0u8; j + align_q];
+                    let mut buf_d = vec![0u8; j + align_d + 1];
+                    for b in buf_p.iter_mut() {
+                        *b = next_byte();
+                    }
+                    for b in buf_q.iter_mut() {
+                        *b = next_byte();
+                    }
+                    buf_d[j + align_d] = 42; // guard byte: must not be overwritten
+
+                    let p = &buf_p[align_p..];
+                    let q = &buf_q[align_q..];
+                    let d1 = &mut buf_d[align_d..j + align_d];
+
+                    xor_bytes(d1, p, q);
+
+                    let n = p.len().min(q.len());
+                    let mut d2 = vec![0u8; n];
+                    for i in 0..n {
+                        d2[i] = p[i] ^ q[i];
+                    }
+                    assert_eq!(&d1[..n], &d2[..], "p: {p:?}, q: {q:?}");
+                    assert_eq!(buf_d[j + align_d], 42, "guard overwritten");
+                }
+            }
+        }
+    }
+}

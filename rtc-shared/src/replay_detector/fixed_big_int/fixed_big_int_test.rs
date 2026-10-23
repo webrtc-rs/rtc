@@ -76,3 +76,24 @@ fn test_fixed_big_int_set_bit() {
         "00000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
     );
 }
+
+/// pion replaydetector/fixedbig_test.go TestFixedBigIntShiftAcrossWindow: a bit set at
+/// position 0 walks across the whole window one shift at a time, and everything shifted
+/// beyond the window is cleared.
+#[test]
+fn test_fixed_big_int_shift_across_window() {
+    for width in [1, 63, 64, 65, 96, 127, 128] {
+        let mut value = FixedBigInt::new(width);
+        value.set_bit(0);
+        for position in 0..width {
+            assert_eq!(value.bit(position), 1, "width {width}: position {position}");
+            value.lsh(1);
+        }
+        for word in &value.bits {
+            assert_eq!(
+                *word, 0,
+                "width {width}: bits shifted beyond the window must be cleared"
+            );
+        }
+    }
+}

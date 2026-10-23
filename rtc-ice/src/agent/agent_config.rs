@@ -263,3 +263,18 @@ pub struct AgentConfig {
     /// 27 when `None` (pion's `WithTCPPriorityOffset`).
     pub tcp_priority_offset: Option<u16>,
 }
+
+/// Deduplicates the configured network types and rejects values that are neither UDP nor TCP
+/// (pion's `sanitizeTransportNetworkTypes`).
+pub(crate) fn sanitize_network_types(types: &[NetworkType]) -> Result<Vec<NetworkType>> {
+    let mut seen = Vec::with_capacity(types.len());
+    for network_type in types {
+        if !network_type.is_udp() && !network_type.is_tcp() {
+            return Err(Error::ErrProtoType);
+        }
+        if !seen.contains(network_type) {
+            seen.push(*network_type);
+        }
+    }
+    Ok(seen)
+}

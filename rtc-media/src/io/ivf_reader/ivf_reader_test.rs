@@ -162,3 +162,23 @@ fn test_ivf_reader_eof_when_no_frames_left() -> Result<()> {
 
     Ok(())
 }
+
+/// pion TestIVFReader_ErrorOnZeroTimebaseNumerator: a zero timebase numerator cannot express
+/// frame timestamps, so the reader rejects the file up front.
+#[test]
+fn test_ivf_reader_error_on_zero_timebase_numerator() -> Result<()> {
+    let mut ivf = build_ivf_container(&[]).to_vec();
+    // Bytes 20..24 of the header hold the timebase numerator.
+    for byte in &mut ivf[20..24] {
+        *byte = 0;
+    }
+
+    let r = BufReader::new(&ivf[..]);
+    let result = IVFReader::new(r);
+    assert!(
+        matches!(result, Err(ref e) if e.to_string().contains("invalid media timebase")),
+        "zero timebase numerator should be invalid"
+    );
+
+    Ok(())
+}

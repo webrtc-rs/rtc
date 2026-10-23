@@ -962,6 +962,15 @@ pub enum Error {
     /// Could not parse type.
     #[error("could not parse type")]
     ErrParseType,
+    /// Could not parse the candidate foundation.
+    #[error("could not parse foundation")]
+    ErrParseFoundation,
+    /// Could not parse a candidate extension.
+    #[error("could not parse extension")]
+    ErrParseExtension,
+    /// Could not parse the tcptype extension.
+    #[error("could not parse tcptype")]
+    ErrParseTcpType,
     /// Unknown candidate type.
     #[error("unknown candidate type")]
     ErrUnknownCandidateType,
@@ -1657,6 +1666,9 @@ pub enum Error {
     /// IVF version unknown, parser may not parse correctly.
     #[error("IVF version unknown, parser may not parse correctly")]
     ErrUnknownIVFVersion,
+    /// IVF timebase denominator or numerator is zero.
+    #[error("invalid media timebase")]
+    ErrInvalidMediaTimebase,
     /// Malformed rtpdump data.
     #[error("malformed rtpdump")]
     ErrRtpDumpMalformed,

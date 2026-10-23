@@ -2917,7 +2917,7 @@ mod tests {
             pc.ice_transport_mut()
                 .generate_restart_credentials(
                     "newufrag".to_owned(),
-                    "newpasswordlongenough".to_owned(),
+                    "newpasswordlongenough1234".to_owned(),
                 )
                 .expect("stage restart");
             pc.apply_ice_restart(Instant::now())
