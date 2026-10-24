@@ -2099,3 +2099,122 @@ fn sctp_rto_max_caps_association_timers() {
     }
     assert_eq!(60000, a.rto_mgr.get_rto());
 }
+
+/// Port of pion's `TestAssociationOptions_DefaultMTU`
+/// (association_options_test.go).
+///
+/// pion builds a client config with defaults, checks `Config.MTU` is
+/// `initialMTU` (1191), then that an association built from it keeps that MTU
+/// and derives its DATA-chunk payload budget with `maxPayloadSizeForMTU`.
+/// rtc-sctp has no MTU field on the transport config — the endpoint owns the
+/// payload budget, `EndpointConfig::default()` deriving it from `INITIAL_MTU`
+/// — so the same guarantees are asserted against the default budget.
+///
+/// One deliberate difference: rtc-sctp's `Association` reconstructs its MTU
+/// from the payload budget (`budget + COMMON_HEADER_SIZE +
+/// DATA_CHUNK_HEADER_SIZE`, see `Association::new`) instead of storing the
+/// configured MTU, so `mtu()` is the *effective* DATA-packet MTU. The up to
+/// `PADDING_MULTIPLE - 1` bytes a budget rounded down to the 4-byte chunk
+/// boundary gives up can never carry DATA: 1188 for the 1191 default, not
+/// 1191.
+#[test]
+fn association_options_default_mtu() {
+    assert_eq!(1191, INITIAL_MTU, "pion's initialMTU default");
+    let budget = EndpointConfig::default().get_max_payload_size();
+    assert_eq!(
+        max_payload_size_for_mtu(INITIAL_MTU),
+        budget,
+        "the default endpoint budget derives from INITIAL_MTU"
+    );
+
+    let a = Association::new(
+        None,
+        Arc::new(TransportConfig::default()),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+    assert_eq!(
+        budget, a.max_payload_size,
+        "the association keeps the endpoint's payload budget"
+    );
+    assert_eq!(
+        budget + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE,
+        a.mtu(),
+        "the association's MTU is the effective DATA-packet budget"
+    );
+}
+
+/// Port of pion's `TestAssociationOptions_ClientAndServer`
+/// (association_options_test.go).
+///
+/// pion dials a live client/server pair over a UDP pipe with every option set
+/// and asserts the values landed on both associations. rtc-sctp is sans-I/O,
+/// so both sides are constructed directly from one `TransportConfig` — the
+/// option-application scenario is identical, minus the network plumbing pion
+/// needs only to create the pair.
+///
+/// Every option rtc-sctp supports is asserted (the MTU-derived payload
+/// budget, receive buffer, max message size, RTO ceiling, the
+/// congestion-control knobs, zero-checksum acceptance). pion's `WithName`,
+/// `WithLoggerFactory`, `WithBlockWrite`, `WithMaxReassemblyQueueEntries` and
+/// `WithEnableInterleaving` have no rtc-sctp counterpart: name and logger are
+/// Go-runtime concerns, block-write belongs to pion's blocking async API, and
+/// the reassembly descriptor limit and message interleaving (RFC 8260) are
+/// not implemented.
+#[test]
+fn association_options_client_and_server() {
+    let transport = TransportConfig::default()
+        .with_max_receive_buffer_size(7777)
+        .with_max_message_size(30000)
+        .with_rto_max(Duration::from_millis(1000))
+        .with_min_cwnd(5000)
+        .with_fast_rtx_wnd(6000)
+        .with_cwnd_ca_step(7000)
+        .with_enable_zero_checksum(true);
+    // pion: WithMTU(1200)
+    let budget = max_payload_size_for_mtu(1200);
+
+    let client = Association::new(
+        None,
+        Arc::new(transport.clone()),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+    let server = Association::new(
+        Some(Arc::new(ServerConfig::new(transport.clone()))),
+        Arc::new(transport),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+
+    for (name, a) in [("client", &client), ("server", &server)] {
+        assert_eq!(1200, a.mtu(), "{name}: MTU mismatch");
+        assert_eq!(
+            7777, a.max_receive_buffer_size,
+            "{name}: maxReceiveBufferSize mismatch"
+        );
+        assert_eq!(30000, a.max_message_size, "{name}: maxMessageSize mismatch");
+        assert_eq!(5000, a.min_cwnd, "{name}: minCwnd mismatch");
+        assert_eq!(6000, a.fast_rtx_wnd, "{name}: fastRtxWnd mismatch");
+        assert_eq!(7000, a.cwnd_ca_step, "{name}: cwndCAStep mismatch");
+        assert_eq!(1000, a.rto_mgr.rto_max(), "{name}: rtoMax mismatch");
+        assert!(a.recv_zero_checksum, "{name}: recvZeroChecksum mismatch");
+        assert_eq!(
+            max_payload_size_for_mtu(1200),
+            a.max_payload_size,
+            "{name}: maxPayloadSize mismatch"
+        );
+    }
+}
