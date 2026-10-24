@@ -18,6 +18,12 @@ pub mod crypto_ccm;
 pub mod crypto_chacha20;
 /// AES-GCM authenticated encryption.
 pub mod crypto_gcm;
+/// The DTLS 1.3 key schedule: HKDF-Extract, HKDF-Expand-Label and Derive-Secret
+/// ([RFC 8446 §7.1], [RFC 9147 §5.9]), composed from the crypto provider's HKDF.
+///
+/// [RFC 8446 §7.1]: https://datatracker.ietf.org/doc/html/rfc8446#section-7.1
+/// [RFC 9147 §5.9]: https://datatracker.ietf.org/doc/html/rfc9147#section-5.9
+pub mod keyschedule;
 
 use std::convert::TryFrom;
 use std::sync::Arc;
