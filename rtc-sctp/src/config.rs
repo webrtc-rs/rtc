@@ -2,7 +2,9 @@ use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
 use crate::TimerConfig;
 use crate::association::timer::DEFAULT_RTO_MAX;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +25,10 @@ pub(crate) const INITIAL_MTU: u32 = 1191;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;
+/// Chunk header plus the fixed I-DATA header ([RFC 8260]): four bytes more than DATA.
+///
+/// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+pub(crate) const I_DATA_CHUNK_HEADER_SIZE: u32 = 20;
 /// Floor for [`max_payload_size_for_mtu`]: the smallest representable padded
 /// DATA packet — the 12-byte common header, the 16-byte DATA chunk header, and
 /// a 1..=4-byte payload padded to the 4-byte chunk boundary.
@@ -52,6 +58,22 @@ pub fn max_payload_size_for_mtu(mtu: u32) -> u32 {
     (mtu - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)) & !3
 }
 pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
+
+/// How the sender shares the wire between streams once user message interleaving ([RFC 8260])
+/// is negotiated. Without it, a message must be sent in full before the next one starts.
+///
+/// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamScheduler {
+    /// One chunk from each backlogged stream in turn.
+    RoundRobin,
+    /// Weighted fair queueing: backlogged streams share the wire in proportion to their weights
+    /// (see [`TransportConfig::with_stream_scheduler_weight`]); every stream weighs 1 unless
+    /// set otherwise. This is the default, as in pion.
+    #[default]
+    WeightedFairQueueing,
+}
 
 /// Config collects the arguments to create_association construction into
 /// a single structure
@@ -103,6 +125,17 @@ pub struct TransportConfig {
     /// The effective step is `max(MTU, cwnd_ca_step)`: `0` (the default) keeps
     /// the RFC 9260 `cwnd += MTU` growth.
     cwnd_ca_step: u32,
+    /// Whether user message interleaving ([RFC 8260]) is offered to the peer. Off by default:
+    /// browsers do not speak I-DATA, so offering it changes nothing against them, and a peer
+    /// that offers it only gets it if this side does too.
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    enable_interleaving: bool,
+    stream_scheduler: StreamScheduler,
+    stream_scheduler_weights: BTreeMap<u16, NonZeroU16>,
+    /// Cap on the DATA entries (or I-DATA messages) queued per stream awaiting reassembly;
+    /// zero disables the cap.
+    max_reassembly_queue_entries: u32,
 }
 
 impl Default for TransportConfig {
@@ -120,6 +153,10 @@ impl Default for TransportConfig {
             min_cwnd: 0,
             fast_rtx_wnd: 0,
             cwnd_ca_step: 0,
+            enable_interleaving: false,
+            stream_scheduler: StreamScheduler::default(),
+            stream_scheduler_weights: BTreeMap::new(),
+            max_reassembly_queue_entries: 0,
         }
     }
 }
@@ -234,6 +271,44 @@ impl TransportConfig {
         self
     }
 
+    /// Offers user message interleaving ([RFC 8260]) to the peer: I-DATA and I-FORWARD-TSN in
+    /// place of DATA and FORWARD-TSN. It is used only when the peer offers it too, so an
+    /// association with a peer that does not stays on plain DATA. Off by default.
+    ///
+    /// With interleaving, fragments of different messages (on different streams, or on the same
+    /// one) may share the wire: a large message no longer holds up everything behind it. How the
+    /// streams take turns is [`with_stream_scheduler`](Self::with_stream_scheduler).
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    pub fn with_enable_interleaving(mut self, value: bool) -> Self {
+        self.enable_interleaving = value;
+        self
+    }
+
+    /// Selects how interleaved streams share the wire; see [`StreamScheduler`]. Has no effect
+    /// unless interleaving is negotiated.
+    pub fn with_stream_scheduler(mut self, value: StreamScheduler) -> Self {
+        self.stream_scheduler = value;
+        self
+    }
+
+    /// Sets a stream's weight for [`StreamScheduler::WeightedFairQueueing`] and selects that
+    /// scheduler. A stream with twice the weight gets twice the share of the wire while several
+    /// streams have data waiting.
+    pub fn with_stream_scheduler_weight(mut self, stream_id: u16, weight: NonZeroU16) -> Self {
+        self.stream_scheduler = StreamScheduler::WeightedFairQueueing;
+        self.stream_scheduler_weights.insert(stream_id, weight);
+        self
+    }
+
+    /// Caps how many DATA entries (or I-DATA messages) a stream may hold while waiting for the
+    /// rest of their message; a peer that exceeds it is aborted with a protocol violation.
+    /// Mirrors pion's `WithMaxReassemblyQueueEntries`. Zero, the default, means no cap.
+    pub fn with_max_reassembly_queue_entries(mut self, value: u32) -> Self {
+        self.max_reassembly_queue_entries = value;
+        self
+    }
+
     /// Overrides the retransmission limits; see [`TimerConfig`].
     pub fn with_timer_config(mut self, value: TimerConfig) -> Self {
         self.timer_config = value;
@@ -300,6 +375,33 @@ impl TransportConfig {
     /// The configured congestion-avoidance growth step; `0` means one MTU.
     pub fn cwnd_ca_step(&self) -> u32 {
         self.cwnd_ca_step
+    }
+
+    /// Whether user message interleaving ([RFC 8260]) is offered to the peer.
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    pub fn enable_interleaving(&self) -> bool {
+        self.enable_interleaving
+    }
+
+    /// The configured stream scheduler.
+    pub fn stream_scheduler(&self) -> StreamScheduler {
+        self.stream_scheduler
+    }
+
+    /// The weight set for a stream with
+    /// [`with_stream_scheduler_weight`](Self::with_stream_scheduler_weight), if any.
+    pub fn stream_scheduler_weight(&self, stream_id: u16) -> Option<NonZeroU16> {
+        self.stream_scheduler_weights.get(&stream_id).copied()
+    }
+
+    pub(crate) fn stream_scheduler_weights(&self) -> &BTreeMap<u16, NonZeroU16> {
+        &self.stream_scheduler_weights
+    }
+
+    /// The configured reassembly queue cap; `0` means none.
+    pub fn max_reassembly_queue_entries(&self) -> u32 {
+        self.max_reassembly_queue_entries
     }
 }
 

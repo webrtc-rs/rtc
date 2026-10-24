@@ -7,6 +7,8 @@ use std::fmt;
 pub(crate) struct ChunkType(pub(crate) u8);
 
 pub(crate) const CT_PAYLOAD_DATA: ChunkType = ChunkType(0);
+/// RFC 8260 I-DATA.
+pub(crate) const CT_IDATA: ChunkType = ChunkType(64);
 pub(crate) const CT_INIT: ChunkType = ChunkType(1);
 pub(crate) const CT_INIT_ACK: ChunkType = ChunkType(2);
 pub(crate) const CT_SACK: ChunkType = ChunkType(3);
@@ -22,12 +24,15 @@ pub(crate) const CT_CWR: ChunkType = ChunkType(13);
 pub(crate) const CT_SHUTDOWN_COMPLETE: ChunkType = ChunkType(14);
 pub(crate) const CT_RECONFIG: ChunkType = ChunkType(130);
 pub(crate) const CT_FORWARD_TSN: ChunkType = ChunkType(192);
+/// RFC 8260 I-FORWARD-TSN.
+pub(crate) const CT_IFORWARD_TSN: ChunkType = ChunkType(194);
 
 impl fmt::Display for ChunkType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let others = format!("Unknown ChunkType: {}", self.0);
         let s = match *self {
             CT_PAYLOAD_DATA => "DATA",
+            CT_IDATA => "I-DATA",
             CT_INIT => "INIT",
             CT_INIT_ACK => "INIT-ACK",
             CT_SACK => "SACK",
@@ -43,6 +48,7 @@ impl fmt::Display for ChunkType {
             CT_SHUTDOWN_COMPLETE => "SHUTDOWN-COMPLETE",
             CT_RECONFIG => "RECONFIG", // Re-configuration
             CT_FORWARD_TSN => "FORWARD-TSN",
+            CT_IFORWARD_TSN => "I-FORWARD-TSN",
             _ => others.as_str(),
         };
         write!(f, "{}", s)
@@ -72,6 +78,8 @@ mod test {
             (CT_SHUTDOWN_COMPLETE, "SHUTDOWN-COMPLETE"),
             (CT_RECONFIG, "RECONFIG"),
             (CT_FORWARD_TSN, "FORWARD-TSN"),
+            (CT_IDATA, "I-DATA"),
+            (CT_IFORWARD_TSN, "I-FORWARD-TSN"),
             (ChunkType(255), "Unknown ChunkType: 255"),
         ];
 

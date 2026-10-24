@@ -6,6 +6,7 @@ use crate::chunk::chunk_error::ChunkError;
 use crate::chunk::chunk_forward_tsn::ChunkForwardTsn;
 use crate::chunk::chunk_header::*;
 use crate::chunk::chunk_heartbeat::ChunkHeartbeat;
+use crate::chunk::chunk_i_forward_tsn::ChunkIForwardTsn;
 use crate::chunk::chunk_init::ChunkInit;
 use crate::chunk::chunk_payload_data::ChunkPayloadData;
 use crate::chunk::chunk_reconfig::ChunkReconfig;
@@ -189,10 +190,11 @@ impl PartialDecode {
                 CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
                 CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
                 CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA | CT_IDATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
                 CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
                 CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
                 CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_IFORWARD_TSN => Box::new(ChunkIForwardTsn::unmarshal(&chunk_buf)?),
                 CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),
@@ -288,10 +290,11 @@ impl Packet {
                 CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
                 CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
                 CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA | CT_IDATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
                 CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
                 CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
                 CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_IFORWARD_TSN => Box::new(ChunkIForwardTsn::unmarshal(&chunk_buf)?),
                 CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),

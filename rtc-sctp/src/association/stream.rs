@@ -458,6 +458,11 @@ pub struct StreamState {
     pub(crate) default_payload_type: PayloadProtocolIdentifier,
     pub(crate) reassembly_queue: ReassemblyQueue,
     pub(crate) sequence_number: u16,
+    /// Whether outgoing messages go out as I-DATA (RFC 8260). Then `sequence_number` is
+    /// unused: ordered and unordered messages count their own 32-bit message identifiers.
+    pub(crate) use_idata: bool,
+    pub(crate) next_ordered_mid: u32,
+    pub(crate) next_unordered_mid: u32,
     pub(crate) state: RecvSendState,
     pub(crate) unordered: bool,
     pub(crate) reliability_type: ReliabilityType,
@@ -481,6 +486,9 @@ impl StreamState {
             default_payload_type,
             reassembly_queue: ReassemblyQueue::new(stream_identifier),
             sequence_number: 0,
+            use_idata: false,
+            next_ordered_mid: 0,
+            next_unordered_mid: 0,
             state: RecvSendState::ReadWritable,
             unordered: false,
             reliability_type: ReliabilityType::Reliable,
@@ -491,8 +499,18 @@ impl StreamState {
         }
     }
 
-    pub(crate) fn handle_data(&mut self, pd: &ChunkPayloadData) -> bool {
-        self.reassembly_queue.push(pd.clone())
+    pub(crate) fn handle_data(&mut self, pd: &ChunkPayloadData) -> Result<bool> {
+        self.reassembly_queue.push_checked(pd.clone())
+    }
+
+    /// An I-FORWARD-TSN abandoned this stream's ordered messages up to `mid`.
+    pub(crate) fn handle_forward_tsn_for_ordered_mid(&mut self, mid: u32) {
+        self.reassembly_queue.forward_tsn_for_ordered_mid(mid);
+    }
+
+    /// An I-FORWARD-TSN abandoned this stream's unordered messages up to `mid`.
+    pub(crate) fn handle_forward_tsn_for_unordered_mid(&mut self, mid: u32) {
+        self.reassembly_queue.forward_tsn_for_unordered_mid(mid);
     }
 
     pub(crate) fn handle_forward_tsn_for_ordered(&mut self, ssn: u16) {
@@ -545,6 +563,22 @@ impl StreamState {
 
         let mut chunks = vec![];
 
+        // RFC 8260: with I-DATA every message, ordered or not, gets its own identifier from
+        // a per-stream counter; the 16-bit SSN of plain DATA is not used.
+        let mid = if self.use_idata {
+            let counter = if unordered {
+                &mut self.next_unordered_mid
+            } else {
+                &mut self.next_ordered_mid
+            };
+            let mid = *counter;
+            *counter = counter.wrapping_add(1);
+            mid
+        } else {
+            0
+        };
+        let mut fsn = 0u32;
+
         while remaining != 0 {
             let fragment_size = std::cmp::min(self.max_payload_size as usize, remaining); //self.association.max_payload_size
 
@@ -565,11 +599,20 @@ impl StreamState {
                 ending_fragment: remaining - fragment_size == 0,
                 immediate_sack: false,
                 payload_type: ppi,
-                stream_sequence_number: self.sequence_number,
+                stream_sequence_number: if self.use_idata {
+                    // The SSN field carries the low 16 bits of the identifier.
+                    mid as u16
+                } else {
+                    self.sequence_number
+                },
+                message_identifier: mid,
+                fragment_sequence_number: fsn,
+                idata: self.use_idata,
                 ..Default::default()
             };
 
             chunks.push(chunk);
+            fsn += 1;
 
             remaining -= fragment_size;
             i += fragment_size;
@@ -579,7 +622,7 @@ impl StreamState {
         // Note: When transmitting ordered and unordered data, an endpoint does
         // not increment its Stream Sequence Number when transmitting a DATA
         // chunk with U flag set to 1.
-        if !unordered {
+        if !self.use_idata && !unordered {
             self.sequence_number = self.sequence_number.wrapping_add(1);
         }
 
