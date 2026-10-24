@@ -159,6 +159,24 @@ impl PayloadQueue {
         Some(c)
     }
 
+    /// Drops every queued TSN up to and including `tsn`, in time proportional to what is
+    /// queued rather than to how far `tsn` is from the cumulative point. A FORWARD-TSN may name
+    /// a TSN billions ahead; stepping there one TSN at a time would stall the association.
+    pub(crate) fn advance_cumulative(&mut self, tsn: u32) {
+        while let Some(&front) = self.sorted.front() {
+            if !sna32lte(front, tsn) {
+                break;
+            }
+            if self.pop(front).is_none() {
+                // Index disagreement: still make progress, never loop.
+                self.sorted.pop_front();
+                if let Some(c) = self.chunk_map.remove(&front) {
+                    self.n_bytes = self.n_bytes.saturating_sub(c.user_data.len());
+                }
+            }
+        }
+    }
+
     pub(crate) fn message_tsns(&self, id: MessageId) -> Vec<u32> {
         self.message_tsns
             .get(&id)

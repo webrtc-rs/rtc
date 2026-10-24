@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `video/vp9` (`profile-id`, default 0) and `video/av1` (`profile`, default 0) like pion's
   `internal/fmtp`, and compares clock rate and channel count (with pion's defaults), so
   `telephone-event/8000` no longer matches `telephone-event/48000`.
+- `rtc-sctp`: user message interleaving (RFC 8260), wire-compatible with pion/sctp v1.12.0: I-DATA
+  and I-FORWARD-TSN chunks, negotiation through the supported-extensions parameter, per-stream
+  32-bit message identifiers and fragment sequence numbers, and a send scheduler (round robin or
+  weighted fair queueing) so a large message no longer holds up every stream behind it. It is off
+  by default (browsers do not speak I-DATA, and pion's default of "on" is not followed) and only
+  used when both sides offer it: `TransportConfig::with_enable_interleaving`,
+  `with_stream_scheduler`, `with_stream_scheduler_weight`, `StreamScheduler`. A peer that does not
+  offer it keeps plain DATA and FORWARD-TSN. `Association::metadata()` reports what was
+  negotiated (`AssociationMetadata`, `PartialReliabilityMode`).
+- `rtc-sctp`: `TransportConfig::with_max_reassembly_queue_entries` (pion
+  `WithMaxReassemblyQueueEntries`): a peer that makes one stream hold more partial DATA entries or
+  I-DATA messages than the cap is aborted with a protocol violation. Off by default.
 
 ### Changed
 - `rtc`, fixes found by porting pion's tests: an answer takes the complement of an explicit
@@ -65,6 +77,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc-sctp`, found by porting pion's `TestHandleForwardTSN`: a FORWARD-TSN naming a TSN far ahead
+  of the cumulative TSN made the receiver step there one TSN at a time (about 4 s of CPU for a jump
+  of 2^31, in a release build, per chunk; far worse in debug), so an authenticated peer could stall
+  the association with a single small chunk. The cumulative TSN now jumps and only the queued
+  chunks it covers are dropped.
+- `rtc-sctp`, found by porting pion's `TestReassemblyQueue`: an unfragmented message and a
+  fragment sharing a stream sequence number (the SSN wrapped, or the peer misbehaves) were glued
+  into one delivered message; a fragment now only joins a fragmented set of its SSN. A duplicate
+  fragment of an ordered message could also be counted twice in the queued byte total.
+- `rtc-sctp`: TSN, stream-reset sequence number and reassembly arithmetic wraps instead of
+  overflowing at `u32::MAX` (a panic in debug builds).
 - `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
   negotiated media-only never opened, because the SCTP client side was started only by the
   DTLS-handshake-complete event, which had long passed; it now starts when SCTP is started over

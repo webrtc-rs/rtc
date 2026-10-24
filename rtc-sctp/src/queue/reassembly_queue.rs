@@ -181,7 +181,7 @@ impl Chunks {
                 //   used by the receiver to reassemble the message.  This means that the
                 //   TSNs for each fragment of a fragmented user message MUST be strictly
                 //   sequential.
-                if c.tsn != last_tsn + 1 {
+                if c.tsn != last_tsn.wrapping_add(1) {
                     // mid or end fragment is missing
                     return false;
                 }
@@ -381,36 +381,52 @@ impl ReassemblyQueue {
             // set instead of scanning linearly (O(N) per arriving chunk when
             // the application drains slower than data arrives).
             let ssn = chunk.stream_sequence_number;
-            let idx = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
-            let exists = self.ordered.get(idx).is_some_and(|s| s.ssn == ssn);
+            let first = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
+            let end = first
+                + self
+                    .ordered
+                    .iter()
+                    .skip(first)
+                    .take_while(|s| s.ssn == ssn)
+                    .count();
+
+            // A fragment joins the fragmented set of its SSN. An unfragmented message never
+            // does, in either direction: a lone chunk that happens to share an SSN with a
+            // fragment (the SSN wrapped, or the peer is misbehaving) is a different message,
+            // and gluing the two would deliver bytes nobody sent.
+            let is_fragmented = |c: &ChunkPayloadData| !(c.beginning_fragment && c.ending_fragment);
+            let target = if is_fragmented(&chunk) {
+                (first..end).find(|&i| self.ordered[i].chunks.first().is_some_and(is_fragmented))
+            } else {
+                None
+            };
 
             if self.max_entries > 0 && self.limit_reached(self.ordered_data_entry_count()) {
                 // A fragment that is already queued is a duplicate, not growth.
-                let duplicate =
-                    exists && self.ordered[idx].chunks.iter().any(|c| c.tsn == chunk.tsn);
+                let duplicate = target
+                    .is_some_and(|i| self.ordered[i].chunks.iter().any(|c| c.tsn == chunk.tsn));
                 if !duplicate {
                     return Err(Error::ErrReassemblyQueueLimitExceeded);
                 }
             }
 
-            if exists {
-                let before = self.ordered[idx].chunks.len();
-                let tsn_len = chunk.user_data.len();
-                let complete = self.ordered[idx].push(chunk);
+            if let Some(i) = target {
+                let before = self.ordered[i].chunks.len();
+                let len = chunk.user_data.len();
+                let complete = self.ordered[i].push(chunk);
                 // A duplicate fragment is dropped by the set without growing it.
-                if self.ordered[idx].chunks.len() > before {
-                    self.n_bytes += tsn_len;
+                if self.ordered[i].chunks.len() > before {
+                    self.n_bytes += len;
                 }
                 return Ok(complete);
             }
 
-            // If not found, create a new chunkSet and insert it in SSN order
-            // (this branch is only reached for ordered chunks).
+            // Otherwise start a new set, after the ones that already hold this SSN.
             self.n_bytes += chunk.user_data.len();
             let mut cset = Chunks::new(self.next_arrival, ssn, chunk.payload_type, vec![]);
             self.next_arrival += 1;
             let ok = cset.push(chunk);
-            self.ordered.insert(idx, cset);
+            self.ordered.insert(end, cset);
 
             Ok(ok)
         }
@@ -511,7 +527,7 @@ impl ReassemblyQueue {
             }
 
             // Check if contiguous in TSN
-            if c.tsn != last_tsn + 1 {
+            if c.tsn != last_tsn.wrapping_add(1) {
                 start_idx = -1;
                 continue;
             }
@@ -735,6 +751,32 @@ impl ReassemblyQueue {
         } else {
             self.n_bytes = 0;
         }
+    }
+
+    /// Number of ordered I-DATA messages queued, complete or not.
+    #[cfg(test)]
+    pub(crate) fn ordered_mid_len(&self) -> usize {
+        self.ordered_mid.len()
+    }
+
+    /// Message identifiers of the queued ordered I-DATA messages, in delivery order.
+    #[cfg(test)]
+    pub(crate) fn ordered_mids(&self) -> Vec<u32> {
+        self.ordered_mid.iter().map(|s| s.mid).collect()
+    }
+
+    /// Message identifiers of the complete unordered I-DATA messages waiting to be read.
+    #[cfg(test)]
+    pub(crate) fn unordered_ready_mids(&self) -> Vec<u32> {
+        self.unordered_mid.iter().map(|s| s.mid).collect()
+    }
+
+    /// Message identifiers of the unordered I-DATA messages still missing fragments.
+    #[cfg(test)]
+    pub(crate) fn unordered_open_mids(&self) -> Vec<u32> {
+        let mut mids: Vec<u32> = self.unordered_mid_open.keys().copied().collect();
+        mids.sort_unstable();
+        mids
     }
 
     pub(crate) fn get_num_bytes(&self) -> usize {

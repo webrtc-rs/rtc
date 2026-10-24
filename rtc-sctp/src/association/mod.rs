@@ -13,7 +13,9 @@ use crate::chunk::{
     chunk_forward_tsn::ChunkForwardTsnStream,
     chunk_heartbeat::ChunkHeartbeat,
     chunk_heartbeat_ack::ChunkHeartbeatAck,
-    chunk_i_forward_tsn::{ChunkIForwardTsn, ChunkIForwardTsnStream},
+    chunk_i_forward_tsn::{
+        ChunkIForwardTsn, ChunkIForwardTsnStream, normalize_i_forward_tsn_streams,
+    },
     chunk_init::ChunkInit,
     chunk_init::ChunkInitAck,
     chunk_payload_data::ChunkPayloadData,
@@ -72,6 +74,8 @@ pub(crate) mod timer;
 
 #[cfg(test)]
 mod association_test;
+#[cfg(test)]
+mod interleaving_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -1208,8 +1212,15 @@ impl Association {
 
     #[allow(clippy::borrowed_box)]
     fn handle_chunk(&mut self, p: &Packet, chunk: &Box<dyn Chunk>, now: Instant) -> Result<()> {
-        chunk.check()?;
         let chunk_any = chunk.as_any();
+        if let Err(err) = chunk.check() {
+            // A malformed I-FORWARD-TSN is the peer's protocol violation, and the peer is told.
+            if chunk_any.is::<ChunkIForwardTsn>() {
+                self.abort_protocol_violation(&err.to_string());
+                return Ok(());
+            }
+            return Err(err);
+        }
         let packets = if let Some(c) = chunk_any.downcast_ref::<ChunkInit>() {
             if c.is_ack {
                 self.handle_init_ack(p, c, now)?
@@ -1600,6 +1611,7 @@ impl Association {
                     self.timers.stop(Timer::T1Cookie);
                     self.stored_cookie_echo = None;
 
+                    self.update_interleaving_state()?;
                     self.events.push_back(Event::Connected);
                     self.set_state(AssociationState::Established);
                     self.handshake_completed = true;
@@ -1635,6 +1647,7 @@ impl Association {
         self.timers.stop(Timer::T1Cookie);
         self.stored_cookie_echo = None;
 
+        self.update_interleaving_state()?;
         self.events.push_back(Event::Connected);
         self.set_state(AssociationState::Established);
         self.handshake_completed = true;
@@ -1643,6 +1656,19 @@ impl Association {
     }
 
     fn handle_data(&mut self, d: &ChunkPayloadData) -> Result<Vec<Packet>> {
+        // User data is taken only while it can still be delivered: not before the handshake
+        // completed, and not once the peer announced the end of its data (SHUTDOWN) or this side
+        // sent SHUTDOWN ACK. A retransmission of what was already acknowledged is not lost by
+        // ignoring it, and anything else is the peer's to resend.
+        if !matches!(
+            self.state(),
+            AssociationState::Established
+                | AssociationState::ShutdownPending
+                | AssociationState::ShutdownSent
+        ) {
+            return Ok(vec![]);
+        }
+
         // RFC 8260 Sec 3: once user message interleaving is negotiated every user message
         // travels as I-DATA, and without it none may.
         if d.idata != self.use_interleaving {
@@ -1927,10 +1953,7 @@ impl Association {
         //   chunk,
 
         // Advance peer_last_tsn
-        while sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
-            self.payload_queue.pop(self.peer_last_tsn + 1); // may not exist
-            self.peer_last_tsn += 1;
-        }
+        self.advance_peer_last_tsn(c.new_cumulative_tsn);
 
         // Report new peer_last_tsn value and abandoned largest SSN value to
         // corresponding streams so that the abandoned chunks can be removed
@@ -1962,6 +1985,14 @@ impl Association {
         self.handle_peer_last_tsn_and_acknowledgement(false)
     }
 
+    /// Moves the cumulative TSN point to `new_cumulative_tsn` (which is ahead of it) and drops
+    /// the queued chunks it now covers. The peer chooses how far ahead that is, so this must not
+    /// walk the gap TSN by TSN.
+    fn advance_peer_last_tsn(&mut self, new_cumulative_tsn: u32) {
+        self.payload_queue.advance_cumulative(new_cumulative_tsn);
+        self.peer_last_tsn = new_cumulative_tsn;
+    }
+
     fn handle_i_forward_tsn(&mut self, c: &ChunkIForwardTsn) -> Result<Vec<Packet>> {
         trace!("[{}] I-FwdTSN: {}", self.side, c);
 
@@ -1983,14 +2014,12 @@ impl Association {
         }
 
         // Same TSN handling as FORWARD-TSN (RFC 3758 Sec 3.6): move the cumulative TSN point.
-        while sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
-            self.payload_queue.pop(self.peer_last_tsn.wrapping_add(1)); // may not exist
-            self.peer_last_tsn = self.peer_last_tsn.wrapping_add(1);
-        }
+        self.advance_peer_last_tsn(c.new_cumulative_tsn);
 
         // Unlike FORWARD-TSN, the chunk names the skipped messages of ordered and of
-        // unordered streams alike, so each stream is told only what concerns it.
-        for forwarded in &c.streams {
+        // unordered streams alike, so each stream is told only what concerns it. A stream
+        // named twice is skipped to the later message.
+        for forwarded in normalize_i_forward_tsn_streams(&c.streams).iter() {
             if let Some(s) = self.streams.get_mut(&forwarded.identifier) {
                 if forwarded.unordered {
                     s.handle_forward_tsn_for_unordered_mid(forwarded.message_identifier);
@@ -2070,8 +2099,12 @@ impl Association {
         // Meaning, if peer_last_tsn+1 points to a chunk that is received,
         // advance peer_last_tsn until peer_last_tsn+1 points to unreceived chunk.
         //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
-        while self.payload_queue.pop(self.peer_last_tsn + 1).is_some() {
-            self.peer_last_tsn += 1;
+        while self
+            .payload_queue
+            .pop(self.peer_last_tsn.wrapping_add(1))
+            .is_some()
+        {
+            self.peer_last_tsn = self.peer_last_tsn.wrapping_add(1);
             //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
 
             let rst_reqs: Vec<ParamOutgoingResetRequest> =
@@ -2528,7 +2561,7 @@ impl Association {
         // reconfig_response_sequence_number.
         if !sis_to_reset.is_empty() {
             let rsn = self.generate_next_rsn();
-            let tsn = self.my_next_tsn - 1;
+            let tsn = self.my_next_tsn.wrapping_sub(1);
 
             let c = ChunkReconfig {
                 param_a: Some(Box::new(ParamOutgoingResetRequest {
@@ -2817,12 +2850,12 @@ impl Association {
 
             if !sis_to_reset.is_empty() {
                 let rsn = self.generate_next_rsn();
-                let tsn = self.my_next_tsn - 1;
+                let tsn = self.my_next_tsn.wrapping_sub(1);
                 debug!(
                     "[{}] sending RECONFIG: rsn={} tsn={} streams={:?}",
                     self.side,
                     rsn,
-                    self.my_next_tsn - 1,
+                    self.my_next_tsn.wrapping_sub(1),
                     sis_to_reset
                 );
 
@@ -3573,7 +3606,7 @@ impl Association {
     /// generate_next_rsn returns the my_next_rsn and increases it. The caller should hold the lock.
     fn generate_next_rsn(&mut self) -> u32 {
         let rsn = self.my_next_rsn;
-        self.my_next_rsn += 1;
+        self.my_next_rsn = self.my_next_rsn.wrapping_add(1);
         rsn
     }
 

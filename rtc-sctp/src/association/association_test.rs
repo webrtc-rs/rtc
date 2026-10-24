@@ -1721,6 +1721,7 @@ fn test_reopened_receive_window_is_announced_without_waiting_for_a_probe() -> Re
 #[test]
 fn test_association_max_tsn_offset() -> Result<()> {
     let mut a = create_association(TransportConfig::default());
+    a.set_state(AssociationState::Established);
     let chunk_at = |a: &Association, offset: u32| ChunkPayloadData {
         beginning_fragment: true,
         ending_fragment: true,

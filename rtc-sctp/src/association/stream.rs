@@ -534,7 +534,7 @@ impl StreamState {
             .forward_tsn_for_unordered(new_cumulative_tsn);
     }
 
-    fn packetize(
+    pub(crate) fn packetize(
         &mut self,
         now: Instant,
         raw: &Bytes,
