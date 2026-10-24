@@ -1003,6 +1003,15 @@ impl rcgen::PublicKeyData for FabricatedRsaKey {
 // the certificate is parsed, before any verification work, for the RSA and RSA-PSS-RSAE
 // algorithms pion checks. The `bits <= maxPeerRSAKeyBits` PSS case is not asserted: it needs
 // RSA-PSS verification, which no crypto provider implements.
+/// The rustls provider for the backend this build selects. rustls cannot pick a process default
+/// when both backend features are on (or neither), and a test must not depend on that.
+fn rustls_provider() -> std::sync::Arc<rustls::crypto::CryptoProvider> {
+    #[cfg(feature = "crypto-ring")]
+    return std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    #[cfg(all(not(feature = "crypto-ring"), feature = "crypto-aws-lc-rs"))]
+    return std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+}
+
 #[test]
 fn test_peer_rsa_key_size_limit() -> Result<()> {
     let provider = crypto::default_provider().map_err(crypto_error)?;
@@ -1022,13 +1031,19 @@ fn test_peer_rsa_key_size_limit() -> Result<()> {
         .add(CertificateDer::from(issuer_der.clone()))
         .map_err(|e| Error::Other(e.to_string()))?;
     let client_verifier: std::sync::Arc<dyn rustls::server::danger::ClientCertVerifier> =
-        rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(roots.clone()))
-            .build()
-            .map_err(|e| Error::Other(e.to_string()))?;
+        rustls::server::WebPkiClientVerifier::builder_with_provider(
+            std::sync::Arc::new(roots.clone()),
+            rustls_provider(),
+        )
+        .build()
+        .map_err(|e| Error::Other(e.to_string()))?;
     let server_verifier: std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier> =
-        rustls::client::WebPkiServerVerifier::builder(std::sync::Arc::new(roots))
-            .build()
-            .map_err(|e| Error::Other(e.to_string()))?;
+        rustls::client::WebPkiServerVerifier::builder_with_provider(
+            std::sync::Arc::new(roots),
+            rustls_provider(),
+        )
+        .build()
+        .map_err(|e| Error::Other(e.to_string()))?;
 
     let leaf_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
         .map_err(|e| Error::Other(e.to_string()))?;
