@@ -3,12 +3,12 @@
 //! I-FORWARD-TSN.
 
 use super::*;
-use crate::StreamScheduler;
 use crate::chunk::Chunk;
 use crate::chunk::chunk_i_forward_tsn::ChunkIForwardTsn;
 use crate::chunk::chunk_type::*;
 use crate::param::param_supported_extensions::ParamSupportedExtensions;
 use crate::util::{sna32gt, sna32lt};
+use crate::{PartialReliabilityMode, StreamScheduler};
 use std::num::NonZeroU16;
 
 fn interleaving_config(enabled: bool) -> TransportConfig {
@@ -99,6 +99,17 @@ fn interleaving_is_negotiated_only_when_both_sides_offer_it() {
             pair_with(interleaving_config(client), interleaving_config(server));
         let expect = client && server;
 
+        let metadata = pair.client_conn_mut(client_ch).metadata().unwrap();
+        assert_eq!(expect, metadata.message_interleaving_enabled);
+        assert_eq!(
+            if expect {
+                PartialReliabilityMode::IForwardTsn
+            } else {
+                PartialReliabilityMode::ForwardTsn
+            },
+            metadata.partial_reliability_mode
+        );
+        assert_eq!(Some(metadata), pair.server_conn_mut(server_ch).metadata());
         let assoc = pair.client_conn_mut(client_ch);
         assert_eq!(
             expect, assoc.use_interleaving,
@@ -544,4 +555,132 @@ fn a_reset_stream_restarts_its_message_identifiers() {
         1,
         pair.client_conn_mut(client_ch).streams[&si].next_ordered_mid
     );
+}
+
+/// Hands `chunk`, built by `from`'s association, to `to` as if it had come over the wire.
+fn inject(pair: &mut Pair, from_client: bool, handle: AssociationHandle, chunk: Box<dyn Chunk>) {
+    let raw = if from_client {
+        pair.client_conn_mut(handle)
+            .create_packet(vec![chunk])
+            .marshal()
+            .unwrap()
+    } else {
+        pair.server_conn_mut(handle)
+            .create_packet(vec![chunk])
+            .marshal()
+            .unwrap()
+    };
+    let at = pair.time;
+    if from_client {
+        pair.server.inbound.push_back((at, None, raw));
+    } else {
+        pair.client.inbound.push_back((at, None, raw));
+    }
+}
+
+/// Reasons of the protocol-violation ABORTs `wire` carries.
+fn abort_reasons(wire: &[Bytes]) -> Vec<String> {
+    let mut reasons = vec![];
+    for c in chunks_of(wire) {
+        if let Some(abort) = c.as_any().downcast_ref::<ChunkAbort>() {
+            for cause in &abort.error_causes {
+                if cause.code == PROTOCOL_VIOLATION {
+                    reasons.push(String::from_utf8_lossy(&cause.raw).into_owned());
+                }
+            }
+        }
+    }
+    reasons
+}
+
+#[test]
+fn a_chunk_that_contradicts_the_negotiation_aborts_with_a_protocol_violation() {
+    // pion: TestAssociationInterleavingProtocolViolationWrongPayloadChunkType and
+    // ...WrongForwardTSNChunkType, over the wire.
+    let payload = |idata: bool| -> Box<dyn Chunk> {
+        Box::new(ChunkPayloadData {
+            idata,
+            tsn: 1,
+            stream_identifier: 1,
+            payload_type: PayloadProtocolIdentifier::Binary,
+            user_data: Bytes::from_static(b"bad"),
+            beginning_fragment: true,
+            ending_fragment: true,
+            ..Default::default()
+        })
+    };
+    let forward: Box<dyn Fn() -> Box<dyn Chunk>> = Box::new(|| {
+        Box::new(ChunkForwardTsn {
+            new_cumulative_tsn: 1,
+            streams: vec![crate::chunk::chunk_forward_tsn::ChunkForwardTsnStream {
+                identifier: 1,
+                sequence: 0,
+            }],
+        })
+    });
+    let i_forward: Box<dyn Fn() -> Box<dyn Chunk>> = Box::new(|| {
+        Box::new(ChunkIForwardTsn {
+            new_cumulative_tsn: 1,
+            streams: vec![crate::chunk::chunk_i_forward_tsn::ChunkIForwardTsnStream {
+                identifier: 1,
+                unordered: false,
+                message_identifier: 0,
+            }],
+        })
+    });
+    type Make<'a> = &'a dyn Fn() -> Box<dyn Chunk>;
+    let data_plain: Make = &|| payload(false);
+    let data_idata: Make = &|| payload(true);
+    let cases: Vec<(&str, bool, bool, Make, &str)> = vec![
+        (
+            "DATA after interleaving negotiated",
+            true,
+            true,
+            data_plain,
+            "received DATA with interleaving negotiated",
+        ),
+        (
+            "I-DATA without interleaving negotiated",
+            true,
+            false,
+            data_idata,
+            "received I-DATA without interleaving negotiated",
+        ),
+        (
+            "FORWARD-TSN after interleaving negotiated",
+            true,
+            true,
+            &*forward,
+            "received FORWARD-TSN with interleaving enabled",
+        ),
+        (
+            "I-FORWARD-TSN without interleaving negotiated",
+            false,
+            false,
+            &*i_forward,
+            "received I-FORWARD-TSN without support",
+        ),
+    ];
+    for (name, client, server, make, reason) in cases {
+        let (mut pair, client_ch, server_ch) =
+            pair_with(interleaving_config(client), interleaving_config(server));
+        pair.server_wire.clear();
+        inject(&mut pair, true, client_ch, make());
+        pair.drive();
+        // Let the client read what the server sent last.
+        pair.drive_client();
+        assert_eq!(
+            vec![reason.to_string()],
+            abort_reasons(&pair.server_wire),
+            "{name}"
+        );
+        assert!(
+            pair.server_conn_mut(server_ch).is_closed(),
+            "{name}: the offender is cut off"
+        );
+        assert!(
+            pair.client_conn_mut(client_ch).is_closed(),
+            "{name}: and the peer learns of it"
+        );
+    }
 }

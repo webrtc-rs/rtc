@@ -133,21 +133,79 @@ fn test_association_interleaving_finalized_on_established_transition() {
 }
 
 #[test]
-fn test_association_data_ignored_outside_receive_states_is_not_a_protocol_violation() {
-    // pion: TestAssociationDataIgnoredOutsideReceiveStates concerns whether the chunk kind is
-    // checked before the state; the state gate itself is covered by
-    // `data_is_ignored_outside_the_receive_states`.
+fn test_association_data_ignored_outside_receive_states() {
+    // pion: TestAssociationDataIgnoredOutsideReceiveStates. DATA that arrives before the
+    // handshake completed, or after the peer's SHUTDOWN, is dropped before anything looks at
+    // it: no protocol violation even for a chunk kind that does not match the negotiation, no
+    // movement of the cumulative TSN, and not even counted.
+    for (name, state) in [
+        ("before established", AssociationState::CookieEchoed),
+        ("shutdown received", AssociationState::ShutdownReceived),
+        ("shutdown ack sent", AssociationState::ShutdownAckSent),
+    ] {
+        let mut a = association_with_mtu(interleaving(), INITIAL_MTU);
+        a.local_interleaving = true;
+        a.peer_interleaving = true;
+        a.use_interleaving = false;
+        a.peer_last_tsn = 0;
+        a.set_state(state);
+        let mut d = idata_chunk(1, 1, 1);
+        d.ending_fragment = true;
+        d.user_data = Bytes::from_static(b"ignored");
+
+        let packets = a.handle_data(&d).unwrap();
+
+        assert!(packets.is_empty(), "{name}");
+        assert!(protocol_violation_reason(&a).is_none(), "{name}");
+        assert_eq!(0, a.peer_last_tsn, "{name}");
+        assert_eq!(0, a.stats.get_num_datas(), "{name}");
+        assert_eq!(state, a.state(), "{name}");
+    }
+}
+
+#[test]
+fn test_association_metadata_not_ready_before_handshake() {
+    // pion: TestAssociationMetadataNotReadyBeforeHandshake
+    let a = association_with_mtu(TransportConfig::default(), INITIAL_MTU);
+    assert_eq!(None, a.metadata());
+}
+
+#[test]
+fn test_association_metadata_reports_the_negotiation() {
+    // The part of pion's TestAssociationInterleavingNegotiationPayloadChunkType that reads the
+    // metadata, and (with TestAssociationMetadataJSON, which is about Go's JSON tags and has
+    // no counterpart here) the fields it carries.
     let mut a = association_with_mtu(interleaving(), INITIAL_MTU);
-    a.local_interleaving = true;
     a.peer_interleaving = true;
-    a.use_interleaving = false;
-    a.set_state(AssociationState::CookieEchoed);
-    let mut d = idata_chunk(1, 1, 1);
-    d.ending_fragment = true;
-    d.user_data = Bytes::from_static(b"ignored");
-    let packets = a.handle_data(&d).unwrap();
-    assert!(packets.is_empty());
-    assert!(protocol_violation_reason(&a).is_none());
+    a.peer_iforward_tsn = true;
+    a.peer_forward_tsn = true;
+    a.send_zero_checksum = true;
+    a.recv_zero_checksum = true;
+    a.update_interleaving_state().unwrap();
+    a.set_state(AssociationState::Established);
+    assert_eq!(
+        Some(AssociationMetadata {
+            message_interleaving_enabled: true,
+            partial_reliability_mode: PartialReliabilityMode::IForwardTsn,
+            zero_checksum_sending_enabled: true,
+            zero_checksum_receiving_enabled: true,
+        }),
+        a.metadata()
+    );
+
+    a.peer_interleaving = false;
+    a.update_interleaving_state().unwrap();
+    assert_eq!(
+        Some(PartialReliabilityMode::ForwardTsn),
+        a.metadata().map(|m| m.partial_reliability_mode)
+    );
+
+    a.peer_forward_tsn = false;
+    a.update_interleaving_state().unwrap();
+    assert_eq!(
+        Some(PartialReliabilityMode::None),
+        a.metadata().map(|m| m.partial_reliability_mode)
+    );
 }
 
 #[test]
