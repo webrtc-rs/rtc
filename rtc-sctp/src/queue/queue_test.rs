@@ -1035,6 +1035,49 @@ fn test_reassembly_queue_forward_tsn_for_unordered_framents() -> Result<()> {
     Ok(())
 }
 
+// pion: "fragmented and unfragmented chunks with the same ssn". A complete
+// unfragmented message must not be merged with a fragment of another message
+// that reuses the same SSN (SSN wraparound): each gets its own chunk set.
+#[test]
+fn test_reassembly_queue_fragmented_and_unfragmented_chunks_with_the_same_ssn() -> Result<()> {
+    let mut rq = ReassemblyQueue::new(0);
+
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+    let ssn: u16 = 6;
+
+    let chunk = ChunkPayloadData {
+        payload_type: org_ppi,
+        tsn: 12,
+        beginning_fragment: true,
+        ending_fragment: true,
+        stream_sequence_number: ssn,
+        user_data: Bytes::from_static(b"DEF"),
+        ..Default::default()
+    };
+
+    let complete = rq.push(chunk);
+    assert!(complete, "chunk set should be complete");
+    assert_eq!(3, rq.get_num_bytes(), "num bytes mismatch");
+
+    let chunk = ChunkPayloadData {
+        payload_type: org_ppi,
+        beginning_fragment: true,
+        tsn: 11,
+        stream_sequence_number: ssn,
+        user_data: Bytes::from_static(b"ABC"),
+        ..Default::default()
+    };
+
+    let complete = rq.push(chunk);
+    assert!(!complete, "chunk set should not be complete yet");
+    assert_eq!(6, rq.get_num_bytes(), "num bytes mismatch");
+
+    assert_eq!(2, rq.ordered.len(), "there should be two chunks");
+    assert_eq!(6, rq.get_num_bytes(), "num bytes mismatch");
+
+    Ok(())
+}
+
 #[test]
 fn test_chunk_set_empty_chunk_set() -> Result<()> {
     let cset = Chunks::new(0, 0, PayloadProtocolIdentifier::default(), vec![]);

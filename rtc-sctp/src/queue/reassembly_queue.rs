@@ -256,18 +256,39 @@ impl ReassemblyQueue {
                 return false;
             }
 
-            self.n_bytes += chunk.user_data.len();
-
+            let ssn = chunk.stream_sequence_number;
+            // A fragment only joins an existing set when both the incoming
+            // chunk and the set's first chunk are fragmented: a complete
+            // (single-chunk) message starts its own set even when a stale set
+            // with the same SSN is still queued (SSN wraparound), rather than
+            // merging two different messages into one corrupted set. This
+            // mirrors pion, which looks up an existing set only for fragmented
+            // chunks and only merges into a set whose first chunk is
+            // fragmented.
+            let fragmented = !(chunk.beginning_fragment && chunk.ending_fragment);
             // `ordered` is kept sorted by SSN, so binary-search for the chunk
             // set instead of scanning linearly (O(N) per arriving chunk when
             // the application drains slower than data arrives).
-            let ssn = chunk.stream_sequence_number;
             let idx = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
-            if let Some(s) = self.ordered.get_mut(idx)
+            if fragmented
+                && let Some(s) = self.ordered.get_mut(idx)
                 && s.ssn == ssn
+                && s.chunks
+                    .first()
+                    .is_some_and(|c| !(c.beginning_fragment && c.ending_fragment))
             {
+                // A duplicate TSN is rejected without counting its bytes, as
+                // pion does (the association's receive path filters duplicates
+                // before the reassembly queue ever sees them).
+                if s.chunks.iter().any(|c| c.tsn == chunk.tsn) {
+                    return false;
+                }
+                self.n_bytes += chunk.user_data.len();
+
                 return s.push(chunk);
             }
+
+            self.n_bytes += chunk.user_data.len();
 
             // If not found, create a new chunkSet and insert it in SSN order
             // (this branch is only reached for ordered chunks).
