@@ -68,6 +68,8 @@ pub(crate) mod timer;
 
 #[cfg(test)]
 mod association_test;
+#[cfg(test)]
+mod stream_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
