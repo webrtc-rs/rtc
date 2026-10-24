@@ -133,7 +133,7 @@ impl HandshakeMessageClientHello {
 
         writer.write_u16::<BigEndian>(2 * self.cipher_suites.len() as u16)?;
         for cipher_suite in &self.cipher_suites {
-            writer.write_u16::<BigEndian>(*cipher_suite as u16)?;
+            writer.write_u16::<BigEndian>(cipher_suite.code_point())?;
         }
 
         self.compression_methods.marshal(writer)?;

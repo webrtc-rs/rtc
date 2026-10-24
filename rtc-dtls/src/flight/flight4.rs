@@ -598,7 +598,7 @@ impl Flight for Flight4 {
                             if let Some(cipher_suite) = &state.cipher_suite {
                                 cipher_suite.id()
                             } else {
-                                CipherSuiteId::Unsupported
+                                CipherSuiteId::Unsupported(0)
                             }
                         },
                         compression_method: default_compression_methods().ids[0],

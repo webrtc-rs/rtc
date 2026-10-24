@@ -161,5 +161,5 @@ fn test_cipher_suite_configuration() {
     );
 
     // "Invalid CipherSuite": a code point nobody implements cannot be configured.
-    assert!(suites(vec![Unsupported], vec![Unsupported]).is_err());
+    assert!(suites(vec![Unsupported(0)], vec![Unsupported(0)]).is_err());
 }

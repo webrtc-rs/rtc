@@ -99,7 +99,7 @@ impl HandshakeMessageServerHello {
         writer.write_u8(self.session_id.len() as u8)?;
         writer.write_all(&self.session_id)?;
 
-        writer.write_u16::<BigEndian>(self.cipher_suite as u16)?;
+        writer.write_u16::<BigEndian>(self.cipher_suite.code_point())?;
 
         writer.write_u8(self.compression_method as u8)?;
 

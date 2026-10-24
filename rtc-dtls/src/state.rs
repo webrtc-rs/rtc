@@ -138,7 +138,7 @@ impl State {
         let sequence_number = self.local_sequence_number[local_epoch as usize];
         let cipher_suite_id = {
             match &self.cipher_suite {
-                Some(cipher_suite) => cipher_suite.id() as u16,
+                Some(cipher_suite) => cipher_suite.id().code_point(),
                 None => return Err(Error::ErrCipherSuiteUnset),
             }
         };
