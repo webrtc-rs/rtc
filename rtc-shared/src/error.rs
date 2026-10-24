@@ -1081,6 +1081,18 @@ pub enum Error {
     /// Cookie must not be longer then 255 bytes.
     #[error("cookie must not be longer then 255 bytes")]
     ErrCookieTooLong,
+    /// Session ID must not be longer than 255 bytes.
+    #[error("session ID must not be longer than 255 bytes")]
+    ErrSessionIdTooLong,
+    /// Too many compression methods to encode.
+    #[error("too many compression methods to encode")]
+    ErrCompressionMethodsTooLong,
+    /// Too many certificate types to encode.
+    #[error("too many certificate types to encode")]
+    ErrCertificateTypesTooLong,
+    /// Public key must not be longer than 255 bytes.
+    #[error("public key must not be longer than 255 bytes")]
+    ErrPublicKeyTooLong,
     /// PSK Identity Hint provided but PSK is nil.
     #[error("PSK Identity Hint provided but PSK is nil")]
     ErrIdentityNoPsk,

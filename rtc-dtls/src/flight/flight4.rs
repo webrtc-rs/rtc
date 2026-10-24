@@ -593,6 +593,7 @@ impl Flight for Flight4 {
                     HandshakeMessageServerHello {
                         version: PROTOCOL_VERSION1_2,
                         random: state.local_random.clone(),
+                        session_id: vec![],
                         cipher_suite: {
                             if let Some(cipher_suite) = &state.cipher_suite {
                                 cipher_suite.id()

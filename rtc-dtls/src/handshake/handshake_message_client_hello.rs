@@ -25,6 +25,8 @@ pub struct HandshakeMessageClientHello {
     pub(crate) version: ProtocolVersion,
     pub(crate) random: HandshakeRandom,
     pub(crate) cookie: Vec<u8>,
+    /// The session ID a resuming or compatibility-minded client sends; carried but not used.
+    pub(crate) session_id: Vec<u8>,
 
     pub(crate) cipher_suites: Vec<CipherSuiteId>,
     pub(crate) compression_methods: CompressionMethods,
@@ -36,6 +38,7 @@ impl PartialEq for HandshakeMessageClientHello {
         if !(self.version == other.version
             && self.random == other.random
             && self.cookie == other.cookie
+            && self.session_id == other.session_id
             && self.compression_methods == other.compression_methods
             && self.extensions == other.extensions
             && self.cipher_suites.len() == other.cipher_suites.len())
@@ -63,6 +66,7 @@ impl fmt::Debug for HandshakeMessageClientHello {
         let s = [
             format!("version: {:?} random: {:?}", self.version, self.random),
             format!("cookie: {:?}", self.cookie),
+            format!("session_id: {:?}", self.session_id),
             format!("cipher_suites: {cipher_suites_str:?}"),
             format!("compression_methods: {:?}", self.compression_methods),
             format!("extensions: {:?}", self.extensions),
@@ -87,7 +91,7 @@ impl HandshakeMessageClientHello {
         len += self.random.size();
 
         // SessionID
-        len += 1;
+        len += 1 + self.session_id.len();
 
         len += 1 + self.cookie.len();
 
@@ -112,13 +116,17 @@ impl HandshakeMessageClientHello {
         if self.cookie.len() > 255 {
             return Err(Error::ErrCookieTooLong);
         }
+        if self.session_id.len() > 255 {
+            return Err(Error::ErrSessionIdTooLong);
+        }
 
         writer.write_u8(self.version.major)?;
         writer.write_u8(self.version.minor)?;
         self.random.marshal(writer)?;
 
         // SessionID
-        writer.write_u8(0x00)?;
+        writer.write_u8(self.session_id.len() as u8)?;
+        writer.write_all(&self.session_id)?;
 
         writer.write_u8(self.cookie.len() as u8)?;
         writer.write_all(&self.cookie)?;
@@ -158,7 +166,6 @@ impl HandshakeMessageClientHello {
         let session_id_len = reader.read_u8()? as usize;
         let mut session_id = vec![0; session_id_len];
         reader.read_exact(&mut session_id)?;
-
         let cookie_len = reader.read_u8()? as usize;
         let mut cookie = vec![0; cookie_len];
         reader.read_exact(&mut cookie)?;
@@ -189,6 +196,7 @@ impl HandshakeMessageClientHello {
             version: ProtocolVersion { major, minor },
             random,
             cookie,
+            session_id,
 
             cipher_suites,
             compression_methods,

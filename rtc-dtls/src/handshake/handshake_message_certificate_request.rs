@@ -42,6 +42,10 @@ impl HandshakeMessageCertificateRequest {
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.certificate_types.len() > 255 {
+            return Err(Error::ErrCertificateTypesTooLong);
+        }
+
         writer.write_u8(self.certificate_types.len() as u8)?;
         for v in &self.certificate_types {
             writer.write_u8(*v as u8)?;
@@ -49,8 +53,7 @@ impl HandshakeMessageCertificateRequest {
 
         writer.write_u16::<BigEndian>(2 * self.signature_hash_algorithms.len() as u16)?;
         for v in &self.signature_hash_algorithms {
-            writer.write_u8(v.hash as u8)?;
-            writer.write_u8(v.signature as u8)?;
+            writer.write_all(&v.scheme_bytes()?)?;
         }
 
         writer.write_all(&[0x00, 0x00])?; // Distinguished Names Length
@@ -59,6 +62,9 @@ impl HandshakeMessageCertificateRequest {
     }
 
     /// Decodes one of these messages from `reader`.
+    ///
+    /// Unrecognized certificate types and signature schemes are silently skipped rather than
+    /// failing the handshake, as in pion.
     ///
     /// # Errors
     ///
@@ -69,17 +75,22 @@ impl HandshakeMessageCertificateRequest {
         let mut certificate_types = vec![];
         for _ in 0..certificate_types_length {
             let cert_type = reader.read_u8()?.into();
-            certificate_types.push(cert_type);
+            // Skip unrecognized certificate types rather than failing the handshake.
+            if cert_type != ClientCertificateType::Unsupported {
+                certificate_types.push(cert_type);
+            }
         }
 
         let signature_hash_algorithms_length = reader.read_u16::<BigEndian>()?;
 
         let mut signature_hash_algorithms = vec![];
         for _ in (0..signature_hash_algorithms_length).step_by(2) {
-            let hash = reader.read_u8()?.into();
-            let signature = reader.read_u8()?.into();
-
-            signature_hash_algorithms.push(SignatureHashAlgorithm { hash, signature });
+            let scheme = reader.read_u16::<BigEndian>()?;
+            // Skip unrecognized schemes rather than failing the handshake (Firefox offers DSA
+            // pairs, for instance).
+            if let Ok(algorithm) = SignatureHashAlgorithm::from_scheme(scheme) {
+                signature_hash_algorithms.push(algorithm);
+            }
         }
 
         Ok(HandshakeMessageCertificateRequest {

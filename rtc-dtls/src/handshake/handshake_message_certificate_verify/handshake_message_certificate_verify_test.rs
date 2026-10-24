@@ -38,3 +38,48 @@ fn test_handshake_message_certificate_request() -> Result<()> {
 
     Ok(())
 }
+
+// Port of pion `TestHandshakeMessageCertificateVerify_InvalidAlgorithmValue`: marshaling a pair
+// that cannot be encoded is an error rather than silent truncation. pion constructs
+// `hash.Algorithm(0x100)`, a value above the one-byte field; the equivalent unencodable value
+// here is `HashAlgorithm::Unsupported`, the fold target for unknown wire bytes, and a TLS 1.3
+// PSS scheme, whose full `u16` code point does not fit the byte-split encoding either.
+#[test]
+fn test_handshake_message_certificate_verify_invalid_algorithm_value() {
+    let invalid_hash = HandshakeMessageCertificateVerify {
+        algorithm: SignatureHashAlgorithm {
+            hash: HashAlgorithm::Unsupported,
+            signature: SignatureAlgorithm::Rsa,
+        },
+        signature: vec![0x00],
+    };
+    let mut raw = vec![];
+    let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+    assert!(matches!(
+        invalid_hash.marshal(&mut writer),
+        Err(Error::ErrInvalidSignHashAlgorithm)
+    ));
+
+    let pss_signature = HandshakeMessageCertificateVerify {
+        algorithm: SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::RsaPssRsaeSha256,
+        },
+        signature: vec![0x00],
+    };
+    let mut raw = vec![];
+    let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+    assert!(matches!(
+        pss_signature.marshal(&mut writer),
+        Err(Error::ErrInvalidSignHashAlgorithm)
+    ));
+
+    // Unmarshaling an unrecognized pair (hash byte 9 has no assigned hash algorithm) is rejected
+    // the same way, as in pion's `signaturehash.Algorithm.Unmarshal` path.
+    let raw_unknown_pair = vec![0x09, 0x01, 0x00, 0x01, 0x00];
+    let mut reader = BufReader::new(raw_unknown_pair.as_slice());
+    assert!(matches!(
+        HandshakeMessageCertificateVerify::unmarshal(&mut reader),
+        Err(Error::ErrInvalidSignHashAlgorithm)
+    ));
+}

@@ -44,6 +44,7 @@ fn test_handshake_message() -> Result<()> {
                 ],
             },
             cookie: vec![],
+            session_id: vec![],
             cipher_suites: vec![],
             compression_methods: CompressionMethods { ids: vec![] },
             extensions: vec![],
