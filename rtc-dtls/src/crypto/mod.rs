@@ -399,12 +399,8 @@ fn verify_signature(
 
     // The wire scheme must match the certificate's key and hash before any cryptographic work.
     let key_kind =
-        CertificateKeyKind::from_spki_oid(&certificate.tbs_certificate.subject_pki.algorithm.oid())?;
-    validate_handshake_signature_scheme(
-        key_kind,
-        hash_algorithm.hash,
-        hash_algorithm.signature,
-    )?;
+        CertificateKeyKind::from_spki_oid(certificate.tbs_certificate.subject_pki.algorithm.oid())?;
+    validate_handshake_signature_scheme(key_kind, hash_algorithm.hash, hash_algorithm.signature)?;
 
     let encoding = match hash_algorithm.signature {
         SignatureAlgorithm::Ed25519 => PublicKeyEncoding::Ed25519Raw,

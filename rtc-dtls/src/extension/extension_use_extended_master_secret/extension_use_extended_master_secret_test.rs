@@ -37,9 +37,8 @@ fn test_extension_use_extended_master_secret() -> Result<()> {
 // are included, as in pion's raw bytes.
 #[test]
 fn test_use_master_secret() -> Result<()> {
-    let extension = Extension::UseExtendedMasterSecret(ExtensionUseExtendedMasterSecret {
-        supported: true,
-    });
+    let extension =
+        Extension::UseExtendedMasterSecret(ExtensionUseExtendedMasterSecret { supported: true });
 
     let mut raw = vec![];
     {

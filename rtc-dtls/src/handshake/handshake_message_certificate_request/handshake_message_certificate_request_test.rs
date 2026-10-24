@@ -69,7 +69,7 @@ fn test_handshake_message_certificate_request() -> Result<()> {
 #[test]
 fn test_handshake_message_certificate_request_skips_unknown_algorithms() -> Result<()> {
     let raw = vec![
-        0x02,       // cert types length: 2
+        0x02, // cert types length: 2
         0x01, 0x40, // RSASign, ECDSASign
         0x00, 0x0C, // sig algs length: 12 bytes (6 pairs)
         0x04, 0x03, // SHA256+ECDSA  (valid)

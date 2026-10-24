@@ -670,14 +670,7 @@ fn test_handshake_signature_scheme_binding() -> Result<()> {
             );
             assert!(
                 matches!(
-                    generate_key_signature(
-                        &[],
-                        &[],
-                        &[],
-                        NamedCurve::X25519,
-                        &algorithm,
-                        &tc.key
-                    ),
+                    generate_key_signature(&[], &[], &[], NamedCurve::X25519, &algorithm, &tc.key),
                     Err(Error::ErrInvalidSignatureAlgorithm)
                 ),
                 "{}: generate_key_signature must reject the scheme",

@@ -133,12 +133,7 @@ fn test_version_equal() {
             },
             true,
         ),
-        (
-            "same-1.2",
-            PROTOCOL_VERSION1_2,
-            PROTOCOL_VERSION1_2,
-            true,
-        ),
+        ("same-1.2", PROTOCOL_VERSION1_2, PROTOCOL_VERSION1_2, true),
         (
             "same-1.3",
             ProtocolVersion {
@@ -240,7 +235,11 @@ fn test_is_supported_version() {
     ];
 
     for (version, want) in cases {
-        assert_eq!(is_supported_version(version), want, "IsSupportedVersion({version:?})");
+        assert_eq!(
+            is_supported_version(version),
+            want,
+            "IsSupportedVersion({version:?})"
+        );
     }
 }
 
@@ -297,6 +296,10 @@ fn test_is_valid_version() {
     ];
 
     for (version, want) in cases {
-        assert_eq!(is_valid_version(version), want, "IsValidVersion({version:?})");
+        assert_eq!(
+            is_valid_version(version),
+            want,
+            "IsValidVersion({version:?})"
+        );
     }
 }

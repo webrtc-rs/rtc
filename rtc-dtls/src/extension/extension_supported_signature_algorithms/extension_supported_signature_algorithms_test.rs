@@ -86,7 +86,10 @@ fn test_extension_supported_signature_algorithms_pss_schemes() -> Result<()> {
 
     let mut reader = BufReader::new(raw.as_slice());
     let roundtrip = ExtensionSupportedSignatureAlgorithms::unmarshal(&mut reader)?;
-    assert_eq!(roundtrip, parsed_extension_with_pss, "unmarshal PSS schemes");
+    assert_eq!(
+        roundtrip, parsed_extension_with_pss,
+        "unmarshal PSS schemes"
+    );
 
     Ok(())
 }
