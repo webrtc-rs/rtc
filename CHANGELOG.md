@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tests: `congestion_control_e2e` drives Google Congestion Control through two peer connections
+  over a simulated bottleneck (`Link` in the test simulator: rate, delay, tail-drop queue, random
+  loss): the estimate finds a 1.5 Mbps link, follows a drop to 0.5 Mbps and recovers, and falls
+  under 15 % random loss.
 - `add_transceiver_from_kind` accepts a sending direction without `send_encodings`: one encoding
   with a fresh SSRC and the engine's codec is used (W3C `addTransceiver`, pion), instead of
   `ErrInvalidDirection`.
@@ -68,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc-interceptor`: the pacer could report a release deadline equal to the instant it was computed
+  at, when the budget was short by less than a nanosecond of refill: the wait rounded to zero,
+  refilling at that instant added nothing, and the caller was told to wake again immediately for as
+  long as the clock did not move (a spin in a driver, an endless loop in a virtual-time test). A
+  non-zero shortfall now waits at least one nanosecond. Found by the new end-to-end test below.
 - `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
   negotiated media-only never opened, because the SCTP client side was started only by the
   DTLS-handshake-complete event, which had long passed; it now starts when SCTP is started over
