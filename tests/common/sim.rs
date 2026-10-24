@@ -19,6 +19,9 @@ use rtc::rtp_transceiver::RTCRtpSenderId;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 
+/// Decides, per datagram, whether the network loses it: `(sent by a, datagram)`.
+pub type DropFilter = Box<dyn FnMut(bool, &[u8]) -> bool>;
+
 /// One peer and what it has reported so far.
 pub struct Side {
     pub pc: RTCPeerConnection,
@@ -38,15 +41,73 @@ impl Side {
     }
 }
 
+/// A one-way bottleneck: datagrams queue behind each other, each taking `size / rate` to leave,
+/// and arrive `delay` after they left. A datagram that would wait longer than `max_queue` in the
+/// queue is dropped (tail drop), and `loss` drops a fraction at random first.
+pub struct Link {
+    pub bits_per_second: u64,
+    pub delay: Duration,
+    pub max_queue: Duration,
+    /// Fraction of datagrams lost before they reach the queue, from a fixed-seed generator.
+    pub loss: f64,
+    free_at: Option<Instant>,
+    rng: u64,
+}
+
+impl Link {
+    pub fn new(bits_per_second: u64, delay: Duration, max_queue: Duration) -> Link {
+        Link {
+            bits_per_second,
+            delay,
+            max_queue,
+            loss: 0.0,
+            free_at: None,
+            rng: 0x9E37_79B9_7F4A_7C15,
+        }
+    }
+
+    fn chance(&mut self) -> f64 {
+        // xorshift64*: deterministic, and good enough to decide a coin flip.
+        self.rng ^= self.rng >> 12;
+        self.rng ^= self.rng << 25;
+        self.rng ^= self.rng >> 27;
+        (self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// When a datagram of `len` bytes handed over at `now` arrives, or `None` if it is dropped.
+    fn carry(&mut self, now: Instant, len: usize) -> Option<Instant> {
+        if self.loss > 0.0 && self.chance() < self.loss {
+            return None;
+        }
+        let start = self.free_at.map_or(now, |t| t.max(now));
+        if start - now > self.max_queue {
+            return None;
+        }
+        let serialise = Duration::from_secs_f64(len as f64 * 8.0 / self.bits_per_second as f64);
+        self.free_at = Some(start + serialise);
+        Some(start + serialise + self.delay)
+    }
+}
+
+struct InFlight {
+    arrival: Instant,
+    from_a: bool,
+    datagram: Vec<u8>,
+}
+
 pub struct Sim {
     pub a: Side,
     pub b: Side,
     pub now: Instant,
     candidates_exchanged: bool,
+    /// The bottleneck from `a` to `b` and from `b` to `a`; `None` delivers instantly.
+    pub link_a_to_b: Option<Link>,
+    pub link_b_to_a: Option<Link>,
+    in_flight: Vec<InFlight>,
     /// While set, every datagram is dropped (a dead network path, as pion's vnet chunk filter).
     pub blackhole: bool,
     /// Called with `(sent by a, datagram)` for every datagram; returning `true` drops it.
-    pub drop_if: Option<Box<dyn FnMut(bool, &[u8]) -> bool>>,
+    pub drop_if: Option<DropFilter>,
 }
 
 fn host_candidate(addr: SocketAddr) -> RTCIceCandidateInit {
@@ -86,6 +147,9 @@ impl Sim {
             },
             now: Instant::now(),
             candidates_exchanged: false,
+            link_a_to_b: None,
+            link_b_to_a: None,
+            in_flight: vec![],
             blackhole: false,
             drop_if: None,
         }
@@ -185,10 +249,39 @@ impl Sim {
         self.b.pc.add_remote_candidate(ca).unwrap();
     }
 
+    fn deliver(&mut self, from_a: bool, datagram: &[u8]) {
+        let (src, dst) = if from_a {
+            (&self.a, &mut self.b)
+        } else {
+            (&self.b, &mut self.a)
+        };
+        let _ = dst.pc.handle_read(TaggedBytesMut {
+            now: self.now,
+            transport: TransportContext {
+                local_addr: dst.addr,
+                peer_addr: src.addr,
+                ecn: None,
+                transport_protocol: TransportProtocol::UDP,
+            },
+            message: BytesMut::from(datagram),
+        });
+    }
+
     /// Moves datagrams, events and timers until nothing is left to do right now.
     fn settle(&mut self) {
         for _ in 0..10_000 {
             let mut moved = false;
+            let now = self.now;
+            if self.in_flight.iter().any(|f| f.arrival <= now) {
+                let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.in_flight)
+                    .into_iter()
+                    .partition(|f| f.arrival <= now);
+                self.in_flight = later;
+                for f in due {
+                    moved = true;
+                    self.deliver(f.from_a, &f.datagram);
+                }
+            }
             for from_a in [true, false] {
                 loop {
                     let (src, dst) = if from_a {
@@ -209,16 +302,22 @@ impl Sim {
                     {
                         continue;
                     }
-                    let _ = dst.pc.handle_read(TaggedBytesMut {
-                        now: self.now,
-                        transport: TransportContext {
-                            local_addr: dst.addr,
-                            peer_addr: src.addr,
-                            ecn: None,
-                            transport_protocol: TransportProtocol::UDP,
-                        },
-                        message: BytesMut::from(&msg.message[..]),
-                    });
+                    let link = if from_a {
+                        self.link_a_to_b.as_mut()
+                    } else {
+                        self.link_b_to_a.as_mut()
+                    };
+                    if let Some(link) = link {
+                        if let Some(arrival) = link.carry(self.now, msg.message.len()) {
+                            self.in_flight.push(InFlight {
+                                arrival,
+                                from_a,
+                                datagram: msg.message.to_vec(),
+                            });
+                        }
+                        continue;
+                    }
+                    self.deliver(from_a, &msg.message);
                 }
             }
             for side in [&mut self.a, &mut self.b] {
@@ -241,14 +340,32 @@ impl Sim {
     /// Runs the network for `span` of virtual time, firing each side's timers when due.
     pub fn run_for(&mut self, span: Duration) {
         let end = self.now + span;
+        let mut stalled = 0u32;
         loop {
             self.settle();
-            let next = [self.a.pc.poll_timeout(), self.b.pc.poll_timeout()]
-                .into_iter()
-                .flatten()
-                .min();
+            let next = [
+                self.a.pc.poll_timeout(),
+                self.b.pc.poll_timeout(),
+                self.in_flight.iter().map(|f| f.arrival).min(),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             match next {
                 Some(t) if t <= end => {
+                    if t <= self.now {
+                        stalled += 1;
+                        assert!(
+                            stalled < 100_000,
+                            "virtual time stopped: a timer keeps asking to fire at {t:?} (now {:?}); a {:?}, b {:?}, in flight {}",
+                            self.now,
+                            self.a.pc.poll_timeout(),
+                            self.b.pc.poll_timeout(),
+                            self.in_flight.len()
+                        );
+                    } else {
+                        stalled = 0;
+                    }
                     self.now = t.max(self.now);
                     let now = self.now;
                     let _ = self.a.pc.handle_timeout(now);

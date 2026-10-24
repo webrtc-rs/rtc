@@ -24,6 +24,8 @@
 //!   by the higher-level crates so callers import from one place.
 //! * [`replay_detector`] — replay protection shared by DTLS and SRTP. (Cryptography
 //!   itself lives in the separate `rtc-crypto` crate, behind `RTCCryptoProvider`.)
+//! * [`packetio`] — a bounded packet queue with per-packet attributes, the poll-style
+//!   counterpart of pion's `packetio.Buffer`.
 //! * [`tcp_framing`] — RFC 4571 length-prefixed framing, for ICE-TCP candidates.
 //! * [`turn_framing`] — splitting a TURN stream into its self-delimiting messages, for TURN
 //!   over TCP.
@@ -77,6 +79,7 @@ pub mod replay_detector;
 
 /// The crate-wide error type shared by every protocol in the stack.
 pub mod error;
+pub mod packetio;
 /// `serde` helpers for types that have no natural serialized form, such as [`std::time::Instant`].
 pub mod serde;
 pub mod tcp_framing;

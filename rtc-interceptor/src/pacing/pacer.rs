@@ -115,9 +115,13 @@ impl Pacer {
         if self.bitrate <= 0.0 {
             return None;
         }
-        Some(Duration::from_secs_f64(
-            (bits - self.budget_bits) / self.bitrate,
-        ))
+        // At least a nanosecond: a shortfall smaller than a nanosecond's refill would round to a
+        // zero wait, and a deadline equal to the instant it was computed at is never reached by
+        // refilling (no time has passed), so the caller would be told to wake again, now, forever.
+        Some(
+            Duration::from_secs_f64((bits - self.budget_bits) / self.bitrate)
+                .max(Duration::from_nanos(1)),
+        )
     }
 
     /// The instant `bits` becomes affordable, given the last refill.
@@ -257,6 +261,29 @@ mod tests {
 
     /// At a zero rate nothing ever becomes affordable. Reporting a deadline anyway would have the
     /// driver wake for a release that can never happen.
+    #[test]
+    fn a_vanishing_shortfall_still_waits_for_time_to_pass() {
+        let now = Instant::now();
+        let mut pacer = pacer();
+        pacer.refill(now);
+        pacer.consume(pacer.budget_bits());
+        // Half a nanosecond's refill short: rounds to a zero wait without the floor.
+        let bits = 1_000_000.0 * 0.5e-9;
+        let wait = pacer.time_until_affordable(bits).expect("a finite wait");
+        assert!(wait >= Duration::from_nanos(1), "got {wait:?}");
+
+        let at = pacer.affordable_at(bits).expect("a deadline");
+        assert!(
+            at > now,
+            "the deadline must be after the instant it was computed at"
+        );
+        pacer.refill(at);
+        assert!(
+            pacer.can_afford(bits),
+            "and reaching it must pay for the packet"
+        );
+    }
+
     #[test]
     fn nothing_becomes_affordable_at_a_zero_rate() {
         let now = Instant::now();

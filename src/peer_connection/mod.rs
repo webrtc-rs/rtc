@@ -2470,9 +2470,13 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let init = if let Some(init) = init {
+        let init = if let Some(mut init) = init {
+            // A sending transceiver created from a kind has no track to take encodings from. As
+            // W3C `addTransceiver` and pion allow, one encoding with a fresh SSRC and the
+            // engine's preferred codec is used (`normalize_sender_track` fills the SSRC in).
             if init.direction.has_send() && init.send_encodings.is_empty() {
-                return Err(Error::ErrInvalidDirection);
+                init.send_encodings
+                    .push(crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters::default());
             }
 
             init

@@ -156,3 +156,94 @@ fn test_close_while_opening() {
     sim.b.pc.close().unwrap();
     assert!(closed_ice(&sim, true) && closed_ice(&sim, false));
 }
+
+/// A forwarder keeps writing to a viewer that has hung up until its own ICE consent fails, which
+/// takes seconds. Once the peer's `close_notify` has closed the DTLS transport, media writes fail
+/// at once (pion's closed pipe) and nothing more is sent: no protecting and no datagram per packet.
+#[test]
+fn media_writes_fail_and_send_nothing_once_the_peer_has_closed() {
+    use rtc::media_stream::MediaStreamTrack;
+    use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+    use rtc::rtp_transceiver::rtp_sender::{
+        RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+    };
+
+    let media_pc = || {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+        RTCPeerConnectionBuilder::new()
+            .with_media_engine(me)
+            .build(Instant::now())
+            .unwrap()
+    };
+    let ssrc = 0x4444_0001;
+    let mut sim = Sim::new(media_pc(), media_pc());
+    let sender = sim
+        .a
+        .pc
+        .add_track(MediaStreamTrack::new(
+            "s".to_owned(),
+            "t".to_owned(),
+            "l".to_owned(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(ssrc),
+                    ..Default::default()
+                },
+                codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_VP8.to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: String::new(),
+                    rtcp_feedback: vec![],
+                },
+                ..Default::default()
+            }],
+        ))
+        .unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+
+    sim.send_video(true, sender, ssrc, 3);
+    assert!(
+        sim.b.rtp_received() > 0,
+        "media flows while the peer is there"
+    );
+
+    sim.b.pc.close().unwrap();
+    sim.run_for(Duration::from_millis(200));
+
+    let now = sim.now;
+    let payload_type = sim
+        .a
+        .pc
+        .rtp_sender(sender)
+        .unwrap()
+        .get_parameters()
+        .rtp_parameters
+        .codecs[0]
+        .payload_type;
+    let written = sim.a.pc.rtp_sender(sender).unwrap().write_rtp(
+        now,
+        rtp::packet::Packet {
+            header: rtp::header::Header {
+                version: 2,
+                payload_type,
+                sequence_number: 100,
+                ssrc,
+                ..Default::default()
+            },
+            payload: bytes::Bytes::from_static(&[0x10, 0, 0]),
+        },
+    );
+    assert!(
+        written.is_err(),
+        "writing to a closed transport must fail: {written:?}"
+    );
+    assert!(
+        sim.a.pc.poll_write().is_none(),
+        "and nothing may be queued for the wire"
+    );
+}

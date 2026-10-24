@@ -29,6 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key schedule (`crypto::keyschedule`: HKDF-Expand-Label, Derive-Secret) on HKDF
   extract/expand added to the `rtc-crypto` provider abstraction for both backends; and
   `algorithms_13()`, the DTLS 1.3 signature-scheme list.
+- Tests: `congestion_control_e2e` drives Google Congestion Control through two peer connections
+  over a simulated bottleneck (`Link` in the test simulator: rate, delay, tail-drop queue, random
+  loss): the estimate finds a 1.5 Mbps link, follows a drop to 0.5 Mbps and recovers, and falls
+  under 15 % random loss.
+- `add_transceiver_from_kind` accepts a sending direction without `send_encodings`: one encoding
+  with a fresh SSRC and the engine's codec is used (W3C `addTransceiver`, pion), instead of
+  `ErrInvalidDirection`.
+- `rtc-shared`: `packetio::Buffer`, a sans-I/O counterpart of pion/transport's `packetio.Buffer`: a
+  bounded packet queue (byte ring, grows to a hard cap) with per-packet attributes, size and
+  count limits (`Error::Full`), draining `close()` and short-buffer reads, poll-style
+  (`Error::Empty` instead of blocking). Differentially tested against pion's `Buffer`. The
+  `packetio-size-hardlimit` feature mirrors pion's `packetioSizeHardlimit` tag.
+- `rtc-media`: `SampleBuilder::flush`, `with_packet_release_handler`, `with_packet_head_handler`,
+  `with_rtp_headers` and `pop_detailed` (pion's `Flush`, `WithPacketReleaseHandler`,
+  `WithPacketHeadHandler`, `WithRTPHeaders`). `IVFWriter::with_direct_pts`, `get_ref`,
+  `into_inner` and `IvfCodec::from_mime_type`.
 - `rtc-ice`: ICE renomination (draft-thatcher-ice-renomination-01), as in pion: the controlling
   agent can move a live call to another pair with `Agent::renominate_candidate`, optionally by
   itself (`AgentConfig::automatic_renomination`: a direct path replacing a relayed one, an RTT
@@ -67,6 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of lingering), same-SSN chunk-set corruption and duplicate-TSN byte accounting
   in the reassembly queue are fixed, and the pending queue clamps a pop to the bytes
   actually available.
+- `rtc-media`: `IVFWriter` now writes the frame PTS from the RTP timestamp and the header timebase
+  like pion (milliseconds at 90 kHz, then `numerator / denominator`), instead of the frame index;
+  `with_direct_pts` writes the timestamp relative to the first frame unconverted. Writing after
+  `close` returns `ErrFileNotOpened`; a zero timebase denominator is rejected.
+- `rtc-media`: `Sample::duration` from `SampleBuilder` is truncated to whole nanoseconds like pion
+  (it was rounded).
 - `rtc`, fixes found by porting pion's tests: an answer takes the complement of an explicit
   `a=setup:active` / `passive` in the offer (RFC 5763 section 5; before, two `active` peers could
   both wait for a ClientHello) and keeps the negotiated role on renegotiation (RFC 8842
@@ -105,6 +127,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc-interceptor`: the pacer could report a release deadline equal to the instant it was computed
+  at, when the budget was short by less than a nanosecond of refill: the wait rounded to zero,
+  refilling at that instant added nothing, and the caller was told to wake again immediately for as
+  long as the clock did not move (a spin in a driver, an endless loop in a virtual-time test). A
+  non-zero shortfall now waits at least one nanosecond. Found by the new end-to-end test below.
+- `rtc-media`: `SampleBuilder` panicked (u16 overflow, debug builds) after 65,535 dropped packets
+  without a sample; the counters wrap like pion's.
 - `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
   negotiated media-only never opened, because the SCTP client side was started only by the
   DTLS-handshake-complete event, which had long passed; it now starts when SCTP is started over

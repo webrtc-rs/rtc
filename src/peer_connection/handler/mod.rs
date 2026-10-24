@@ -442,14 +442,23 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 }))
             }
             RTCMessage::RtpPacket(_track_id, rtp_packet) => {
+                // The peer closed the transport (close_notify), or this side did: media has no
+                // one to go to. Say so now, as pion's closed pipe does, rather than protecting
+                // and sending every packet to a peer that has left (a forwarder would keep
+                // spending a syscall per packet on each viewer that hung up).
+                if self.dtls_transport().state() == RTCDtlsTransportState::Closed {
+                    return Err(Error::ErrClosedPipe);
+                }
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet)))
             }
             RTCMessage::RtcpPacket(_track_id, rtcp_packet) => {
                 // As pion's PeerConnection.WriteRTCP: there is no SRTCP session to protect the
                 // packets with until DTLS has connected, so say so now instead of letting the
                 // pipeline drop them later.
-                if self.dtls_transport().state() != RTCDtlsTransportState::Connected {
-                    return Err(Error::ErrDtlsTransportNotStarted);
+                match self.dtls_transport().state() {
+                    RTCDtlsTransportState::Connected => {}
+                    RTCDtlsTransportState::Closed => return Err(Error::ErrClosedPipe),
+                    _ => return Err(Error::ErrDtlsTransportNotStarted),
                 }
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packet)))
             }
