@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod pion_test;
+#[cfg(test)]
 mod sample_builder_test;
 #[cfg(test)]
 mod sample_sequence_location_test;
@@ -9,9 +11,30 @@ pub mod sample_sequence_location;
 use self::sample_sequence_location::{Comparison, SampleSequenceLocation};
 use crate::Sample;
 use bytes::Bytes;
+use rtp::Header;
 use rtp::Packet;
 use rtp::packetizer::Depacketizer;
+use std::any::Any;
 use std::time::{Duration, Instant};
+
+/// Called with a packet just before the builder drops its reference to it.
+pub type PacketReleaseHandler = Box<dyn FnMut(&Packet) + Send>;
+
+/// Called with the first packet of every sample; whatever it returns is handed back as
+/// [`PoppedSample::metadata`].
+pub type PacketHeadHandler = Box<dyn FnMut(&Packet) -> Box<dyn Any + Send> + Send>;
+
+/// A [`Sample`] together with the extras requested through
+/// [`SampleBuilder::with_packet_head_handler`] and [`SampleBuilder::with_rtp_headers`].
+pub struct PoppedSample {
+    /// The assembled sample.
+    pub sample: Sample,
+    /// What the packet head handler returned for the sample's first packet.
+    pub metadata: Option<Box<dyn Any + Send>>,
+    /// The RTP headers of every packet that formed the sample, when
+    /// [`SampleBuilder::with_rtp_headers`] is enabled.
+    pub rtp_headers: Vec<Header>,
+}
 
 /// SampleBuilder buffers packets until media frames are complete.
 pub struct SampleBuilder<T: Depacketizer> {
@@ -20,7 +43,10 @@ pub struct SampleBuilder<T: Depacketizer> {
     /// max timestamp between old and new timestamps before dropping packets
     max_late_timestamp: u32,
     buffer: Vec<Option<Packet>>,
-    prepared_samples: Vec<Option<Sample>>,
+    prepared_samples: Vec<Option<PoppedSample>>,
+    packet_release_handler: Option<PacketReleaseHandler>,
+    packet_head_handler: Option<PacketHeadHandler>,
+    return_rtp_headers: bool,
     last_sample_timestamp: Option<u32>,
 
     /// Interface that allows us to take RTP packets to samples
@@ -59,6 +85,9 @@ impl<T: Depacketizer> SampleBuilder<T> {
             buffer: vec![None; u16::MAX as usize + 1],
             prepared_samples: (0..=u16::MAX as usize).map(|_| None).collect(),
             last_sample_timestamp: None,
+            packet_release_handler: None,
+            packet_head_handler: None,
+            return_rtp_headers: false,
             depacketizer,
             sample_rate,
             filled: SampleSequenceLocation::new(),
@@ -76,6 +105,33 @@ impl<T: Depacketizer> SampleBuilder<T> {
     pub fn with_max_time_delay(mut self, max_late_duration: Duration) -> Self {
         self.max_late_timestamp =
             (self.sample_rate as u128 * max_late_duration.as_millis() / 1000) as u32;
+        self
+    }
+
+    /// Calls `handler` with every packet the builder is about to stop referencing, whether
+    /// because it became part of a sample or because it was dropped.
+    pub fn with_packet_release_handler(
+        mut self,
+        handler: impl FnMut(&Packet) + Send + 'static,
+    ) -> Self {
+        self.packet_release_handler = Some(Box::new(handler));
+        self
+    }
+
+    /// Calls `handler` with the first packet of every sample and exposes its result through
+    /// [`PoppedSample::metadata`] (see [`SampleBuilder::pop_detailed`]).
+    pub fn with_packet_head_handler(
+        mut self,
+        handler: impl FnMut(&Packet) -> Box<dyn Any + Send> + Send + 'static,
+    ) -> Self {
+        self.packet_head_handler = Some(Box::new(handler));
+        self
+    }
+
+    /// Collects the RTP headers of the packets forming each sample into
+    /// [`PoppedSample::rtp_headers`], e.g. to read header extensions.
+    pub fn with_rtp_headers(mut self, enable: bool) -> Self {
+        self.return_rtp_headers = enable;
         self
     }
 
@@ -131,7 +187,11 @@ impl<T: Depacketizer> SampleBuilder<T> {
     }
 
     fn release_packet(&mut self, i: u16) {
-        self.buffer[i as usize] = None;
+        if let Some(p) = self.buffer[i as usize].take()
+            && let Some(handler) = self.packet_release_handler.as_mut()
+        {
+            handler(&p);
+        }
     }
 
     /// Clears all buffers that have already been consumed by
@@ -162,10 +222,10 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
     /// Flushes all buffers that are already consumed or those buffers
     /// that are too late to consume.
-    fn purge_buffers(&mut self, now: Instant) {
+    fn purge_buffers(&mut self, now: Instant, flush: bool) {
         self.purge_consumed_buffers();
 
-        while (self.too_old(&self.filled) || (self.filled.count() > self.max_late))
+        while (self.too_old(&self.filled) || (self.filled.count() > self.max_late) || flush)
             && self.filled.has_data()
         {
             if self.active.empty() {
@@ -183,7 +243,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
                 if !matches!(err, BuildError::InvalidPartition(_)) {
                     // In the InvalidPartition case `build_sample` will have already adjusted `dropped_packets`.
-                    self.dropped_packets += 1;
+                    self.dropped_packets = self.dropped_packets.wrapping_add(1);
                 }
 
                 // could not build the sample so drop it
@@ -215,7 +275,13 @@ impl<T: Depacketizer> SampleBuilder<T> {
             }
             _ => {}
         }
-        self.purge_buffers(now);
+        self.purge_buffers(now, false);
+    }
+
+    /// Marks every buffered packet to be turned into a sample (or dropped) by following
+    /// [`SampleBuilder::pop`] calls, without waiting for further packets.
+    pub fn flush(&mut self, now: Instant) {
+        self.purge_buffers(now, true);
     }
 
     /// Creates a sample from a valid collection of RTP Packets by
@@ -313,9 +379,9 @@ impl<T: Depacketizer> SampleBuilder<T> {
                 .unwrap_or(false)
             });
 
-            self.dropped_packets += consume.count();
+            self.dropped_packets = self.dropped_packets.wrapping_add(consume.count());
             if is_padding {
-                self.padding_packets += consume.count();
+                self.padding_packets = self.padding_packets.wrapping_add(consume.count());
             }
             self.purge_consumed_location(&consume, true);
             self.purge_consumed_buffers();
@@ -362,10 +428,29 @@ impl<T: Depacketizer> SampleBuilder<T> {
         };
         let samples = after_timestamp.wrapping_sub(sample_timestamp);
 
+        let metadata = match (
+            self.packet_head_handler.as_mut(),
+            self.buffer[consume.head as usize].as_ref(),
+        ) {
+            (Some(handler), Some(head)) => Some(handler(head)),
+            _ => None,
+        };
+        let rtp_headers = if self.return_rtp_headers {
+            consume
+                .range(&self.buffer)
+                .filter_map(|p| p.map(|p| p.header.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let sample = Sample {
             data: sample_data,
             timestamp: now,
-            duration: Duration::from_secs_f64((samples as f64) / (self.sample_rate as f64)),
+            // truncated to whole nanoseconds, like pion
+            duration: Duration::from_nanos(
+                ((samples as f64) / (self.sample_rate as f64) * 1e9) as u64,
+            ),
             packet_timestamp: sample_timestamp,
             prev_dropped_packets: self.dropped_packets,
             prev_padding_packets: self.padding_packets,
@@ -375,7 +460,11 @@ impl<T: Depacketizer> SampleBuilder<T> {
         self.padding_packets = 0;
         self.last_sample_timestamp = Some(sample_timestamp);
 
-        self.prepared_samples[self.prepared.tail as usize] = Some(sample);
+        self.prepared_samples[self.prepared.tail as usize] = Some(PoppedSample {
+            sample,
+            metadata,
+            rtp_headers,
+        });
         self.prepared.tail = self.prepared.tail.wrapping_add(1);
 
         self.purge_consumed_location(&consume, true);
@@ -385,8 +474,9 @@ impl<T: Depacketizer> SampleBuilder<T> {
     }
 
     /// Compiles pushed RTP packets into media samples and then
-    /// returns the next valid sample (or None if no sample is compiled).
-    pub fn pop(&mut self, now: Instant) -> Option<Sample> {
+    /// returns the next valid sample together with the extras requested through
+    /// [`SampleBuilder::with_packet_head_handler`] and [`SampleBuilder::with_rtp_headers`].
+    pub fn pop_detailed(&mut self, now: Instant) -> Option<PoppedSample> {
         let _ = self.build_sample(now, false);
 
         if self.prepared.empty() {
@@ -395,6 +485,12 @@ impl<T: Depacketizer> SampleBuilder<T> {
         let result = self.prepared_samples[self.prepared.head as usize].take();
         self.prepared.head = self.prepared.head.wrapping_add(1);
         result
+    }
+
+    /// Compiles pushed RTP packets into media samples and then
+    /// returns the next valid sample (or None if no sample is compiled).
+    pub fn pop(&mut self, now: Instant) -> Option<Sample> {
+        self.pop_detailed(now).map(|p| p.sample)
     }
 
     /// Compiles pushed RTP packets into media samples and then

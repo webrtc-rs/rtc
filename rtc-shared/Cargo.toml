@@ -17,6 +17,8 @@ default = ["ifaces", "marshal", "replay"]
 ifaces = []
 marshal = []
 replay = []
+# Cap an explicit `packetio::Buffer` size limit at the default capacity (pion: `packetioSizeHardlimit`).
+packetio-size-hardlimit = []
 
 [dependencies]
 thiserror.workspace = true
