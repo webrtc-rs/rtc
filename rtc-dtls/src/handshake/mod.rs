@@ -17,8 +17,16 @@ pub mod handshake_cache;
 pub mod handshake_header;
 /// Certificate: the sender's certificate chain.
 pub mod handshake_message_certificate;
+/// Certificate (TLS 1.3 body): the sender's certificate chain with per-certificate extensions.
+/// A standalone type — the 1.2 dispatch in [`HandshakeMessage`] is untouched, since both
+/// bodies share the type code and which one a record carries is decided by the negotiated
+/// version.
+pub mod handshake_message_certificate_13;
 /// CertificateRequest: the server asks the client to authenticate.
 pub mod handshake_message_certificate_request;
+/// CertificateRequest (TLS 1.3 body): the server asks the client to authenticate. A standalone
+/// type for the same reason as [`handshake_message_certificate_13`].
+pub mod handshake_message_certificate_request_13;
 /// CertificateVerify: proves possession of the certificate's private key.
 pub mod handshake_message_certificate_verify;
 /// ClientHello: opens the handshake with the client's offers.

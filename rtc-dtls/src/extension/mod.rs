@@ -372,6 +372,54 @@ pub(crate) fn unmarshal_extensions(buffer: &[u8]) -> Result<Vec<Extension>> {
     Ok(extensions)
 }
 
+/// Encodes an extension block — a `u16` byte count followed by the extensions — which is the
+/// shape pion's `extension.Marshal` produces and hellos and TLS 1.3 messages carry on the wire.
+///
+/// # Errors
+///
+/// [`Error::ErrInvalidExtensionsLength`] when the block exceeds 65535 bytes, or the error of an
+/// extension that failed to encode.
+pub(crate) fn marshal_extensions_block<W: Write>(
+    extensions: &[Extension],
+    writer: &mut W,
+) -> Result<()> {
+    let mut buffer = vec![];
+    {
+        let mut extension_writer = std::io::BufWriter::<&mut Vec<u8>>::new(buffer.as_mut());
+        for extension in extensions {
+            extension.marshal(&mut extension_writer)?;
+        }
+    }
+    if buffer.len() > 0xffff {
+        return Err(Error::ErrInvalidExtensionsLength);
+    }
+    writer.write_u16::<BigEndian>(buffer.len() as u16)?;
+    writer.write_all(&buffer)?;
+    Ok(writer.flush()?)
+}
+
+/// Parses an extension block — a `u16` byte count followed by the extensions — the shape pion's
+/// `extension.Unmarshal` accepts. An empty buffer is an empty block, not an error.
+///
+/// # Errors
+///
+/// [`Error::ErrBufferTooSmall`] when the block ends inside its length field, and
+/// [`Error::ErrLengthMismatch`] when the count disagrees with the bytes present, or the error of
+/// an extension that failed to parse.
+pub(crate) fn unmarshal_extensions_block(buffer: &[u8]) -> Result<Vec<Extension>> {
+    if buffer.is_empty() {
+        return Ok(vec![]);
+    }
+    if buffer.len() < 2 {
+        return Err(Error::ErrBufferTooSmall);
+    }
+    let declared_len = u16::from_be_bytes([buffer[0], buffer[1]]) as usize;
+    if buffer.len() - 2 != declared_len {
+        return Err(Error::ErrLengthMismatch);
+    }
+    unmarshal_extensions(&buffer[2..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
