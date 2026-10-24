@@ -9,6 +9,10 @@ mod srtp_test;
 
 use std::collections::HashMap;
 
+/// Keyed by SSRC, which the remote chooses, and read for every packet: a randomly seeded fast
+/// hash resists crafted collisions without SipHash's cost on the packet path.
+type SsrcMap<T> = HashMap<u32, T, foldhash::fast::RandomState>;
+
 use crypto::RTCCrypto;
 use shared::replay_detector::*;
 
@@ -100,8 +104,8 @@ impl SrtpSsrcState {
 pub struct Context {
     cipher: Box<dyn Cipher>,
 
-    srtp_ssrc_states: HashMap<u32, SrtpSsrcState>,
-    srtcp_ssrc_states: HashMap<u32, SrtcpSsrcState>,
+    srtp_ssrc_states: SsrcMap<SrtpSsrcState>,
+    srtcp_ssrc_states: SsrcMap<SrtcpSsrcState>,
 
     new_srtp_replay_detector: ContextOption,
     new_srtcp_replay_detector: ContextOption,
@@ -170,8 +174,8 @@ impl Context {
 
         Ok(Context {
             cipher,
-            srtp_ssrc_states: HashMap::new(),
-            srtcp_ssrc_states: HashMap::new(),
+            srtp_ssrc_states: SsrcMap::default(),
+            srtcp_ssrc_states: SsrcMap::default(),
             new_srtp_replay_detector: srtp_ctx_opt,
             new_srtcp_replay_detector: srtcp_ctx_opt,
             cryptex_mode: cryptex::CryptexMode::Disabled,
@@ -251,8 +255,8 @@ impl Context {
     pub(crate) fn new_with_cipher(cipher: Box<dyn Cipher>) -> Context {
         Context {
             cipher,
-            srtp_ssrc_states: HashMap::new(),
-            srtcp_ssrc_states: HashMap::new(),
+            srtp_ssrc_states: SsrcMap::default(),
+            srtcp_ssrc_states: SsrcMap::default(),
             new_srtp_replay_detector: srtp_no_replay_protection(),
             new_srtcp_replay_detector: srtcp_no_replay_protection(),
             cryptex_mode: cryptex::CryptexMode::Disabled,

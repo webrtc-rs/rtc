@@ -41,6 +41,7 @@ struct LocalStream {
 pub struct CongestionControlBuilder<E: BandwidthEstimator> {
     estimator: E,
     prune_horizon: Duration,
+    twcc_only: bool,
 }
 
 impl<E: BandwidthEstimator> CongestionControlBuilder<E> {
@@ -49,7 +50,20 @@ impl<E: BandwidthEstimator> CongestionControlBuilder<E> {
         Self {
             estimator,
             prune_horizon: DEFAULT_PRUNE_HORIZON,
+            twcc_only: false,
         }
+    }
+
+    /// Record only the streams that negotiated transport-wide CC.
+    ///
+    /// By default every stream this endpoint sends is recorded, because RFC 8888 feedback reports
+    /// against the RTP sequence number and needs no header extension. An endpoint that gets only
+    /// transport-wide feedback (a browser's) has no use for the records of the rest, and for a
+    /// stream like audio, with a packet every 20 ms, keeping them costs three map insertions per
+    /// packet for records nothing will ever read.
+    pub fn with_twcc_only(mut self, twcc_only: bool) -> Self {
+        self.twcc_only = twcc_only;
+        self
     }
 
     /// How long an unacknowledged packet is kept before it is written off.
@@ -64,6 +78,7 @@ impl<E: BandwidthEstimator> CongestionControlBuilder<E> {
             last_target: self.estimator.target_bitrate(),
             estimator: self.estimator,
             prune_horizon: self.prune_horizon,
+            twcc_only: self.twcc_only,
             history: History::new(),
             streams: HashMap::new(),
             read_queue: VecDeque::new(),
@@ -101,6 +116,7 @@ pub struct CongestionControlInterceptor<E: BandwidthEstimator> {
     history: History,
     streams: HashMap<u32, LocalStream>,
     prune_horizon: Duration,
+    twcc_only: bool,
     /// The last target handed onward, so an unchanged estimate does not re-announce itself.
     last_target: f64,
     read_queue: VecDeque<TaggedPacket>,
@@ -250,7 +266,11 @@ impl<E: BandwidthEstimator> Interceptor for CongestionControlInterceptor<E> {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         // Tracked whether or not it negotiated transport-wide CC: RFC 8888 reports against the RTP
         // sequence number and needs no extension, so a stream without one is still worth recording.
-        let hdr_ext_id = stream_supports_twcc(info).unwrap_or_default();
+        let twcc = stream_supports_twcc(info);
+        if self.twcc_only && twcc.is_none() {
+            return;
+        }
+        let hdr_ext_id = twcc.unwrap_or_default();
         self.streams.insert(info.ssrc, LocalStream { hdr_ext_id });
     }
 

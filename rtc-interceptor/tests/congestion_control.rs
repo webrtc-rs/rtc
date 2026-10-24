@@ -573,3 +573,79 @@ fn ccfb_feedback_reaches_the_estimator() {
     );
     assert_eq!(size_17, reports[1].size);
 }
+
+/// An endpoint that gets only transport-wide feedback can ask not to record the streams without
+/// the extension (audio, in a browser call): nothing would ever report against them, and recording
+/// each packet costs three map insertions. A stream with the extension is recorded as before.
+#[test]
+fn twcc_only_leaves_streams_without_the_extension_unrecorded() {
+    use rtcp::transport_feedbacks::cc_feedback_report::{
+        CcFeedbackMetricBlock, CcFeedbackReport, CcFeedbackReportBlock, Ecn,
+    };
+
+    fn acknowledged_by_ccfb(twcc_only: bool) -> usize {
+        let estimator = Recorder::new(BITRATE);
+        let mut cc = rtc_interceptor::CongestionControlBuilder::new(estimator.clone())
+            .with_twcc_only(twcc_only)
+            .build();
+        // No transport-cc extension: the shape of an audio stream in a browser call.
+        cc.bind_local_stream(&StreamInfo {
+            ssrc: SSRC,
+            clock_rate: 48_000,
+            mime_type: "audio/opus".to_owned(),
+            payload_type: 111,
+            ..Default::default()
+        });
+        let epoch = Instant::now();
+        for sequence in 16..19u16 {
+            cc.handle_write(TaggedPacket {
+                now: epoch + Duration::from_millis(u64::from(sequence) * 10),
+                transport: TransportContext::default(),
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
+                    header: rtp::header::Header {
+                        version: 2,
+                        ssrc: SSRC,
+                        sequence_number: sequence,
+                        payload_type: 111,
+                        ..Default::default()
+                    },
+                    payload: vec![1, 2, 3, 4].into(),
+                })),
+            })
+            .expect("handle_write");
+            while cc.poll_write().is_some() {}
+        }
+        let report = CcFeedbackReport {
+            sender_ssrc: 1,
+            report_timestamp: 0,
+            report_blocks: vec![CcFeedbackReportBlock {
+                media_ssrc: SSRC,
+                begin_sequence: 17,
+                metric_blocks: vec![CcFeedbackMetricBlock {
+                    received: true,
+                    ecn: Ecn::NotEct,
+                    arrival_time_offset: 0,
+                }],
+            }],
+        };
+        cc.handle_read(TaggedPacket {
+            now: epoch + Duration::from_millis(100),
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(report)])),
+        })
+        .expect("handle_read");
+        while cc.poll_read().is_some() {}
+        estimator.reports().len()
+    }
+
+    assert_eq!(
+        2,
+        acknowledged_by_ccfb(false),
+        "recorded by default: 16 lost, 17 acknowledged"
+    );
+    assert_eq!(
+        0,
+        acknowledged_by_ccfb(true),
+        "not recorded, so nothing to report against"
+    );
+}

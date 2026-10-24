@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-interceptor`: `CongestionControlBuilder::with_twcc_only`, to record only the streams that
+  negotiated transport-wide CC. By default every stream is recorded, for RFC 8888 feedback; an
+  endpoint that gets only transport-wide feedback (a browser's) has no use for the records of a
+  stream like audio, which costs three map insertions per 20 ms packet.
 - `rtc-interceptor`, `rtc`: `KeyframeRequestForwarderInterceptor` at the new `Slot::KeyframeRequests`
   (application-most), and `configure_keyframe_request_forwarding` to register it. Inbound RTCP is
   dropped at the end of the interceptor chain, so an application never saw the keyframe requests
@@ -147,6 +151,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc-interceptor`: `History::prune_before` no longer scans every recorded packet on each call.
+  The congestion-control interceptor prunes on every timeout of a connection, and it records every
+  packet it sends, so the scan grew with the number of streams a connection sends (a participant
+  receiving thirty voice streams recorded a thousand and a half packets a second): it was the
+  largest line of the library in a profile of an SFU under load. Packet ids follow send order, so
+  pruning resumes from where it stopped and costs what it removes.
+- `rtc-srtp`: the per-SSRC replay and rollover state is keyed with a randomly seeded `foldhash`
+  instead of SipHash: it is read for every packet and the SSRC is the remote's to choose.
 - `rtc`: a renegotiation no longer announces the layers of a simulcast stream that is already being
   received a second time. Applying a remote description rebuilt the receiver's track with no SSRC for
   any rid, so the next packet of every layer bound it again and fired `OnTrack` (pion fires it once

@@ -21,6 +21,9 @@ pub struct History {
     highest_acknowledged: Option<u64>,
     /// Lowest id not yet reported to the consumer.
     next_to_report: u64,
+    /// Every id below this was pruned, reported, or is kept on purpose: pruning resumes here, so
+    /// it costs what it removes and not what is recorded.
+    prune_from: u64,
 }
 
 impl History {
@@ -176,25 +179,32 @@ impl History {
     /// Without this the history grows without bound on a lossy path: an unacknowledged packet is
     /// never reported and never removed, so nothing else would ever release it.
     pub fn prune_before(&mut self, cutoff: Instant) {
-        let stale: Vec<u64> = self
-            .packets
-            .iter()
-            .filter(|(_, packet)| packet.departure < cutoff && !packet.arrived)
-            .map(|(&id, _)| id)
-            .collect();
-
-        for id in stale {
-            if let Some(packet) = self.packets.remove(&id) {
-                // Only a TWCC packet has an entry under its transport-wide sequence number. A
-                // non-TWCC packet carries whatever the caller passed — typically 0 — and removing
-                // that key would evict whichever real TWCC packet holds it.
-                if packet.is_twcc {
-                    self.twcc_index.remove(&packet.twcc_sequence_number);
+        // Ids rise with departure, so the stale packets are a prefix: stop at the first recent one.
+        let mut id = self.prune_from;
+        while id < self.next_id {
+            match self.packets.get(&id) {
+                // Reported or pruned already.
+                None => {}
+                Some(packet) if packet.departure >= cutoff => break,
+                // Acknowledged: it leaves with the next report, not here.
+                Some(packet) if packet.arrived => {}
+                Some(_) => {
+                    if let Some(packet) = self.packets.remove(&id) {
+                        // Only a TWCC packet has an entry under its transport-wide sequence
+                        // number. A non-TWCC packet carries whatever the caller passed —
+                        // typically 0 — and removing that key would evict whichever real TWCC
+                        // packet holds it.
+                        if packet.is_twcc {
+                            self.twcc_index.remove(&packet.twcc_sequence_number);
+                        }
+                        self.ssrc_sequence_index
+                            .remove(&(packet.ssrc, packet.rtp_sequence_number));
+                    }
                 }
-                self.ssrc_sequence_index
-                    .remove(&(packet.ssrc, packet.rtp_sequence_number));
             }
+            id += 1;
         }
+        self.prune_from = id;
     }
 }
 
@@ -208,6 +218,50 @@ mod tests {
             history.add_outgoing(1, 100 + sequence_number, true, sequence_number, 1200, now);
         }
         history
+    }
+
+    #[test]
+    fn pruning_removes_the_stale_unacknowledged_prefix_and_resumes_where_it_stopped() {
+        let t0 = Instant::now();
+        let mut history = History::new();
+        for n in 0..10u16 {
+            history.add_outgoing(
+                1,
+                n,
+                true,
+                n,
+                1200,
+                t0 + Duration::from_millis(u64::from(n) * 10),
+            );
+        }
+        // Packet 3 arrives; 0..=4 are older than the cutoff.
+        history.on_twcc_feedback(
+            t0 + Duration::from_millis(200),
+            Acknowledgement {
+                sequence_number: 3,
+                arrived: true,
+                arrival: Some(Duration::ZERO),
+                ecn: Ecn::NotEct,
+            },
+        );
+        history.prune_before(t0 + Duration::from_millis(50));
+        assert_eq!(
+            6,
+            history.len(),
+            "0, 1, 2 and 4 are gone; the acknowledged 3 stays for its report"
+        );
+
+        // Nothing newer is touched, and a second call with the same cutoff changes nothing.
+        history.prune_before(t0 + Duration::from_millis(50));
+        assert_eq!(6, history.len());
+
+        // A later cutoff continues from there, and packets added since are found too.
+        history.add_outgoing(1, 10, true, 10, 1200, t0 + Duration::from_millis(100));
+        history.prune_before(t0 + Duration::from_millis(85));
+        assert_eq!(3, history.len(), "3 (acknowledged), 9 and 10 remain");
+        let reports = history.take_reports();
+        assert_eq!(1, reports.len());
+        assert_eq!(3, reports[0].rtp_sequence_number);
     }
 
     #[test]
