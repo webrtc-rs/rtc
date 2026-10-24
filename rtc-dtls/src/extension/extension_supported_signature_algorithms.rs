@@ -29,6 +29,9 @@ impl ExtensionSupportedSignatureAlgorithms {
 
     /// Encodes this message to `writer`.
     ///
+    /// Hybrid encoding, as in pion: TLS 1.3 PSS schemes are written as their full `u16` code
+    /// point, TLS 1.2 pairs as a hash byte then a signature byte.
+    ///
     /// # Errors
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
@@ -36,14 +39,16 @@ impl ExtensionSupportedSignatureAlgorithms {
         writer.write_u16::<BigEndian>(2 + 2 * self.signature_hash_algorithms.len() as u16)?;
         writer.write_u16::<BigEndian>(2 * self.signature_hash_algorithms.len() as u16)?;
         for v in &self.signature_hash_algorithms {
-            writer.write_u8(v.hash as u8)?;
-            writer.write_u8(v.signature as u8)?;
+            writer.write_all(&v.scheme_bytes()?)?;
         }
 
         Ok(writer.flush()?)
     }
 
     /// Decodes one of these messages from `reader`.
+    ///
+    /// Schemes this crate does not recognize are silently skipped rather than failing the
+    /// message, as in pion's `unmarshalGenericSignatureHashAlgorithm`.
     ///
     /// # Errors
     ///
@@ -54,9 +59,11 @@ impl ExtensionSupportedSignatureAlgorithms {
         let algorithm_count = reader.read_u16::<BigEndian>()? as usize / 2;
         let mut signature_hash_algorithms = vec![];
         for _ in 0..algorithm_count {
-            let hash = reader.read_u8()?.into();
-            let signature = reader.read_u8()?.into();
-            signature_hash_algorithms.push(SignatureHashAlgorithm { hash, signature });
+            let scheme = reader.read_u16::<BigEndian>()?;
+            // Skip unrecognized schemes rather than failing the handshake.
+            if let Ok(algorithm) = SignatureHashAlgorithm::from_scheme(scheme) {
+                signature_hash_algorithms.push(algorithm);
+            }
         }
 
         Ok(ExtensionSupportedSignatureAlgorithms {
