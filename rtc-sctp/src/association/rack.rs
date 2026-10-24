@@ -20,12 +20,10 @@
 //!
 //! [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
 
+use super::windowed_min::WindowedMin;
 use super::*;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
-
-/// How long a minimum-RTT sample stays valid.
-const MIN_RTT_WINDOW: Duration = Duration::from_secs(30);
 
 /// Receiver's worst-case delayed-ACK, added to the probe timeout when a single chunk is
 /// outstanding and the peer may hold its SACK back (`ACK_INTERVAL`).
@@ -82,8 +80,10 @@ pub(crate) struct RackState {
     delivered_sent: Option<(Instant, u32)>,
     /// The round-trip time measured by that chunk (`RACK.rtt`).
     delivered_rtt: Duration,
-    /// Smallest recent round-trip time and when it was observed.
-    min_rtt: Option<(Duration, Instant)>,
+    /// The round-trip times of the last 30 s, for their minimum.
+    min_rtt_samples: WindowedMin,
+    /// Smallest recent round-trip time, as of the last SACK that found any sample in the window.
+    min_rtt: Option<Duration>,
     /// Smoothed round-trip time, to microsecond resolution. The RTO manager's own estimate is in
     /// whole milliseconds, which on a LAN is zero.
     srtt: Option<Duration>,
@@ -154,10 +154,8 @@ impl RackState {
             // RFC 6298: SRTT <- 7/8 SRTT + 1/8 R'.
             Some(srtt) => (srtt * 7 + rtt) / 8,
         });
-        match self.min_rtt {
-            Some((min, at)) if rtt > min && now.saturating_duration_since(at) < MIN_RTT_WINDOW => {}
-            _ => self.min_rtt = Some((rtt, now)),
-        }
+        self.min_rtt_samples.push(now, rtt);
+        self.min_rtt = Some(self.min_rtt_samples.min(now));
     }
 
     /// Recomputes the reordering window ([RFC 8985] §6.2, step 4).
@@ -175,8 +173,14 @@ impl RackState {
         confident_loss: bool,
         spurious: bool,
         recovering: bool,
+        now: Instant,
     ) {
-        let base = self.min_rtt.map_or(Duration::ZERO, |(min, _)| min / 4);
+        // Samples age out of the window; once none is left the last minimum stands.
+        let windowed = self.min_rtt_samples.min(now);
+        if !windowed.is_zero() {
+            self.min_rtt = Some(windowed);
+        }
+        let base = self.min_rtt.map_or(Duration::ZERO, |min| min / 4);
 
         if confident_loss && !self.reordering_seen {
             self.reo_wnd = Duration::ZERO;
@@ -255,6 +259,7 @@ impl Association {
             self.in_fast_recovery || reported_beyond_hole >= DUP_THRESH,
             !d.duplicate_tsn.is_empty(),
             self.in_fast_recovery,
+            now,
         );
         self.rack_detect_loss(now);
         self.schedule_probe(now);

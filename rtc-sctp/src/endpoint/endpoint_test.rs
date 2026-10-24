@@ -32,6 +32,8 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::{cmp, mem, net::UdpSocket, time::Duration};
 
+mod interleaving;
+
 lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
@@ -203,6 +205,10 @@ struct Pair {
     /// Decides, from the index of each datagram the client sends, whether the network drops it.
     client_loss: Option<Box<dyn FnMut(usize) -> bool>>,
     client_datagrams: usize,
+    /// Every datagram each side put on the wire, dropped ones included, for tests that look
+    /// at which chunks were sent.
+    client_wire: Vec<Bytes>,
+    server_wire: Vec<Bytes>,
 }
 
 impl Pair {
@@ -241,6 +247,8 @@ impl Pair {
             latency: Duration::new(0, 0),
             client_loss: None,
             client_datagrams: 0,
+            client_wire: vec![],
+            server_wire: vec![],
         }
     }
 
@@ -286,6 +294,7 @@ impl Pair {
                 for content in contents {
                     let index = self.client_datagrams;
                     self.client_datagrams += 1;
+                    self.client_wire.push(content.clone());
                     if self
                         .client_loss
                         .as_mut()
@@ -313,6 +322,7 @@ impl Pair {
         for x in self.server.outbound.drain(..) {
             if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
+                    self.server_wire.push(content.clone());
                     if let Some(ref socket) = self.server.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }

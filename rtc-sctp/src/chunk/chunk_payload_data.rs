@@ -10,6 +10,9 @@ pub(crate) const PAYLOAD_DATA_BEGINING_FRAGMENT_BITMASK: u8 = 2;
 pub(crate) const PAYLOAD_DATA_UNORDERED_BITMASK: u8 = 4;
 pub(crate) const PAYLOAD_DATA_IMMEDIATE_SACK: u8 = 8;
 pub(crate) const PAYLOAD_DATA_HEADER_SIZE: usize = 12;
+/// RFC 8260 I-DATA: TSN, stream, reserved, message identifier, and the PPID or fragment sequence
+/// number.
+pub(crate) const I_DATA_HEADER_SIZE: usize = 16;
 
 /// PayloadProtocolIdentifier is an enum for DataChannel payload types
 /// PayloadProtocolIdentifier enums
@@ -150,8 +153,17 @@ pub struct ChunkPayloadData {
     pub(crate) tsn: u32,
     pub(crate) stream_identifier: u16,
     pub(crate) stream_sequence_number: u16,
+    /// RFC 8260 message identifier: the 32-bit per-stream (and per ordered/unordered) message
+    /// counter that replaces the stream sequence number on I-DATA. Zero on plain DATA.
+    pub(crate) message_identifier: u32,
+    /// RFC 8260 fragment sequence number: the index of this fragment within its message, counted
+    /// from zero. Zero on plain DATA, and on the first fragment of an I-DATA message (the wire
+    /// field carries the PPID there instead).
+    pub(crate) fragment_sequence_number: u32,
     pub(crate) payload_type: PayloadProtocolIdentifier,
     pub(crate) user_data: Bytes,
+    /// Whether this is an I-DATA chunk (RFC 8260) rather than a DATA chunk.
+    pub(crate) idata: bool,
 
     /// Acknowledged by a peer SACK, independently of local payload release.
     pub(crate) acknowledged: bool,
@@ -196,8 +208,11 @@ impl Default for ChunkPayloadData {
             tsn: 0,
             stream_identifier: 0,
             stream_sequence_number: 0,
+            message_identifier: 0,
+            fragment_sequence_number: 0,
             payload_type: PayloadProtocolIdentifier::default(),
             user_data: Bytes::new(),
+            idata: false,
             acknowledged: false,
             miss_indicator: 0,
             since: None,
@@ -215,7 +230,18 @@ impl Default for ChunkPayloadData {
 /// makes chunkPayloadData printable
 impl fmt::Display for ChunkPayloadData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}\n{}", self.header(), self.tsn)
+        if self.idata {
+            write!(
+                f,
+                "{}\ntsn={} mid={} fsn={}",
+                self.header(),
+                self.tsn,
+                self.message_identifier,
+                self.fragment_sequence_number
+            )
+        } else {
+            write!(f, "{}\n{}", self.header(), self.tsn)
+        }
     }
 }
 
@@ -236,7 +262,11 @@ impl Chunk for ChunkPayloadData {
         }
 
         ChunkHeader {
-            typ: CT_PAYLOAD_DATA,
+            typ: if self.idata {
+                CT_IDATA
+            } else {
+                CT_PAYLOAD_DATA
+            },
             flags,
             value_length: self.value_length() as u16,
         }
@@ -245,20 +275,27 @@ impl Chunk for ChunkPayloadData {
     fn unmarshal(raw: &Bytes) -> Result<Self> {
         let header = ChunkHeader::unmarshal(raw)?;
 
-        if header.typ != CT_PAYLOAD_DATA {
-            return Err(Error::ErrChunkTypeNotPayloadData);
-        }
+        let idata = match header.typ {
+            CT_PAYLOAD_DATA => false,
+            CT_IDATA => true,
+            _ => return Err(Error::ErrChunkTypeNotPayloadData),
+        };
 
         let immediate_sack = (header.flags & PAYLOAD_DATA_IMMEDIATE_SACK) != 0;
         let unordered = (header.flags & PAYLOAD_DATA_UNORDERED_BITMASK) != 0;
         let beginning_fragment = (header.flags & PAYLOAD_DATA_BEGINING_FRAGMENT_BITMASK) != 0;
         let ending_fragment = (header.flags & PAYLOAD_DATA_ENDING_FRAGMENT_BITMASK) != 0;
 
-        if raw.len() < CHUNK_HEADER_SIZE + PAYLOAD_DATA_HEADER_SIZE {
+        let fixed_header = if idata {
+            I_DATA_HEADER_SIZE
+        } else {
+            PAYLOAD_DATA_HEADER_SIZE
+        };
+        if raw.len() < CHUNK_HEADER_SIZE + fixed_header {
             return Err(Error::ErrChunkPayloadSmall);
         }
 
-        if header.value_length() < PAYLOAD_DATA_HEADER_SIZE {
+        if header.value_length() < fixed_header {
             return Err(Error::ErrChunkUnmarshalPayloadData);
         }
 
@@ -266,11 +303,28 @@ impl Chunk for ChunkPayloadData {
 
         let tsn = reader.get_u32();
         let stream_identifier = reader.get_u16();
-        let stream_sequence_number = reader.get_u16();
-        let payload_type: PayloadProtocolIdentifier = reader.get_u32().into();
-        let user_data = raw.slice(
-            CHUNK_HEADER_SIZE + PAYLOAD_DATA_HEADER_SIZE..CHUNK_HEADER_SIZE + header.value_length(),
-        );
+        let user_data =
+            raw.slice(CHUNK_HEADER_SIZE + fixed_header..CHUNK_HEADER_SIZE + header.value_length());
+
+        let (stream_sequence_number, message_identifier, fragment_sequence_number, payload_type) =
+            if idata {
+                // Reserved (2 bytes), then the message identifier; the last word is the PPID on a
+                // beginning fragment and the fragment sequence number on every other one.
+                let _reserved = reader.get_u16();
+                let message_identifier = reader.get_u32();
+                let last = reader.get_u32();
+                let (fsn, ppi) = if beginning_fragment {
+                    (0, PayloadProtocolIdentifier(last))
+                } else {
+                    (last, PayloadProtocolIdentifier::Unknown)
+                };
+                // Only the low 16 bits are exposed through the SSN field.
+                (message_identifier as u16, message_identifier, fsn, ppi)
+            } else {
+                let ssn = reader.get_u16();
+                let ppi: PayloadProtocolIdentifier = reader.get_u32().into();
+                (ssn, 0, 0, ppi)
+            };
 
         Ok(ChunkPayloadData {
             unordered,
@@ -280,8 +334,11 @@ impl Chunk for ChunkPayloadData {
             tsn,
             stream_identifier,
             stream_sequence_number,
+            message_identifier,
+            fragment_sequence_number,
             payload_type,
             user_data,
+            idata,
 
             acknowledged: false,
             miss_indicator: 0,
@@ -301,8 +358,18 @@ impl Chunk for ChunkPayloadData {
 
         writer.put_u32(self.tsn);
         writer.put_u16(self.stream_identifier);
-        writer.put_u16(self.stream_sequence_number);
-        writer.put_u32(self.payload_type.0);
+        if self.idata {
+            writer.put_u16(0);
+            writer.put_u32(self.message_identifier);
+            writer.put_u32(if self.beginning_fragment {
+                self.payload_type.0
+            } else {
+                self.fragment_sequence_number
+            });
+        } else {
+            writer.put_u16(self.stream_sequence_number);
+            writer.put_u32(self.payload_type.0);
+        }
         // NB: `extend(Bytes)` iterates the payload one byte at a time (Bytes is
         // `IntoIterator<Item = u8>`); `extend_from_slice` does a single bulk copy.
         writer.extend_from_slice(&self.user_data);
@@ -315,7 +382,7 @@ impl Chunk for ChunkPayloadData {
     }
 
     fn value_length(&self) -> usize {
-        PAYLOAD_DATA_HEADER_SIZE + self.user_data.len()
+        self.fixed_header_size() + self.user_data.len()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -324,6 +391,20 @@ impl Chunk for ChunkPayloadData {
 }
 
 impl ChunkPayloadData {
+    /// Size of the chunk value that precedes the user data.
+    pub(crate) fn fixed_header_size(&self) -> usize {
+        if self.idata {
+            I_DATA_HEADER_SIZE
+        } else {
+            PAYLOAD_DATA_HEADER_SIZE
+        }
+    }
+
+    /// Bytes this chunk takes in a packet: header and payload, padded to a 4-byte boundary.
+    pub(crate) fn wire_size(&self) -> usize {
+        (CHUNK_HEADER_SIZE + self.fixed_header_size() + self.user_data.len()).next_multiple_of(4)
+    }
+
     pub(crate) fn abandoned(&self) -> bool {
         self.abandoned
     }
@@ -348,4 +429,115 @@ impl ChunkPayloadData {
         self.abandoned = true;
         self.retransmit = false;
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::config::{INITIAL_MTU, max_payload_size_for_mtu};
+    use crate::packet::{CommonHeader, Packet};
+
+    #[test]
+    fn test_chunk_i_data_marshal_unmarshal() -> Result<()> {
+        // pion: TestChunkIDataMarshalUnmarshal
+        // beginning fragment: the last word of the header is the PPID
+        let orig = ChunkPayloadData {
+            idata: true,
+            tsn: 1,
+            stream_identifier: 2,
+            message_identifier: 5,
+            fragment_sequence_number: 0,
+            payload_type: PayloadProtocolIdentifier::Binary,
+            user_data: Bytes::from_static(b"abc"),
+            beginning_fragment: true,
+            ending_fragment: true,
+            ..Default::default()
+        };
+        let parsed = ChunkPayloadData::unmarshal(&orig.marshal()?)?;
+        assert!(parsed.idata);
+        assert_eq!(orig.tsn, parsed.tsn);
+        assert_eq!(orig.stream_identifier, parsed.stream_identifier);
+        assert_eq!(orig.message_identifier, parsed.message_identifier);
+        assert_eq!(
+            orig.fragment_sequence_number,
+            parsed.fragment_sequence_number
+        );
+        assert_eq!(orig.payload_type, parsed.payload_type);
+        assert_eq!(orig.user_data, parsed.user_data);
+        assert!(parsed.beginning_fragment && parsed.ending_fragment);
+
+        // middle fragment: the last word is the fragment sequence number, the PPID is unknown
+        let orig = ChunkPayloadData {
+            idata: true,
+            tsn: 2,
+            stream_identifier: 3,
+            message_identifier: 7,
+            fragment_sequence_number: 4,
+            payload_type: PayloadProtocolIdentifier::Binary,
+            user_data: Bytes::from_static(b"def"),
+            beginning_fragment: false,
+            ending_fragment: false,
+            ..Default::default()
+        };
+        let parsed = ChunkPayloadData::unmarshal(&orig.marshal()?)?;
+        assert!(parsed.idata);
+        assert_eq!(orig.tsn, parsed.tsn);
+        assert_eq!(orig.stream_identifier, parsed.stream_identifier);
+        assert_eq!(orig.message_identifier, parsed.message_identifier);
+        assert_eq!(
+            orig.fragment_sequence_number,
+            parsed.fragment_sequence_number
+        );
+        assert_eq!(PayloadProtocolIdentifier::Unknown, parsed.payload_type);
+        assert_eq!(orig.user_data, parsed.user_data);
+        assert!(!parsed.beginning_fragment && !parsed.ending_fragment);
+        Ok(())
+    }
+
+    #[test]
+    fn test_payload_data_header_size_accounting() -> Result<()> {
+        // pion: TestPayloadDataHeaderSizeAccounting
+        // header constants match marshaled chunks
+        for (idata, header) in [(false, DATA_HEADER), (true, I_DATA_HEADER)] {
+            let c = ChunkPayloadData {
+                idata,
+                beginning_fragment: true,
+                ending_fragment: true,
+                ..Default::default()
+            };
+            assert_eq!(header, c.marshal()?.len());
+            assert_eq!(header, CHUNK_HEADER_SIZE + c.fixed_header_size());
+            assert_eq!(header, c.wire_size());
+        }
+        assert_eq!(crate::config::DATA_CHUNK_HEADER_SIZE as usize, DATA_HEADER);
+        assert_eq!(
+            crate::config::I_DATA_CHUNK_HEADER_SIZE as usize,
+            I_DATA_HEADER
+        );
+
+        // default MTU payload limits include padding
+        for (idata, expected) in [(false, 1160usize), (true, 1156)] {
+            let mut payload = max_payload_size_for_mtu(INITIAL_MTU) as usize;
+            if idata {
+                payload -= 4;
+            }
+            assert_eq!(expected, payload);
+            let c = ChunkPayloadData {
+                idata,
+                beginning_fragment: true,
+                ending_fragment: true,
+                user_data: Bytes::from(vec![0u8; payload]),
+                ..Default::default()
+            };
+            let packet = Packet {
+                common_header: CommonHeader::default(),
+                chunks: vec![Box::new(c)],
+            };
+            assert!(packet.marshal()?.len() <= INITIAL_MTU as usize);
+        }
+        Ok(())
+    }
+
+    const DATA_HEADER: usize = 16;
+    const I_DATA_HEADER: usize = 20;
 }

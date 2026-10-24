@@ -32,9 +32,11 @@ fn chunk_name(c: &dyn Chunk, index: usize, first_is_init: bool) -> &'static str 
         CT_COOKIE_ACK => "cookie-ack",
         CT_HEARTBEAT => "heartbeat",
         CT_PAYLOAD_DATA => "data",
+        CT_IDATA => "i-data",
         CT_SACK => "sack",
         CT_RECONFIG => "reconfig",
         CT_FORWARD_TSN => "forward-tsn",
+        CT_IFORWARD_TSN => "i-forward-tsn",
         CT_ERROR => "error",
         CT_SHUTDOWN => "shutdown",
         CT_SHUTDOWN_ACK => "shutdown-ack",
@@ -130,8 +132,6 @@ fn matches_pion_sctp() {
             // HEARTBEAT must carry a Heartbeat Info parameter (RFC 4960 §3.3.5); this crate refuses
             // one without, pion accepts it.
             (Ok(Err(e)), None) if e.to_string().contains("Heartbeat Info") => {}
-            // Not implemented yet: I-DATA and I-FORWARD-TSN (RFC 8260 interleaving).
-            (Ok(Err(_)), None) if has_chunk(&v, &["i-data", "i-forward-tsn"]) => {}
             // An INIT parameter whose type says "stop processing" is refused while parsing here;
             // pion parses it and refuses it in the chunk's `check()`. Either way the INIT dies.
             (Ok(Err(e)), None)

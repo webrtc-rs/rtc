@@ -1,3 +1,4 @@
+use super::interleaved_queue::{InterleavedQueue, SchedulerKind};
 use crate::chunk::chunk_payload_data::{
     ChunkPayloadData, MessageId, MessageReliability, PayloadProtocolIdentifier,
 };
@@ -11,12 +12,12 @@ pub(crate) type PendingBaseQueue = VecDeque<ChunkPayloadData>;
 /// Ownership and policy remain available after the first fragment is sent or
 /// the API stream closes. Later fragments cannot replace this message snapshot.
 #[derive(Debug, Copy, Clone)]
-struct MessageSnapshot {
-    id: Option<MessageId>,
+pub(super) struct MessageSnapshot {
+    pub(super) id: Option<MessageId>,
     stream_identifier: u16,
     stream_sequence_number: u16,
     stream_generation: u64,
-    unordered: bool,
+    pub(super) unordered: bool,
     payload_type: PayloadProtocolIdentifier,
     created_at: Option<Instant>,
     reliability: MessageReliability,
@@ -54,7 +55,7 @@ impl MessageSnapshot {
 /// One message owns its unsent tail. Whole messages stay inline; fragmented
 /// messages reuse the packetization buffer.
 #[derive(Debug)]
-enum QueuedMessage {
+pub(super) enum QueuedMessage {
     Whole(ChunkPayloadData),
     Fragmented {
         snapshot: MessageSnapshot,
@@ -65,7 +66,7 @@ enum QueuedMessage {
 }
 
 impl QueuedMessage {
-    fn new(mut chunks: Vec<ChunkPayloadData>) -> Option<Self> {
+    pub(super) fn new(mut chunks: Vec<ChunkPayloadData>) -> Option<Self> {
         let first = chunks.first()?;
         if chunks.len() == 1 && first.beginning_fragment && first.ending_fragment {
             return chunks.pop().map(Self::Whole);
@@ -84,28 +85,39 @@ impl QueuedMessage {
         })
     }
 
-    fn peek(&self) -> Option<&ChunkPayloadData> {
+    pub(super) fn peek(&self) -> Option<&ChunkPayloadData> {
         match self {
             Self::Whole(c) => Some(c),
             Self::Fragmented { fragments, .. } => fragments.front(),
         }
     }
 
-    fn snapshot(&self) -> MessageSnapshot {
+    pub(super) fn snapshot(&self) -> MessageSnapshot {
         match self {
             Self::Whole(c) => MessageSnapshot::from_chunk(c),
             Self::Fragmented { snapshot, .. } => *snapshot,
         }
     }
 
-    fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         match self {
             Self::Whole(_) => 1,
             Self::Fragmented { fragments, .. } => fragments.len(),
         }
     }
 
-    fn bytes(&self) -> usize {
+    /// The user-data length of each fragment still queued, front first.
+    pub(super) fn chunk_lengths(&self) -> impl Iterator<Item = usize> + '_ {
+        let (whole, fragments) = match self {
+            Self::Whole(c) => (Some(c.user_data.len()), None),
+            Self::Fragmented { fragments, .. } => (None, Some(fragments)),
+        };
+        whole
+            .into_iter()
+            .chain(fragments.into_iter().flatten().map(|c| c.user_data.len()))
+    }
+
+    pub(super) fn bytes(&self) -> usize {
         match self {
             Self::Whole(c) => c.user_data.len(),
             Self::Fragmented { bytes, .. } => *bytes,
@@ -113,7 +125,7 @@ impl QueuedMessage {
     }
 
     /// Check the complete remaining tail before changing ownership or counters.
-    fn validate_tail(&self) -> Result<(usize, usize)> {
+    pub(super) fn validate_tail(&self) -> Result<(usize, usize)> {
         let (snapshot, fragments, next_fragment, bytes) = match self {
             Self::Whole(c) => return Ok((1, c.user_data.len())),
             Self::Fragmented {
@@ -148,7 +160,38 @@ impl QueuedMessage {
         Ok((fragments.len(), *bytes))
     }
 
-    fn into_fragments(self) -> Vec<ChunkPayloadData> {
+    /// Take the next fragment off the front, handing back the rest of the message, if any.
+    pub(super) fn pop_fragment(self) -> Option<(ChunkPayloadData, Option<Self>)> {
+        match self {
+            Self::Whole(c) => Some((c, None)),
+            Self::Fragmented {
+                snapshot,
+                mut fragments,
+                next_fragment,
+                bytes,
+            } => {
+                let first = fragments.front()?;
+                if !snapshot.matches(first)
+                    || first.beginning_fragment != (next_fragment == 0)
+                    || first.ending_fragment != (fragments.len() == 1)
+                {
+                    return None;
+                }
+                let bytes = bytes.checked_sub(first.user_data.len())?;
+                let next_fragment = next_fragment.checked_add(1)?;
+                let c = fragments.pop_front()?;
+                let rest = (!fragments.is_empty()).then_some(Self::Fragmented {
+                    snapshot,
+                    fragments,
+                    next_fragment,
+                    bytes,
+                });
+                Some((c, rest))
+            }
+        }
+    }
+
+    pub(super) fn into_fragments(self) -> Vec<ChunkPayloadData> {
         match self {
             Self::Whole(c) => vec![c],
             Self::Fragmented { fragments, .. } => Vec::from(fragments),
@@ -157,7 +200,7 @@ impl QueuedMessage {
 }
 
 /// A reset is control state, with no DATA payload or reliability policy.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ResetMarker {
     pub(crate) stream_identifier: u16,
 }
@@ -176,11 +219,32 @@ pub(crate) struct PendingQueue {
     n_bytes: usize,
     selected: bool,
     unordered_is_selected: bool,
+    /// Set once user message interleaving (RFC 8260) is negotiated: messages then queue per
+    /// stream and a scheduler picks which stream's fragment goes next. The ordered/unordered
+    /// queues above are unused while it is set.
+    interleaved: Option<InterleavedQueue>,
 }
 
 impl PendingQueue {
     pub(crate) fn new() -> Self {
         PendingQueue::default()
+    }
+
+    /// Switch between the plain queue and the interleaving scheduler. The queue must be empty:
+    /// negotiation completes before the first message is written.
+    pub(crate) fn set_interleaving(&mut self, scheduler: Option<SchedulerKind>) -> Result<()> {
+        if self.queue_len != 0 {
+            return Err(Error::OtherSctpErr(
+                "cannot change pending queue interleaving mode while queue is not empty".into(),
+            ));
+        }
+        self.interleaved = scheduler.map(InterleavedQueue::new);
+        self.selected = false;
+        Ok(())
+    }
+
+    pub(crate) fn is_interleaving(&self) -> bool {
+        self.interleaved.is_some()
     }
 
     /// Enqueue one complete packetized message. An empty packetization is a
@@ -191,6 +255,11 @@ impl PendingQueue {
         };
         self.n_bytes += message.bytes();
         self.queue_len += message.len();
+        if let Some(interleaved) = &mut self.interleaved {
+            let stream = message.snapshot().stream_identifier;
+            interleaved.push_message(stream, message);
+            return;
+        }
         let queue = if message.snapshot().unordered {
             &mut self.unordered_queue
         } else {
@@ -200,8 +269,12 @@ impl PendingQueue {
     }
 
     pub(crate) fn push_reset(&mut self, reset: ResetMarker) {
-        self.ordered_queue.push_back(PendingEntry::Reset(reset));
         self.queue_len += 1;
+        if let Some(interleaved) = &mut self.interleaved {
+            interleaved.push_reset(reset);
+            return;
+        }
+        self.ordered_queue.push_back(PendingEntry::Reset(reset));
     }
 
     fn front_queue(&self) -> &VecDeque<PendingEntry> {
@@ -219,6 +292,9 @@ impl PendingQueue {
     }
 
     pub(crate) fn peek(&self) -> Option<&ChunkPayloadData> {
+        if let Some(interleaved) = &self.interleaved {
+            return interleaved.peek();
+        }
         match self.front_queue().front()? {
             PendingEntry::Message(message) => message.peek(),
             PendingEntry::Reset(_) => None,
@@ -227,6 +303,11 @@ impl PendingQueue {
 
     /// Preserve the existing ordered/unordered scheduling and reset position.
     pub(crate) fn pop_ready_reset(&mut self) -> Option<ResetMarker> {
+        if let Some(interleaved) = &mut self.interleaved {
+            let reset = interleaved.pop_ready_reset()?;
+            self.queue_len = self.queue_len.checked_sub(1)?;
+            return Some(reset);
+        }
         if self.selected || !self.unordered_queue.is_empty() {
             return None;
         }
@@ -244,6 +325,19 @@ impl PendingQueue {
     /// Remove the rest of this message once. A repeated call cannot consume
     /// the next message, even when it has the same stream and policy metadata.
     pub(crate) fn drain_message(&mut self, id: MessageId) -> Result<Vec<ChunkPayloadData>> {
+        if let Some(interleaved) = &mut self.interleaved {
+            let Some((fragments, count, bytes)) = interleaved.drain_message(id)? else {
+                return Ok(vec![]);
+            };
+            if count > self.queue_len || bytes > self.n_bytes {
+                return Err(Error::OtherSctpErr(
+                    "invalid pending message accounting".into(),
+                ));
+            }
+            self.queue_len -= count;
+            self.n_bytes -= bytes;
+            return Ok(fragments);
+        }
         let Some(PendingEntry::Message(message)) = self.front_queue().front() else {
             return Ok(vec![]);
         };
@@ -276,6 +370,12 @@ impl PendingQueue {
         beginning_fragment: bool,
         unordered: bool,
     ) -> Option<ChunkPayloadData> {
+        if let Some(interleaved) = &mut self.interleaved {
+            let chunk = interleaved.pop()?.chunk;
+            self.n_bytes = self.n_bytes.saturating_sub(chunk.user_data.len());
+            self.queue_len = self.queue_len.saturating_sub(1);
+            return Some(chunk);
+        }
         let unordered = if self.selected {
             self.unordered_is_selected
         } else if beginning_fragment {

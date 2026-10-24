@@ -445,7 +445,7 @@ fn handle_init_test(name: &str, initial_state: AssociationState, expect_err: boo
         advertised_receiver_window_credit: 512 * 1024,
         ..Default::default()
     };
-    init.set_supported_extensions();
+    init.set_supported_extensions(false);
 
     let result = a.handle_init(&pkt, &init);
     if expect_err {
@@ -513,7 +513,7 @@ fn test_assoc_negotiated_max_streams() -> Result<()> {
         advertised_receiver_window_credit: 512 * 1024,
         ..Default::default()
     };
-    init.set_supported_extensions();
+    init.set_supported_extensions(false);
     a.handle_init(&pkt, &init)?;
 
     // `handle_init` narrowed the counts to 1001 outbound / 1002 inbound (see
@@ -1812,6 +1812,7 @@ fn test_reopened_receive_window_is_announced_without_waiting_for_a_probe() -> Re
 #[test]
 fn test_association_max_tsn_offset() -> Result<()> {
     let mut a = create_association(TransportConfig::default());
+    a.set_state(AssociationState::Established);
     let chunk_at = |a: &Association, offset: u32| ChunkPayloadData {
         beginning_fragment: true,
         ending_fragment: true,

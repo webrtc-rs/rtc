@@ -1399,6 +1399,21 @@ pub enum Error {
     /// ChunkType is not of type ForwardTsn.
     #[error("ChunkType is not of type ForwardTsn")]
     ErrChunkTypeNotForwardTsn,
+    /// ChunkType is not of type I-FORWARD-TSN.
+    #[error("ChunkType is not of type I-FORWARD-TSN")]
+    ErrChunkTypeNotIForwardTsn,
+    /// An I-FORWARD-TSN chunk's stream list is not a whole number of 8-byte entries.
+    #[error("i-forward-tsn chunk invalid length")]
+    ErrIForwardTsnChunkInvalidLength,
+    /// An I-FORWARD-TSN chunk names more streams than a chunk can carry.
+    #[error("i-forward-tsn chunk contains too many streams")]
+    ErrIForwardTsnTooManyStreams,
+    /// A stream's reassembly queue holds more DATA entries than the configured limit.
+    #[error("reassembly queue data limit exceeded")]
+    ErrReassemblyQueueLimitExceeded,
+    /// A stream's reassembly queue holds more I-DATA messages than the configured limit.
+    #[error("reassembly queue i-data message identifier limit exceeded")]
+    ErrReassemblyQueueMidLimitExceeded,
     /// ChunkType is not of type HEARTBEAT.
     #[error("ChunkType is not of type HEARTBEAT")]
     ErrChunkTypeNotHeartbeat,
