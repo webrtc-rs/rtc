@@ -24,10 +24,11 @@ fn create_association(config: TransportConfig) -> Association {
 // `test_assoc_unreliable_rexmit_*` suite.
 #[test]
 fn test_create_forward_tsn_forward_one_abandoned() -> Result<()> {
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 10;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 10,
+        ..Default::default()
+    };
     // tsn=10, ordered, si=1, ssn=2
     a.note_abandoned_for_forward_tsn(false, 1, 2);
 
@@ -43,10 +44,11 @@ fn test_create_forward_tsn_forward_one_abandoned() -> Result<()> {
 
 #[test]
 fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()> {
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 12;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 12,
+        ..Default::default()
+    };
     a.note_abandoned_for_forward_tsn(false, 1, 2); // tsn=10
     a.note_abandoned_for_forward_tsn(false, 1, 3); // tsn=11 -> greatest SSN for si=1
     a.note_abandoned_for_forward_tsn(false, 2, 1); // tsn=12
@@ -68,7 +70,7 @@ fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()
                 assert_eq!(1, s.sequence, "ssn should be 1");
                 si2ok = true;
             }
-            _ => assert!(false, "unexpected stream indentifier"),
+            _ => panic!("unexpected stream indentifier"),
         }
     }
     assert!(si1ok, "si=1 should be present");
@@ -83,10 +85,11 @@ fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
     // advances unordered streams purely by `new_cumulative_tsn` and ignores the
     // per-stream list (see handle_forward_tsn), so create_forward_tsn must not
     // report them — only ordered streams contribute.
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 11;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 11,
+        ..Default::default()
+    };
     a.note_abandoned_for_forward_tsn(true, 1, 5); // unordered -> omitted
     a.note_abandoned_for_forward_tsn(false, 2, 7); // ordered   -> reported
 
@@ -110,10 +113,12 @@ fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
 // SACK covers the other call site.
 #[test]
 fn test_marshal_control_chunk_byte_identical_to_create_packet() -> Result<()> {
-    let mut a = Association::default();
-    a.peer_verification_tag = 0x1234_5678;
-    a.source_port = 5000;
-    a.destination_port = 5001;
+    let mut a = Association {
+        peer_verification_tag: 0x1234_5678,
+        source_port: 5000,
+        destination_port: 5001,
+        ..Default::default()
+    };
 
     let fwd_tsn = ChunkForwardTsn {
         new_cumulative_tsn: 42,
@@ -149,9 +154,10 @@ fn test_marshal_control_chunk_byte_identical_to_create_packet() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_3unreceived_chunks() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     let fwdtsn = ChunkForwardTsn {
@@ -183,9 +189,10 @@ fn test_handle_forward_tsn_forward_3unreceived_chunks() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_1for1_missing() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
@@ -231,9 +238,10 @@ fn test_handle_forward_tsn_forward_1for1_missing() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_1for2_missing() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
@@ -277,9 +285,10 @@ fn test_handle_forward_tsn_forward_1for2_missing() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_dup_forward_tsn_chunk_should_generate_sack() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     let fwdtsn = ChunkForwardTsn {
@@ -309,8 +318,7 @@ fn test_assoc_create_new_stream() -> Result<()> {
             if let Some(s) = a.create_stream(i as u16, true, PayloadProtocolIdentifier::Unknown) {
                 s.stream_identifier
             } else {
-                assert!(false, "{} should success", i);
-                0
+                panic!("{} should success", i);
             };
         let result = a.streams.get(&stream_identifier);
         assert!(result.is_some(), "should be in a.streams map");
@@ -499,7 +507,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
                 "should be not Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
 
         if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..65537), ppi) {
@@ -509,7 +517,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
                 "should be Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
     }
 
@@ -536,7 +544,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
                 "should be not Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
 
         if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..30001), ppi) {
@@ -546,7 +554,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
                 "should be Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
     }
 
@@ -1730,7 +1738,7 @@ fn test_association_max_tsn_offset() -> Result<()> {
         ..Default::default()
     };
     let limit = max_tsn_offset(a.max_receive_buffer_size);
-    assert!(limit >= 2000 && limit <= 40000);
+    assert!((2000..=40000).contains(&limit));
 
     for offset in [100_000, limit + 1] {
         let c = chunk_at(&a, offset);
