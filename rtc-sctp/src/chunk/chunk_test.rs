@@ -466,7 +466,6 @@ use crate::chunk::chunk_payload_data::*;
 use crate::chunk::chunk_selective_ack::ChunkSelectiveAck;
 use crate::packet::*;
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
-use crate::param::param_state_cookie::*;
 
 #[test]
 fn test_init_chunk() -> Result<()> {
@@ -508,7 +507,7 @@ fn test_init_chunk() -> Result<()> {
             3899461680u32, c.initial_tsn
         );
     } else {
-        assert!(false, "Failed to cast Chunk -> Init");
+        panic!("Failed to cast Chunk -> Init");
     }
 
     Ok(())
@@ -643,7 +642,7 @@ fn test_init_marshal_unmarshal() -> Result<()> {
             123, c.initial_tsn
         );
     } else {
-        assert!(false, "Failed to cast Chunk -> InitAck");
+        panic!("Failed to cast Chunk -> InitAck");
     }
 
     Ok(())
@@ -710,7 +709,7 @@ fn test_reconfig_chunk() -> Result<()> {
             "unexpected stream identifier"
         );
     } else {
-        assert!(false, "Failed to cast Chunk -> Reconfig");
+        panic!("Failed to cast Chunk -> Reconfig");
     }
 
     Ok(())
@@ -733,7 +732,7 @@ fn test_forward_tsn_chunk() -> Result<()> {
             c.new_cumulative_tsn
         );
     } else {
-        assert!(false, "Failed to cast Chunk -> Forward TSN");
+        panic!("Failed to cast Chunk -> Forward TSN");
     }
 
     Ok(())
@@ -775,36 +774,325 @@ fn test_select_ack_chunk_followed_by_a_payload_data_chunk() -> Result<()> {
 use super::chunk_heartbeat::*;
 use super::chunk_heartbeat_ack::*;
 use crate::param::Param;
+use crate::param::param_header::PARAM_HEADER_LENGTH;
 use crate::param::param_heartbeat_info::ParamHeartbeatInfo;
+use crate::param::param_state_cookie::ParamStateCookie;
 
-fn heartbeat_info_param() -> Box<dyn Param> {
+fn heartbeat_info_param(info: &[u8]) -> Box<dyn Param> {
     Box::new(ParamHeartbeatInfo {
-        heartbeat_information: Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]),
+        heartbeat_information: Bytes::copy_from_slice(info),
     })
 }
 
-#[test]
-fn test_chunk_heartbeat_roundtrip() -> Result<()> {
-    let hb = ChunkHeartbeat {
-        params: vec![heartbeat_info_param()],
+/// Mirrors pion's `chunkHeader{typ, flags, raw}.marshal()`: a raw chunk with
+/// the given body and no padding.
+fn heartbeat_chunk_bytes(typ: ChunkType, body: &[u8]) -> Bytes {
+    let header = ChunkHeader {
+        typ,
+        flags: 0,
+        value_length: body.len() as u16,
     };
-    let raw = hb.marshal()?;
-    let parsed = ChunkHeartbeat::unmarshal(&raw)?;
-    assert_eq!(parsed.params.len(), 1);
-    assert_eq!(raw, parsed.marshal()?);
+    let mut buf = BytesMut::new();
+    header.marshal_to(&mut buf).unwrap();
+    buf.extend_from_slice(body);
+    buf.freeze()
+}
+
+fn heartbeat_info_param_bytes(info: &[u8]) -> Bytes {
+    heartbeat_info_param(info).marshal().unwrap()
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_success_empty_body() -> Result<()> {
+    // HEARTBEAT with no body (header only) should be accepted, params left empty.
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &[]);
+
+    let hb = ChunkHeartbeat::unmarshal(&raw)?;
+    assert_eq!(CT_HEARTBEAT, hb.header().typ);
+    assert_eq!(0, hb.params.len());
     Ok(())
 }
 
 #[test]
-fn test_chunk_heartbeat_ack_roundtrip() -> Result<()> {
-    let ack = ChunkHeartbeatAck {
-        params: vec![heartbeat_info_param()],
-    };
-    let raw = ack.marshal()?;
-    let parsed = ChunkHeartbeatAck::unmarshal(&raw)?;
-    assert_eq!(parsed.params.len(), 1);
-    assert_eq!(raw, parsed.marshal()?);
+fn chunk_heartbeat_unmarshal_success_with_info() -> Result<()> {
+    let info = [0xde, 0xad, 0xbe, 0xef];
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &heartbeat_info_param_bytes(&info));
+
+    let hb = ChunkHeartbeat::unmarshal(&raw)?;
+
+    assert_eq!(CT_HEARTBEAT, hb.header().typ);
+    assert_eq!(1, hb.params.len());
+    let p = hb.params[0]
+        .as_any()
+        .downcast_ref::<ParamHeartbeatInfo>()
+        .expect("param should be ParamHeartbeatInfo");
+    assert_eq!(Bytes::copy_from_slice(&info), p.heartbeat_information);
     Ok(())
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_success_with_zero_padding_after_tlv() -> Result<()> {
+    let info = [0xaa, 0xbb, 0xcc, 0xdd];
+    let mut body = heartbeat_info_param_bytes(&info).to_vec();
+    // add extra zero padding outside the TLV
+    body.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &body);
+
+    let hb = ChunkHeartbeat::unmarshal(&raw)?;
+
+    assert_eq!(1, hb.params.len());
+    let p = hb.params[0]
+        .as_any()
+        .downcast_ref::<ParamHeartbeatInfo>()
+        .expect("param should be ParamHeartbeatInfo");
+    assert_eq!(Bytes::copy_from_slice(&info), p.heartbeat_information);
+    Ok(())
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_failure_trailing_non_zero_bytes() {
+    let info = [0x01, 0x02, 0x03, 0x04];
+    let mut body = heartbeat_info_param_bytes(&info).to_vec();
+    body.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // non-zero trailing byte
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &body);
+
+    let err = ChunkHeartbeat::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatExtraNonZero, err);
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_failure_wrong_chunk_type() {
+    let raw = heartbeat_chunk_bytes(CT_INIT, &[]);
+
+    let err = ChunkHeartbeat::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrChunkTypeNotHeartbeat, err);
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_failure_too_short_body() {
+    // A body shorter than a parameter header (TLV, 4 bytes) should fail.
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &[0x00, 0x01, 0x02]);
+
+    let err = ChunkHeartbeat::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatNotLongEnoughInfo, err);
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_failure_truncated_param_body() {
+    // Build a valid HeartbeatInfo TLV, then truncate it so the advertised
+    // length is larger than the available bytes.
+    let info = [0x11, 0x22, 0x33, 0x44];
+    let pp = heartbeat_info_param_bytes(&info);
+    assert!(pp.len() > PARAM_HEADER_LENGTH);
+
+    let truncated = &pp[..pp.len() - 1]; // chop one byte off -> length mismatch
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, truncated);
+
+    let err = ChunkHeartbeat::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrParseParamTypeFailed, err);
+}
+
+#[test]
+fn chunk_heartbeat_unmarshal_failure_param_type_not_heartbeat_info() {
+    // Use a different param type (StateCookie) to trigger ErrHeartbeatParam.
+    let pp = ParamStateCookie {
+        cookie: Bytes::from_static(&[0x01, 0x02, 0x03]),
+    }
+    .marshal()
+    .unwrap();
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &pp);
+
+    let err = ChunkHeartbeat::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatParam, err);
+}
+
+#[test]
+fn chunk_heartbeat_marshal_round_trip() -> Result<()> {
+    let info = [0xca, 0xfe, 0xba, 0xbe];
+    let hb = ChunkHeartbeat {
+        params: vec![heartbeat_info_param(&info)],
+    };
+
+    let raw = hb.marshal()?;
+    let hb2 = ChunkHeartbeat::unmarshal(&raw)?;
+
+    assert_eq!(1, hb2.params.len());
+    let p = hb2.params[0]
+        .as_any()
+        .downcast_ref::<ParamHeartbeatInfo>()
+        .expect("param should be ParamHeartbeatInfo");
+    assert_eq!(Bytes::copy_from_slice(&info), p.heartbeat_information);
+    Ok(())
+}
+
+#[test]
+fn chunk_heartbeat_marshal_failure_no_params() {
+    let hb = ChunkHeartbeat { params: vec![] };
+
+    let err = hb.marshal().unwrap_err();
+    assert_eq!(Error::ErrHeartbeatMarshalNoInfo, err);
+}
+
+#[test]
+fn chunk_heartbeat_marshal_failure_more_than_one_param() {
+    let hb = ChunkHeartbeat {
+        params: vec![heartbeat_info_param(&[0x01]), heartbeat_info_param(&[0x02])],
+    };
+
+    let err = hb.marshal().unwrap_err();
+    assert_eq!(Error::ErrHeartbeatMarshalNoInfo, err);
+}
+
+#[test]
+fn chunk_heartbeat_marshal_failure_wrong_param_type() {
+    // Not a ParamHeartbeatInfo -> ErrHeartbeatParam.
+    let hb = ChunkHeartbeat {
+        params: vec![Box::new(ParamStateCookie {
+            cookie: Bytes::from_static(&[0x01]),
+        })],
+    };
+
+    let err = hb.marshal().unwrap_err();
+    assert_eq!(Error::ErrHeartbeatParam, err);
+}
+
+#[test]
+fn chunk_heartbeat_check() -> Result<()> {
+    let hb = ChunkHeartbeat::default();
+    hb.check()
+}
+
+///////////////////////////////////////////////////////////////////
+//chunk_heartbeat_ack_test
+///////////////////////////////////////////////////////////////////
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_marshal_success() -> Result<()> {
+    let tests: Vec<(&str, Vec<u8>)> = vec![
+        ("empty-info", vec![]),
+        ("aligned-4", vec![0x01, 0x02, 0x03, 0x04]),
+        ("non-aligned-5", vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee]),
+    ];
+
+    for (name, info) in tests {
+        let pp = heartbeat_info_param_bytes(&info);
+        let encoded = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, &pp);
+
+        let hb_ack = ChunkHeartbeatAck::unmarshal(&encoded)
+            .unwrap_or_else(|e| panic!("unmarshal HeartbeatAck for {name}: {e}"));
+
+        assert_eq!(
+            CT_HEARTBEAT_ACK,
+            hb_ack.header().typ,
+            "chunk type for {name}"
+        );
+        assert_eq!(1, hb_ack.params.len(), "params length for {name}");
+        let got = hb_ack.params[0]
+            .as_any()
+            .downcast_ref::<ParamHeartbeatInfo>()
+            .unwrap_or_else(|| panic!("param type for {name}"));
+        assert_eq!(
+            Bytes::from(info.clone()),
+            got.heartbeat_information,
+            "heartbeat info for {name}"
+        );
+
+        let round_trip = hb_ack
+            .marshal()
+            .unwrap_or_else(|e| panic!("marshal HeartbeatAck (round-trip) for {name}: {e}"));
+        assert_eq!(encoded, round_trip, "round-trip bytes for {name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_empty_body() -> Result<()> {
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, &[]);
+
+    let hb_ack = ChunkHeartbeatAck::unmarshal(&raw)?;
+    assert!(hb_ack.params.is_empty());
+    Ok(())
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_failure_wrong_chunk_type() {
+    let pp = heartbeat_info_param_bytes(&[0x01, 0x02, 0x03, 0x04]);
+    // wrong type on purpose
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT, &pp);
+
+    let err = ChunkHeartbeatAck::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrChunkTypeNotHeartbeatAck, err);
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_failure_body_too_short() {
+    // Less than a parameter header (TLV, 4 bytes) in the body.
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, &[0xaa, 0xbb, 0xcc]);
+
+    let err = ChunkHeartbeatAck::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatAckParams, err);
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_failure_truncated_param_body() {
+    // Build a valid HeartbeatInfo TLV, then truncate it so the advertised
+    // length is larger than the available bytes.
+    let info = [0x11, 0x22, 0x33, 0x44];
+    let pp = heartbeat_info_param_bytes(&info);
+    assert!(pp.len() > PARAM_HEADER_LENGTH);
+
+    let truncated = &pp[..pp.len() - 1];
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, truncated);
+
+    let err = ChunkHeartbeatAck::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatAckParams, err);
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_failure_wrong_param_type() {
+    // A TLV with a param type that is *not* heartbeatInfo but is otherwise valid.
+    let body = [
+        0x00, 0x02, // some param type != heartbeatInfo (which is 1 per RFC)
+        0x00, 0x04, // param length
+    ];
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, &body);
+
+    let err = ChunkHeartbeatAck::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatAckNotHeartbeatInfo, err);
+}
+
+#[test]
+fn chunk_heartbeat_ack_unmarshal_failure_trailing_non_zero() {
+    let info = [0x01, 0x02, 0x03, 0x04];
+    let mut body = heartbeat_info_param_bytes(&info).to_vec();
+    // append a non-zero byte after the single parameter.
+    body.push(0x01);
+
+    let raw = heartbeat_chunk_bytes(CT_HEARTBEAT_ACK, &body);
+
+    let err = ChunkHeartbeatAck::unmarshal(&raw).unwrap_err();
+    assert_eq!(Error::ErrHeartbeatExtraNonZero, err);
+}
+
+#[test]
+fn chunk_heartbeat_ack_marshal_failure_param_count() {
+    // no params
+    let hb_ack = ChunkHeartbeatAck::default();
+    let err = hb_ack.marshal().unwrap_err();
+    assert_eq!(Error::ErrHeartbeatAckParams, err);
+
+    // too many params
+    let hb_ack = ChunkHeartbeatAck {
+        params: vec![heartbeat_info_param(&[]), heartbeat_info_param(&[])],
+    };
+    let err = hb_ack.marshal().unwrap_err();
+    assert_eq!(Error::ErrHeartbeatAckParams, err);
 }
 
 /// Found by fuzzing: a FORWARD-TSN whose header declares no room for the new-cumulative-TSN, with

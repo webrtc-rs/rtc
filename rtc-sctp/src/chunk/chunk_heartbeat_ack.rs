@@ -60,16 +60,38 @@ impl Chunk for ChunkHeartbeatAck {
             return Err(Error::ErrChunkTypeNotHeartbeatAck);
         }
 
-        if raw.len() <= CHUNK_HEADER_SIZE {
-            return Err(Error::ErrHeartbeatNotLongEnoughInfo);
+        let body = &raw.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + header.value_length as usize);
+
+        // Allow for an empty heartbeat ack: no RTT info -> the sender's
+        // active-heartbeat bookkeeping just won't update its SRTT.
+        if body.is_empty() {
+            return Ok(ChunkHeartbeatAck { params: vec![] });
         }
 
-        let p =
-            build_param(&raw.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + header.value_length()))?;
-        if p.header().typ != ParamType::HeartbeatInfo {
-            return Err(Error::ErrHeartbeatParam);
+        if body.len() < PARAM_HEADER_LENGTH {
+            return Err(Error::ErrHeartbeatAckParams);
         }
+
+        // The parameter must be a Heartbeat Info: check the parameter type
+        // before validating its advertised length, as pion does.
+        let param_type = ParamType::from(u16::from_be_bytes([body[0], body[1]]));
+        if param_type != ParamType::HeartbeatInfo {
+            return Err(Error::ErrHeartbeatAckNotHeartbeatInfo);
+        }
+
+        let p_header = ParamHeader::unmarshal(body).map_err(|_| Error::ErrHeartbeatAckParams)?;
+        let plen = p_header.value_length as usize + PARAM_HEADER_LENGTH;
+        if plen < PARAM_HEADER_LENGTH || plen > body.len() {
+            return Err(Error::ErrHeartbeatAckParams);
+        }
+
+        let p = build_param(&body.slice(..plen)).map_err(|_| Error::ErrHeartbeatAckMarshalParam)?;
         let params = vec![p];
+
+        // Any trailing bytes beyond the single param must be all zeros.
+        if body[plen..].iter().any(|&b| b != 0) {
+            return Err(Error::ErrHeartbeatExtraNonZero);
+        }
 
         Ok(ChunkHeartbeatAck { params })
     }
