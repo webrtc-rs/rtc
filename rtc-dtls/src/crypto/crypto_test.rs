@@ -243,7 +243,7 @@ fn test_certificate_verify() -> Result<()> {
         crypto::default_provider().map_err(crypto_error)?.crypto(),
     )?;
     let ed25519_algorithm = SignatureHashAlgorithm {
-        hash: HashAlgorithm::Sha256,
+        hash: HashAlgorithm::Ed25519,
         signature: SignatureAlgorithm::Ed25519,
     };
     let cert_verify_ed25519 = generate_certificate_verify(
@@ -386,6 +386,23 @@ fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
         signature: SignatureAlgorithm::Ecdsa,
     };
 
+    // The mock claims to support every scheme, so the pair validation is what gates the label
+    // mismatches below.
+    assert!(matches!(
+        generate_key_signature(
+            &client_random,
+            &server_random,
+            &public_key,
+            named_curve,
+            &SignatureHashAlgorithm {
+                hash: HashAlgorithm::Sha256,
+                signature: SignatureAlgorithm::Ed25519,
+            },
+            &private_key,
+        ),
+        Err(Error::ErrInvalidSignatureAlgorithm)
+    ));
+
     let key_signature = generate_key_signature(
         &client_random,
         &server_random,
@@ -405,6 +422,277 @@ fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
     assert_eq!(*call_count.lock().unwrap(), 2);
     assert_eq!(&*last_message.lock().unwrap(), handshake_bodies);
     assert_eq!(cert_verify, expected_signature);
+
+    Ok(())
+}
+
+// Port of pion `TestHandshakeSignatureSchemeBinding` (ANT-2026-0Q4PYECH): a valid signature
+// must not authenticate a different scheme, or an empty digest in place of the handshake
+// transcript. Every non-PSS row of pion's table is reproduced; the two RSA-PSS rows are omitted
+// because no provider implements PSS signing yet.
+#[test]
+fn test_handshake_signature_scheme_binding() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+    let message: &[u8] = b"handshake transcript";
+
+    struct Case {
+        name: &'static str,
+        key: CryptoPrivateKey,
+        cert: Vec<u8>,
+        hash: HashAlgorithm,
+        signature: SignatureAlgorithm,
+        valid: bool,
+    }
+
+    let mut cases = vec![];
+
+    // An RSA key and self-signed certificate. ring cannot generate RSA keypairs, so the
+    // 2048-bit PKCS#8 test fixture shared with rtc-crypto is imported and rcgen signs the
+    // certificate with it.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair = KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_cert = rsa_params
+        .self_signed(&rsa_key_pair)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_key = CryptoPrivateKey::from_key_pair(&rsa_key_pair, provider.crypto())?;
+    let rsa_cert_der = rsa_cert.der().as_ref().to_vec();
+
+    // An ECDSA P-256 key and self-signed certificate.
+    let certificate_ecdsa =
+        Certificate::generate_self_signed(vec!["localhost".to_owned()], provider.crypto())?;
+    let ecdsa_key = certificate_ecdsa.private_key.clone();
+    let ecdsa_cert_der = certificate_ecdsa
+        .certificate
+        .first()
+        .expect("self-signed certificate")
+        .as_ref()
+        .to_vec();
+
+    // An Ed25519 key and self-signed certificate.
+    let certificate_ed25519 = Certificate::generate_self_signed_with_alg(
+        vec!["localhost".to_owned()],
+        &rcgen::PKCS_ED25519,
+        provider.crypto(),
+    )?;
+    let ed25519_key = certificate_ed25519.private_key.clone();
+    let ed25519_cert_der = certificate_ed25519
+        .certificate
+        .first()
+        .expect("self-signed certificate")
+        .as_ref()
+        .to_vec();
+
+    cases.push(Case {
+        name: "RSA",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "ECDSA",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "Ed25519",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "RSA labeled ECDSA",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "ECDSA labeled RSA",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "Ed25519 labeled ECDSA",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "Ed25519 wrong hash",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA empty digest labeled Ed25519",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA empty digest scheme 0801",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA no hash",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Md2,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA unknown hash",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Unsupported,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "ECDSA empty digest",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+
+    for tc in cases {
+        let raw_certs = vec![tc.cert.clone()];
+        let algorithm = SignatureHashAlgorithm {
+            hash: tc.hash,
+            signature: tc.signature,
+        };
+
+        if tc.valid {
+            let signature = generate_certificate_verify(message, &algorithm, &tc.key)
+                .unwrap_or_else(|e| panic!("{}: generate_certificate_verify failed: {e}", tc.name));
+
+            verify_certificate_verify(
+                provider.crypto(),
+                message,
+                &algorithm,
+                &signature,
+                &raw_certs,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("{}: verify_certificate_verify failed: {e}", tc.name));
+            verify_key_signature(
+                provider.crypto(),
+                message,
+                &algorithm,
+                &signature,
+                &raw_certs,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("{}: verify_key_signature failed: {e}", tc.name));
+
+            assert!(
+                verify_certificate_verify(
+                    provider.crypto(),
+                    b"changed transcript",
+                    &algorithm,
+                    &signature,
+                    &raw_certs,
+                    false
+                )
+                .is_err(),
+                "{}: a changed transcript must not verify",
+                tc.name
+            );
+            assert!(
+                verify_key_signature(
+                    provider.crypto(),
+                    b"changed transcript",
+                    &algorithm,
+                    &signature,
+                    &raw_certs,
+                    false
+                )
+                .is_err(),
+                "{}: a changed transcript must not verify",
+                tc.name
+            );
+        } else {
+            assert!(
+                matches!(
+                    verify_certificate_verify(
+                        provider.crypto(),
+                        message,
+                        &algorithm,
+                        &[],
+                        &raw_certs,
+                        false
+                    ),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: verify_certificate_verify must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    verify_key_signature(
+                        provider.crypto(),
+                        message,
+                        &algorithm,
+                        &[],
+                        &raw_certs,
+                        false
+                    ),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: verify_key_signature must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    generate_key_signature(
+                        &[],
+                        &[],
+                        &[],
+                        NamedCurve::X25519,
+                        &algorithm,
+                        &tc.key
+                    ),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: generate_key_signature must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    generate_certificate_verify(message, &algorithm, &tc.key),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: generate_certificate_verify must reject the scheme",
+                tc.name
+            );
+        }
+    }
 
     Ok(())
 }

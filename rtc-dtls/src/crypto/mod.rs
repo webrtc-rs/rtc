@@ -37,7 +37,7 @@ use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 
 use crate::curve::named_curve::*;
 use crate::record_layer::record_layer_header::*;
-use crate::signature_hash_algorithm::{SignatureAlgorithm, SignatureHashAlgorithm};
+use crate::signature_hash_algorithm::{HashAlgorithm, SignatureAlgorithm, SignatureHashAlgorithm};
 use shared::error::*;
 
 pub(crate) fn crypto_error(error: crypto::CryptoError) -> Error {
@@ -262,10 +262,16 @@ pub(crate) fn generate_key_signature(
     algorithm: &SignatureHashAlgorithm,
     private_key: &CryptoPrivateKey,
 ) -> Result<Vec<u8>> {
+    validate_signature_hash_pair(algorithm.hash, algorithm.signature)?;
+    let scheme = algorithm.crypto_scheme()?;
+    if !private_key.signing_key.supports(scheme) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
     let msg = value_key_message(client_random, server_random, public_key, named_curve);
     private_key
         .signing_key
-        .sign(algorithm.crypto_scheme()?, &msg)
+        .sign(scheme, &msg)
         .map_err(crypto_error)
 }
 
@@ -274,6 +280,107 @@ pub(crate) fn generate_key_signature(
 pub const OID_ED25519: Oid<'static> = oid!(1.3.101.112);
 /// The X.509 algorithm OID for ECDSA with a named curve.
 pub const OID_ECDSA: Oid<'static> = oid!(1.2.840.10045.2.1);
+/// The X.509 algorithm OID for an RSA public key (`rsaEncryption`).
+pub const OID_RSA: Oid<'static> = oid!(1.2.840.113549.1.1.1);
+
+/// The kind of public key a certificate carries, as far as handshake signing is concerned.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CertificateKeyKind {
+    /// An Ed25519 key; signs the message directly, with no separate hash.
+    Ed25519,
+    /// An ECDSA key over a NIST curve.
+    Ecdsa,
+    /// An RSA key, used with PKCS#1 v1.5 or (not yet) PSS padding.
+    Rsa,
+}
+
+impl CertificateKeyKind {
+    fn from_spki_oid(oid: &Oid<'_>) -> Result<Self> {
+        if *oid == OID_RSA {
+            Ok(CertificateKeyKind::Rsa)
+        } else if *oid == OID_ECDSA {
+            Ok(CertificateKeyKind::Ecdsa)
+        } else if *oid == OID_ED25519 {
+            Ok(CertificateKeyKind::Ed25519)
+        } else {
+            Err(Error::ErrInvalidCertificate)
+        }
+    }
+}
+
+// Binds the wire signature scheme to the certificate's key and hash, as pion's
+// validateHandshakeSignatureScheme does. RSA and ECDSA keys must never sign or verify a
+// digest-less handshake, and an Ed25519 key must be labeled with the Ed25519 scheme: a valid
+// signature over one scheme must not authenticate a different one.
+pub(crate) fn validate_handshake_signature_scheme(
+    key_kind: CertificateKeyKind,
+    hash_algorithm: HashAlgorithm,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    if key_kind == CertificateKeyKind::Ed25519 {
+        if signature_algorithm == SignatureAlgorithm::Ed25519
+            && hash_algorithm == HashAlgorithm::Ed25519
+        {
+            return Ok(());
+        }
+
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    // pion rejects every hash with no crypto hash — `None` (this crate's `Md2` code point),
+    // Ed25519's "null" hash, and unknown values — for non-Ed25519 keys.
+    if matches!(
+        hash_algorithm,
+        HashAlgorithm::Md2 | HashAlgorithm::Ed25519 | HashAlgorithm::Unsupported
+    ) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    match key_kind {
+        CertificateKeyKind::Ecdsa => {
+            if signature_algorithm == SignatureAlgorithm::Ecdsa {
+                return Ok(());
+            }
+        }
+        CertificateKeyKind::Rsa => {
+            // get_pss_hash returns the `Md2` code point for non-PSS schemes, which the
+            // no-real-hash check above already excluded.
+            if signature_algorithm == SignatureAlgorithm::Rsa
+                || signature_algorithm.get_pss_hash() == hash_algorithm
+            {
+                return Ok(());
+            }
+        }
+        CertificateKeyKind::Ed25519 => {}
+    }
+
+    Err(Error::ErrInvalidSignatureAlgorithm)
+}
+
+// The wire-scheme rules that hold regardless of key type, mirroring the key-independent half of
+// pion's validateHandshakeSignatureScheme: an Ed25519 signature must be paired with the
+// Ed25519 hash, and every other signature needs a real hash.
+pub(crate) fn validate_signature_hash_pair(
+    hash_algorithm: HashAlgorithm,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    if signature_algorithm == SignatureAlgorithm::Ed25519 {
+        if hash_algorithm == HashAlgorithm::Ed25519 {
+            return Ok(());
+        }
+
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    if matches!(
+        hash_algorithm,
+        HashAlgorithm::Md2 | HashAlgorithm::Ed25519 | HashAlgorithm::Unsupported
+    ) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    Ok(())
+}
 
 fn verify_signature(
     crypto: &dyn crypto::RTCCrypto,
@@ -289,6 +396,15 @@ fn verify_signature(
 
     let (_, certificate) = x509_parser::parse_x509_certificate(&raw_certificates[0])
         .map_err(|e| Error::Other(e.to_string()))?;
+
+    // The wire scheme must match the certificate's key and hash before any cryptographic work.
+    let key_kind =
+        CertificateKeyKind::from_spki_oid(&certificate.tbs_certificate.subject_pki.algorithm.oid())?;
+    validate_handshake_signature_scheme(
+        key_kind,
+        hash_algorithm.hash,
+        hash_algorithm.signature,
+    )?;
 
     let encoding = match hash_algorithm.signature {
         SignatureAlgorithm::Ed25519 => PublicKeyEncoding::Ed25519Raw,
@@ -377,9 +493,15 @@ pub(crate) fn generate_certificate_verify(
     algorithm: &SignatureHashAlgorithm,
     private_key: &CryptoPrivateKey,
 ) -> Result<Vec<u8>> {
+    validate_signature_hash_pair(algorithm.hash, algorithm.signature)?;
+    let scheme = algorithm.crypto_scheme()?;
+    if !private_key.signing_key.supports(scheme) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
     private_key
         .signing_key
-        .sign(algorithm.crypto_scheme()?, handshake_bodies)
+        .sign(scheme, handshake_bodies)
         .map_err(crypto_error)
 }
 
