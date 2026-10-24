@@ -1,4 +1,5 @@
 use super::flight2::*;
+use super::flight4::Flight4;
 use super::*;
 use crate::config::*;
 use crate::conn::*;
@@ -146,6 +147,10 @@ impl Flight for Flight0 {
                     Extension::ServerName(e) => {
                         state.server_name.clone_from(&e.server_name); // remote server name
                     }
+                    Extension::SignatureAlgorithmsCert(e) => {
+                        // Retained for certificate-signature validation, as in pion.
+                        state.remote_cert_signature_schemes = e.signature_hash_algorithms.clone();
+                    }
                     _ => {}
                 }
             }
@@ -178,6 +183,17 @@ impl Flight for Flight0 {
                         ));
                     }
                 };
+            }
+
+            // Select the certificate while negotiating the hello, as pion does, so retransmits
+            // reuse it and `get_certificate` sees the hello it answers.
+            if let Err((alert, err)) = negotiate_server_certificate(state, cfg, client_hello) {
+                return Err((alert, err));
+            }
+
+            // With the cookie exchange skipped, the hello is answered directly.
+            if cfg.insecure_skip_verify_hello {
+                return Ok(Box::new(Flight4 {}));
             }
 
             Ok(Box::new(Flight2 {}))

@@ -1,8 +1,11 @@
 use super::cipher_suite::*;
 use super::conn::*;
 use super::curve::named_curve::*;
+use super::cipher_suite::CipherSuite;
+use super::crypto::Certificate;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
+use super::signature_hash_algorithm::SignatureHashAlgorithm;
 use super::prf::*;
 use crypto::RTCCryptoProvider;
 use crypto::SecretVec;
@@ -51,6 +54,16 @@ pub struct State {
     pub(crate) local_verify_data: Vec<u8>,         // cached VerifyData
     pub(crate) local_key_signature: Vec<u8>,       // cached keySignature
     pub(crate) peer_certificates_verified: bool,
+    /// Server side: the ClientHello the negotiation ran on, for `get_certificate`.
+    pub(crate) client_hello_info: Option<crate::config::ClientHelloInfo>,
+    /// Server side: the certificate chosen for this handshake, picked while negotiating the
+    /// ClientHello so retransmits reuse it.
+    pub(crate) server_certificate: Option<Certificate>,
+    /// Server side: the peer's `signature_algorithms_cert` offer, retained as in pion.
+    pub(crate) remote_cert_signature_schemes: Vec<SignatureHashAlgorithm>,
+    /// Client side: the server's CertificateRequest, for `get_client_certificate` and
+    /// CertificateVerify scheme selection.
+    pub(crate) remote_certificate_request: Option<crate::config::CertificateRequestInfo>,
     //pub(crate) replay_detector: Vec<Box<dyn ReplayDetector>>,
 }
 
@@ -93,6 +106,10 @@ impl State {
             negotiated_protocol: String::new(),
             peer_certificates: vec![],
             identity_hint: vec![],
+            client_hello_info: None,
+            server_certificate: None,
+            remote_cert_signature_schemes: vec![],
+            remote_certificate_request: None,
 
             is_client,
 

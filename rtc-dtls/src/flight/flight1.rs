@@ -1,24 +1,13 @@
 use super::flight3::*;
 use super::*;
-use crate::compression_methods::*;
 use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
-use crate::extension::extension_alpn::*;
-use crate::extension::extension_server_name::*;
-use crate::extension::extension_supported_elliptic_curves::*;
-use crate::extension::extension_supported_point_formats::*;
-use crate::extension::extension_supported_signature_algorithms::*;
-use crate::extension::extension_use_extended_master_secret::*;
-use crate::extension::extension_use_srtp::*;
-use crate::extension::*;
-use crate::handshake::handshake_message_client_hello::*;
 use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use shared::error::Error;
 
-use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -123,72 +112,15 @@ impl Flight for Flight1 {
         if let Err(error) = state.local_random.populate(cfg.provider().random()) {
             return Err((None, Some(error)));
         }
-
-        let mut extensions = vec![
-            Extension::SupportedSignatureAlgorithms(ExtensionSupportedSignatureAlgorithms {
-                signature_hash_algorithms: cfg.local_signature_schemes.clone(),
-            }),
-            Extension::RenegotiationInfo(ExtensionRenegotiationInfo {
-                renegotiated_connection: 0,
-            }),
-        ];
-
-        if cfg.local_psk_callback.is_none() {
-            extensions.extend_from_slice(&[
-                Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: cfg.local_named_curves.clone(),
-                }),
-                Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
-                    point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
-                }),
-            ]);
+        // The generator's output replaces the random bytes, as in pion.
+        if let Some(generator) = &cfg.hello_random_bytes_generator {
+            state.local_random.random_bytes = generator();
         }
 
-        if !cfg.local_srtp_protection_profiles.is_empty() {
-            extensions.push(Extension::UseSrtp(ExtensionUseSrtp {
-                protection_profiles: cfg.local_srtp_protection_profiles.clone(),
-            }));
-        }
-
-        if !cfg.local_supported_protocols.is_empty() {
-            extensions.push(Extension::Alpn(ExtensionAlpn {
-                protocols: cfg.local_supported_protocols.clone(),
-            }));
-        }
-
-        if cfg.extended_master_secret == ExtendedMasterSecretType::Request
-            || cfg.extended_master_secret == ExtendedMasterSecretType::Require
-        {
-            extensions.push(Extension::UseExtendedMasterSecret(
-                ExtensionUseExtendedMasterSecret { supported: true },
-            ));
-        }
-
-        // RFC 6066 §3: literal IP addresses are not permitted in server_name.
-        if !cfg.sni_server_name.is_empty()
-            && cfg.sni_server_name.parse::<std::net::IpAddr>().is_err()
-        {
-            extensions.push(Extension::ServerName(ExtensionServerName {
-                server_name: cfg.sni_server_name.clone(),
-            }));
-        }
+        let message = super::build_client_hello_message(state, cfg)?;
 
         Ok(vec![Packet {
-            record: RecordLayer::new(
-                PROTOCOL_VERSION1_2,
-                0,
-                Content::Handshake(Handshake::new(HandshakeMessage::ClientHello(
-                    HandshakeMessageClientHello {
-                        version: PROTOCOL_VERSION1_2,
-                        random: state.local_random.clone(),
-                        cookie: state.cookie.clone(),
-
-                        cipher_suites: cfg.local_cipher_suites.clone(),
-                        compression_methods: default_compression_methods(),
-                        extensions,
-                    },
-                ))),
-            ),
+            record: RecordLayer::new(PROTOCOL_VERSION1_2, 0, Content::Handshake(Handshake::new(message))),
             should_encrypt: false,
             reset_local_sequence_number: false,
         }])

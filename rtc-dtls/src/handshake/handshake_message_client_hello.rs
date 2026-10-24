@@ -74,6 +74,54 @@ impl fmt::Debug for HandshakeMessageClientHello {
 const HANDSHAKE_MESSAGE_CLIENT_HELLO_VARIABLE_WIDTH_START: usize = 34;
 
 impl HandshakeMessageClientHello {
+    /// The protocol version the client offered.
+    pub fn version(&self) -> ProtocolVersion {
+        self.version
+    }
+
+    /// The client's random.
+    pub fn random(&self) -> &HandshakeRandom {
+        &self.random
+    }
+
+    /// The cookie the server challenged the client with, empty on the first hello.
+    pub fn cookie(&self) -> &[u8] {
+        &self.cookie
+    }
+
+    /// The cipher suites the client offered.
+    pub fn cipher_suites(&self) -> &[CipherSuiteId] {
+        &self.cipher_suites
+    }
+
+    /// The compression methods the client offered.
+    pub fn compression_methods(&self) -> &CompressionMethods {
+        &self.compression_methods
+    }
+
+    /// The hello's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    /// Replaces the extensions, for a `client_hello_message_hook`.
+    pub fn set_extensions(&mut self, extensions: Vec<Extension>) {
+        self.extensions = extensions;
+    }
+
+    /// Replaces the cookie, for a `client_hello_message_hook`.
+    pub fn set_cookie(&mut self, cookie: Vec<u8>) {
+        self.cookie = cookie;
+    }
+
+    /// Replaces the 28 random bytes, for a `client_hello_message_hook`.
+    pub fn set_random_bytes(
+        &mut self,
+        random_bytes: [u8; crate::handshake::handshake_random::RANDOM_BYTES_LENGTH],
+    ) {
+        self.random.random_bytes = random_bytes;
+    }
+
     /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ClientHello

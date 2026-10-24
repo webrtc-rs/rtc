@@ -373,3 +373,31 @@ pub(crate) fn parse_signature_schemes(
         Ok(out)
     }
 }
+
+// parse_certificate_signature_schemes translates []tls.SignatureScheme to
+// []SignatureHashAlgorithm with the hybrid encoding `signature_algorithms_cert` uses: a known
+// RSA-PSS code point carries its hash, everything else byte-splits. Unknown or (without
+// `insecure_hashes`) insecure entries are skipped rather than rejected, as in pion.
+pub(crate) fn parse_certificate_signature_schemes(
+    sigs: &[u16],
+    insecure_hashes: bool,
+) -> Result<Vec<SignatureHashAlgorithm>> {
+    let mut out = vec![];
+    for ss in sigs {
+        let Some(algorithm) =
+            crate::extension::extension_signature_algorithms_cert::parse_signature_hash_algorithm(*ss)
+        else {
+            return Err(Error::ErrInvalidSignatureAlgorithm);
+        };
+        if algorithm.hash.insecure() && !insecure_hashes {
+            continue;
+        }
+        out.push(algorithm);
+    }
+
+    if out.is_empty() {
+        Err(Error::ErrNoAvailableSignatureSchemes)
+    } else {
+        Ok(out)
+    }
+}

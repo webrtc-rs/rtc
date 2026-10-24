@@ -41,6 +41,7 @@ fn test_handshake_message_certificate_request() -> Result<()> {
                 signature: SignatureAlgorithm::Rsa,
             },
         ],
+        certificate_authorities_names: vec![],
     };
 
     let mut reader = BufReader::new(raw_certificate_request.as_slice());

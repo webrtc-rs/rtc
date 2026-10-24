@@ -20,6 +20,8 @@ pub mod extension_post_handshake_auth;
 pub mod extension_pre_shared_key;
 /// The `psk_key_exchange_modes` extension, which constrains PSK handshakes.
 pub mod extension_psk_key_exchange_modes;
+/// The `signature_algorithms_cert` extension, which constrains X.509 certificate signatures.
+pub mod extension_signature_algorithms_cert;
 /// Server Name Indication (SNI).
 pub mod extension_server_name;
 /// The curves a client will accept for ECDHE.
@@ -50,6 +52,7 @@ use extension_post_handshake_auth::*;
 use extension_pre_shared_key::*;
 use extension_psk_key_exchange_modes::*;
 use extension_server_name::*;
+use extension_signature_algorithms_cert::*;
 use extension_supported_elliptic_curves::*;
 use extension_supported_point_formats::*;
 use extension_supported_signature_algorithms::*;
@@ -98,6 +101,8 @@ pub enum ExtensionValue {
     OidFilters = 48,
     /// `POST_HANDSHAKE_AUTH` (`49`).
     PostHandshakeAuth = 49,
+    /// `SIGNATURE_ALGORITHMS_CERT` (`50`).
+    SignatureAlgorithmsCert = 50,
     /// `KEY_SHARE` (`51`).
     KeyShare = 51,
     /// `CONNECTION_ID` (`54`).
@@ -126,6 +131,7 @@ impl From<u16> for ExtensionValue {
             47 => ExtensionValue::CertificateAuthorities,
             48 => ExtensionValue::OidFilters,
             49 => ExtensionValue::PostHandshakeAuth,
+            50 => ExtensionValue::SignatureAlgorithmsCert,
             51 => ExtensionValue::KeyShare,
             54 => ExtensionValue::ConnectionId,
             65281 => ExtensionValue::RenegotiationInfo,
@@ -167,6 +173,8 @@ pub enum Extension {
     /// The offer to authenticate after the handshake. A disabled value marshals to nothing, as
     /// in pion: the extension is omitted rather than sent empty.
     PostHandshakeAuth(ExtensionPostHandshakeAuth),
+    /// The signature and hash pairs the sender accepts for certificate signatures.
+    SignatureAlgorithmsCert(ExtensionSignatureAlgorithmsCert),
     /// The key-exchange shares of a TLS 1.3 handshake.
     KeyShare(ExtensionKeyShare),
     /// The connection ID a peer wants records addressed by.
@@ -195,6 +203,7 @@ impl Extension {
             Extension::CertificateAuthorities(ext) => ext.extension_value(),
             Extension::OidFilters(ext) => ext.extension_value(),
             Extension::PostHandshakeAuth(ext) => ext.extension_value(),
+            Extension::SignatureAlgorithmsCert(ext) => ext.extension_value(),
             Extension::KeyShare(ext) => ext.extension_value(),
             Extension::ConnectionId(ext) => ext.extension_value(),
             Extension::UseExtendedMasterSecret(ext) => ext.extension_value(),
@@ -229,6 +238,7 @@ impl Extension {
             Extension::CertificateAuthorities(ext) => ext.size(),
             Extension::OidFilters(ext) => ext.size(),
             Extension::PostHandshakeAuth(ext) => ext.size(),
+            Extension::SignatureAlgorithmsCert(ext) => ext.size(),
             Extension::KeyShare(ext) => ext.size(),
             Extension::ConnectionId(ext) => ext.size(),
             Extension::UseExtendedMasterSecret(ext) => ext.size(),
@@ -268,6 +278,7 @@ impl Extension {
             Extension::CertificateAuthorities(ext) => ext.marshal(writer),
             Extension::OidFilters(ext) => ext.marshal(writer),
             Extension::PostHandshakeAuth(ext) => ext.marshal(writer),
+            Extension::SignatureAlgorithmsCert(ext) => ext.marshal(writer),
             Extension::KeyShare(ext) => ext.marshal(writer),
             Extension::ConnectionId(ext) => ext.marshal(writer),
             Extension::UseExtendedMasterSecret(ext) => ext.marshal(writer),
@@ -320,6 +331,9 @@ impl Extension {
             )),
             ExtensionValue::PostHandshakeAuth => Ok(Extension::PostHandshakeAuth(
                 ExtensionPostHandshakeAuth::unmarshal(reader)?,
+            )),
+            ExtensionValue::SignatureAlgorithmsCert => Ok(Extension::SignatureAlgorithmsCert(
+                ExtensionSignatureAlgorithmsCert::unmarshal(reader)?,
             )),
             ExtensionValue::KeyShare => {
                 Ok(Extension::KeyShare(ExtensionKeyShare::unmarshal(reader)?))

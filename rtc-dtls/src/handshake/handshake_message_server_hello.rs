@@ -53,6 +53,36 @@ impl fmt::Debug for HandshakeMessageServerHello {
 }
 
 impl HandshakeMessageServerHello {
+    /// The protocol version the server chose.
+    pub fn version(&self) -> ProtocolVersion {
+        self.version
+    }
+
+    /// The server's random.
+    pub fn random(&self) -> &HandshakeRandom {
+        &self.random
+    }
+
+    /// The cipher suite the server chose.
+    pub fn cipher_suite(&self) -> CipherSuiteId {
+        self.cipher_suite
+    }
+
+    /// The compression method the server chose.
+    pub fn compression_method(&self) -> CompressionMethodId {
+        self.compression_method
+    }
+
+    /// The hello's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    /// Replaces the extensions, for a `server_hello_message_hook`.
+    pub fn set_extensions(&mut self, extensions: Vec<Extension>) {
+        self.extensions = extensions;
+    }
+
     /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ServerHello
