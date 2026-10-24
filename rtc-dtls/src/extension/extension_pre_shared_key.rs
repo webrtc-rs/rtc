@@ -20,9 +20,8 @@ const MIN_PSK_BINDER_SIZE: usize = 32;
 
 /// The `pre_shared_key` extension ([RFC 8446 §4.2.11]).
 ///
-/// Only the fields of one context are populated at a time, as in pion:
-/// [`identities`](Self::identities) and [`binders`](Self::binders) in a ClientHello,
-/// [`selected_identity`](Self::selected_identity) in a ServerHello. Marshaling with an empty
+/// Only the fields of one context are populated at a time, as in pion: `identities` and
+/// `binders` in a ClientHello, `selected_identity` in a ServerHello. Marshaling with an empty
 /// identity or binder list produces the ServerHello form.
 ///
 /// [RFC 8446 §4.2.11]: https://datatracker.ietf.org/html/rfc8446#section-4.2.11

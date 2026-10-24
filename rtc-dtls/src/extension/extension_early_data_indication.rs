@@ -6,8 +6,8 @@ use super::*;
 /// The `early_data` extension ([RFC 8446 §4.2.10]).
 ///
 /// In a ClientHello or EncryptedExtensions it is empty — the indication is the extension's
-/// presence. Only a NewSessionTicket carries `max_early_data_size`, held in
-/// [`max_early_data`](Self::max_early_data).
+/// presence. Only a NewSessionTicket carries `max_early_data_size`, held in the private
+/// `max_early_data` field.
 ///
 /// [RFC 8446 §4.2.10]: https://datatracker.ietf.org/html/rfc8446#section-4.2.10
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
