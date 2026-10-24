@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod signature_hash_algorithm_13_test;
+#[cfg(test)]
 mod signature_hash_algorithm_test;
 
 use std::fmt;
@@ -81,6 +83,13 @@ impl HashAlgorithm {
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-16
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The signature algorithms this crate can verify and produce.
+///
+/// The TLS 1.2 algorithms are one-byte code points carried in the byte-split
+/// `SignatureHashAlgorithm` pair. The RSA-PSS variants are full `u16` signature schemes
+/// ([RFC 8446 §4.2.3]): they are negotiated whole in DTLS 1.3, are offered by
+/// [`algorithms_13`], and cannot be encoded in the TLS 1.2 byte-split form.
+///
+/// [RFC 8446 §4.2.3]: https://datatracker.ietf.org/doc/html/rfc8446#section-4.2.3
 #[non_exhaustive]
 pub enum SignatureAlgorithm {
     /// `RSA` (`1`).
@@ -89,8 +98,41 @@ pub enum SignatureAlgorithm {
     Ecdsa = 3,
     /// `ED25519` (`7`).
     Ed25519 = 7,
+    /// `RSA_PSS_RSAE_SHA256` (`0x0804`): RSA-PSS with SHA-256 over a certificate carrying the
+    /// standard `rsaEncryption` public-key OID.
+    RsaPssRsaeSha256 = 0x0804,
+    /// `RSA_PSS_RSAE_SHA384` (`0x0805`).
+    RsaPssRsaeSha384 = 0x0805,
+    /// `RSA_PSS_RSAE_SHA512` (`0x0806`).
+    RsaPssRsaeSha512 = 0x0806,
+    /// `RSA_PSS_PSS_SHA256` (`0x0809`): RSA-PSS with SHA-256 over an `id-RSASSA-PSS`
+    /// certificate. Parsed for interoperability, never offered — such certificates are
+    /// virtually unused in the real world, as in pion.
+    RsaPssPssSha256 = 0x0809,
+    /// `RSA_PSS_PSS_SHA384` (`0x080a`).
+    RsaPssPssSha384 = 0x080a,
+    /// `RSA_PSS_PSS_SHA512` (`0x080b`).
+    RsaPssPssSha512 = 0x080b,
     /// An algorithm this crate does not implement.
     Unsupported,
+}
+
+impl SignatureAlgorithm {
+    /// Whether this is an RSA-PSS signature scheme. It is tempting to check for a range
+    /// between `0x0804` and `0x080b`, but `0x0807` is Ed25519 and `0x0808` is Ed448, which
+    /// are not PSS, so the values are checked one by one, as in pion.
+    #[must_use]
+    pub fn is_pss(&self) -> bool {
+        matches!(
+            self,
+            SignatureAlgorithm::RsaPssRsaeSha256
+                | SignatureAlgorithm::RsaPssRsaeSha384
+                | SignatureAlgorithm::RsaPssRsaeSha512
+                | SignatureAlgorithm::RsaPssPssSha256
+                | SignatureAlgorithm::RsaPssPssSha384
+                | SignatureAlgorithm::RsaPssPssSha512
+        )
+    }
 }
 
 impl From<u8> for SignatureAlgorithm {
@@ -175,6 +217,68 @@ pub(crate) fn default_signature_schemes() -> Vec<SignatureHashAlgorithm> {
         SignatureHashAlgorithm {
             hash: HashAlgorithm::Ed25519,
             signature: SignatureAlgorithm::Ed25519,
+        },
+    ]
+}
+
+/// Returns the signature algorithms compatible with DTLS 1.3 / TLS 1.3: pion's
+/// `signaturehash.Algorithms13`. This includes the DTLS 1.3-specific RSA-PSS schemes in
+/// addition to the DTLS 1.2 algorithms.
+///
+/// The order is the priority a future `select_signature_scheme_13` will negotiate with, and
+/// follows the industry-standard ECDSA-first preference of OpenSSL, BoringSSL, Firefox and
+/// Chrome.
+///
+/// Only the `RSA_PSS_RSAE` variants are offered, never `RSA_PSS_PSS`: certificates with the
+/// `id-RSASSA-PSS` OID are virtually unused and not allowed by the CA/Browser Forum baseline
+/// requirements, as in pion — which follows the pragmatic approach of Go's `crypto/tls` and
+/// BoringSSL.
+#[must_use]
+pub fn algorithms_13() -> Vec<SignatureHashAlgorithm> {
+    vec![
+        // ECDSA schemes (modern, efficient — industry standard preference)
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::Ecdsa,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha384,
+            signature: SignatureAlgorithm::Ecdsa,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha512,
+            signature: SignatureAlgorithm::Ecdsa,
+        },
+        // Ed25519
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Ed25519,
+            signature: SignatureAlgorithm::Ed25519,
+        },
+        // RSA-PSS RSAE schemes (TLS 1.3 / DTLS 1.3 compatible with standard RSA certs)
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::RsaPssRsaeSha256,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha384,
+            signature: SignatureAlgorithm::RsaPssRsaeSha384,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha512,
+            signature: SignatureAlgorithm::RsaPssRsaeSha512,
+        },
+        // RSA PKCS#1 v1.5 schemes (backward compatibility with DTLS 1.2)
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::Rsa,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha384,
+            signature: SignatureAlgorithm::Rsa,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha512,
+            signature: SignatureAlgorithm::Rsa,
         },
     ]
 }

@@ -300,7 +300,14 @@ fn verify_signature(
         SignatureAlgorithm::Ed25519 => PublicKeyEncoding::Ed25519Raw,
         SignatureAlgorithm::Ecdsa => PublicKeyEncoding::EcUncompressedPoint,
         SignatureAlgorithm::Rsa => PublicKeyEncoding::RsaPkcs1Der,
-        SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
+        // The full-u16 PSS schemes of DTLS 1.3 are not verified through this 1.2 path yet.
+        SignatureAlgorithm::RsaPssRsaeSha256
+        | SignatureAlgorithm::RsaPssRsaeSha384
+        | SignatureAlgorithm::RsaPssRsaeSha512
+        | SignatureAlgorithm::RsaPssPssSha256
+        | SignatureAlgorithm::RsaPssPssSha384
+        | SignatureAlgorithm::RsaPssPssSha512
+        | SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
     };
     if hash_algorithm.signature == SignatureAlgorithm::Rsa
         && remote_key_signature.len() < 256

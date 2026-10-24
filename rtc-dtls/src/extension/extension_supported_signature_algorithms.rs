@@ -31,11 +31,17 @@ impl ExtensionSupportedSignatureAlgorithms {
     ///
     /// # Errors
     ///
-    /// Fails on a write error, or if a field exceeds the length its wire format allows.
+    /// [`Error::ErrInvalidSignatureAlgorithm`] when a carried scheme is an RSA-PSS scheme,
+    /// which has no TLS 1.2 byte-split encoding, in addition to a write error.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u16::<BigEndian>(2 + 2 * self.signature_hash_algorithms.len() as u16)?;
         writer.write_u16::<BigEndian>(2 * self.signature_hash_algorithms.len() as u16)?;
         for v in &self.signature_hash_algorithms {
+            // The TLS 1.2 extension carries the byte-split pair; a full-u16 PSS scheme has no
+            // 1-byte signature code point, so it cannot be encoded here.
+            if v.signature.is_pss() {
+                return Err(Error::ErrInvalidSignatureAlgorithm);
+            }
             writer.write_u8(v.hash as u8)?;
             writer.write_u8(v.signature as u8)?;
         }
