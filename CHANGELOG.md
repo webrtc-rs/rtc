@@ -147,6 +147,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc`: a renegotiation no longer announces the layers of a simulcast stream that is already being
+  received a second time. Applying a remote description rebuilt the receiver's track with no SSRC for
+  any rid, so the next packet of every layer bound it again and fired `OnTrack` (pion fires it once
+  per track), and the interceptors bound each stream twice. An SFU renegotiates with every
+  participant whenever the call changes, and a browser's simulcast camera hit it on each one. A
+  section whose track, stream and rids are unchanged keeps its track and the SSRCs it learned, as
+  the SSRC-declared path already did. `tests/simulcast_renegotiation_keeps_tracks.rs` pins it.
+- `rtc`: the SCTP handler test for DATA that arrives before COOKIE-ACK now states pion v1.12.0's
+  behaviour (`TestAssociationDataIgnoredOutsideReceiveStates`): the early DATA is ignored and the
+  peer's retransmission is delivered once. It still described the older behaviour of queueing it,
+  which the association no longer has, and failed.
 - `rtc-sctp`, found by porting pion's `TestHandleForwardTSN`: a FORWARD-TSN naming a TSN far ahead
   of the cumulative TSN made the receiver step there one TSN at a time (about 4 s of CPU for a jump
   of 2^31, in a release build, per chunk; far worse in debug), so an authenticated peer could stall

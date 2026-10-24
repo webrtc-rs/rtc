@@ -1014,6 +1014,21 @@ impl RTCPeerConnection {
             {
                 let mut receive_codings = vec![];
                 if !incoming_track.rids.is_empty() {
+                    // A renegotiation lists the simulcast section that is already receiving again.
+                    // Replacing its track would forget the SSRC learned for each rid, and the next
+                    // packet of every layer would bind it and fire `OnTrack` a second time (pion
+                    // fires it once per track), with the interceptors binding the stream twice.
+                    let established = receiver.track().track_id() == &incoming_track.track_id
+                        && receiver.track().stream_id() == &incoming_track.stream_id
+                        && receiver.get_coding_parameters().len() == incoming_track.rids.len()
+                        && receiver
+                            .get_coding_parameters()
+                            .iter()
+                            .zip(&incoming_track.rids)
+                            .all(|(coding, rid)| &coding.rid == rid);
+                    if established {
+                        continue;
+                    }
                     // for incoming_track with rids, defer adding track until received the first RTP
                     // packet with rtp header extension with "urn:ietf:params:rtp-hdrext:sdes:mid" and
                     // "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", so that endpoint handler can

@@ -1387,9 +1387,11 @@ mod tests {
         }
     }
 
-    /// An SCTP DATA message received before COOKIE-ACK must stay in the association's receive
-    /// queue.  Once COOKIE-ACK establishes the association, the same message is delivered exactly
-    /// once, allowing the DataChannel handler to announce `OnOpen` only after SCTP is ready.
+    /// An SCTP DATA message received before COOKIE-ACK is ignored, as pion's association ignores
+    /// it (`TestAssociationDataIgnoredOutsideReceiveStates`): nothing reaches the DataChannel
+    /// handler and nothing is queued. The peer, which never got a SACK for it, sends it again,
+    /// and the retransmission is delivered exactly once once COOKIE-ACK has established the
+    /// association, so the DataChannel handler announces `OnOpen` only after SCTP is ready.
     #[test]
     fn inbound_data_waits_for_sctp_handshake() {
         let now = Instant::now();
@@ -1397,7 +1399,7 @@ mod tests {
 
         {
             let mut handler = SctpHandler::new(&mut ctx, 0);
-            for dgram in early_data {
+            for dgram in early_data.iter().cloned() {
                 handler
                     .handle_read(raw_read(now, dgram))
                     .expect("early DATA");
@@ -1408,10 +1410,9 @@ mod tests {
             ctx.read_outs.is_empty(),
             "handshaking SCTP data must not reach the DataChannel handler"
         );
-        assert_eq!(
-            ctx.pending_readable.len(),
-            1,
-            "the readable stream must be retried after SCTP connects"
+        assert!(
+            ctx.pending_readable.is_empty(),
+            "DATA before the association is established is ignored, not queued"
         );
 
         {
@@ -1420,6 +1421,20 @@ mod tests {
                 handler
                     .handle_read(raw_read(now, dgram))
                     .expect("COOKIE-ACK");
+            }
+        }
+        assert!(
+            ctx.read_outs.is_empty(),
+            "the ignored DATA is not delivered by the handshake completing"
+        );
+
+        // The peer's retransmission of it, now that the association is established.
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            for dgram in early_data {
+                handler
+                    .handle_read(raw_read(now, dgram))
+                    .expect("retransmitted DATA");
             }
         }
 
