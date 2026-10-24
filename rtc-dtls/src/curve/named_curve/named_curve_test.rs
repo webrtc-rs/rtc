@@ -44,3 +44,35 @@ fn test_to_ecdh_invalid_curve() {
         Err(Error::ErrInvalidNamedCurve)
     ));
 }
+
+// A crypto provider whose key-agreement generation always fails, standing in for pion's
+// `failingReader`: pion swaps `crypto/rand.Reader` for a reader that always errors, forcing
+// `ecdh.GenerateKey` to fail. The built-in providers draw keypair randomness inside
+// `start_key_exchange` — the provider's RNG trait is not consulted — so the failure is injected
+// at that call instead, which is the same error path a failed RNG draw takes in a real provider.
+struct FailingKeyExchangeCrypto;
+
+impl crypto::RTCCrypto for FailingKeyExchangeCrypto {
+    fn supports(&self, algorithm: crypto::CryptoAlgorithm) -> bool {
+        matches!(algorithm, crypto::CryptoAlgorithm::KeyExchange(_))
+    }
+
+    fn start_key_exchange(
+        &self,
+        _algorithm: crypto::KeyExchangeAlgorithm,
+    ) -> std::result::Result<Box<dyn crypto::ActiveKeyExchange>, crypto::CryptoError> {
+        Err(crypto::CryptoError::RandomnessFailed)
+    }
+}
+
+// Port of pion `pkg/crypto/elliptic` `TestGenerateKeypair_RandFailure`: a failure of the
+// randomness behind keypair generation surfaces as an error from `GenerateKeypair` rather than a
+// panic.
+#[test]
+fn test_generate_keypair_rand_failure() {
+    let result = NamedCurve::P256.generate_keypair_with_crypto(&FailingKeyExchangeCrypto);
+    assert!(
+        matches!(result, Err(Error::Crypto(_))),
+        "GenerateKeypair must surface the failed key generation"
+    );
+}

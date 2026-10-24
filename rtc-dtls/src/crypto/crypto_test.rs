@@ -799,6 +799,139 @@ fn test_certificate_oid_validation() -> Result<()> {
     Ok(())
 }
 
+// Port of pion `TestRSAPSSVsPKCS1v15`, the half that is real here: an RSA key signs the key
+// exchange message with PKCS#1 v1.5/SHA-256 and the certificate verifies it. The RSA-PSS half —
+// generating and verifying a PSS signature, and the cross-verification failures in both
+// directions — needs RSA-PSS signing, which the provider abstraction does not offer
+// (rtc-crypto's `SignatureScheme` has no PSS variant; ring cannot do PSS), so those assertions
+// are not reproduced.
+#[test]
+fn test_rsa_pss_vs_pkcs1v15() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let client_random = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+    let server_random = vec![0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f];
+    let public_key = vec![0x10, 0x11, 0x12, 0x13];
+    let expected_msg = value_key_message(
+        &client_random,
+        &server_random,
+        &public_key,
+        NamedCurve::X25519,
+    );
+
+    // A certificate with the rsaEncryption OID, built from the shared RSA fixture.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair = KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_cert = rsa_params
+        .self_signed(&rsa_key_pair)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let private_key = CryptoPrivateKey::from_key_pair(&rsa_key_pair, provider.crypto())?;
+    let raw_cert = rsa_cert.der().as_ref().to_vec();
+
+    // Generate and verify the PKCS#1 v1.5 signature.
+    let algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+    };
+    let pkcs1_sig = generate_key_signature(
+        &client_random,
+        &server_random,
+        &public_key,
+        NamedCurve::X25519,
+        &algorithm,
+        &private_key,
+    )?;
+    assert!(
+        !pkcs1_sig.is_empty(),
+        "a 2048-bit RSA signature is 256 bytes"
+    );
+    verify_key_signature(
+        provider.crypto(),
+        &expected_msg,
+        &algorithm,
+        &pkcs1_sig,
+        &[raw_cert],
+        false,
+    )?;
+
+    Ok(())
+}
+
+// Port of pion `TestRSAPSSRSAEVariants`, the parsing half of pion's table: every RSA_PSS_RSAE
+// variant is a PSS scheme carrying its own hash, and the family binds to the `rsaEncryption`
+// certificate OID (checked here per variant, against pion's id-RSASSA-PSS fixture, as pion's
+// `RSAE_with_idRSASSAPSS_OID_fails` case does for SHA-256). The sign-and-verify half — a
+// signature over the key exchange message under each variant, verified against the certificate —
+// needs RSA-PSS signing, which the provider abstraction does not offer (rtc-crypto's
+// `SignatureScheme` has no PSS variant; ring cannot do PSS). pion itself skips the RSA_PSS_PSS
+// variants for a certificate-availability reason of the same kind.
+#[test]
+fn test_rsa_pss_rsae_variants() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let test_cases = [
+        (
+            "RSA_PSS_RSAE_SHA256",
+            HashAlgorithm::Sha256,
+            SignatureAlgorithm::RsaPssRsaeSha256,
+        ),
+        (
+            "RSA_PSS_RSAE_SHA384",
+            HashAlgorithm::Sha384,
+            SignatureAlgorithm::RsaPssRsaeSha384,
+        ),
+        (
+            "RSA_PSS_RSAE_SHA512",
+            HashAlgorithm::Sha512,
+            SignatureAlgorithm::RsaPssRsaeSha512,
+        ),
+    ];
+
+    // A certificate with the id-RSASSA-PSS OID, pion's fixture verbatim.
+    let pss_cert_block = pem::parse_many(RSA_PSS_CERTIFICATE)
+        .map_err(|e| Error::InvalidPEM(e.to_string()))?
+        .pop()
+        .expect("RSA-PSS certificate fixture");
+    let pss_cert_bytes = pss_cert_block.contents().to_vec();
+    let dummy_signature = vec![0x42; 256];
+
+    for (name, hash, signature) in test_cases {
+        // Verify IsPSS() returns true.
+        assert!(
+            signature.is_pss(),
+            "{name}: should be identified as PSS algorithm"
+        );
+
+        // Verify GetPSSHash() returns the correct hash.
+        assert_eq!(
+            signature.get_pss_hash(),
+            hash,
+            "{name}: hash extraction should match"
+        );
+
+        // Verify the RSAE family requires the rsaEncryption OID, not id-RSASSA-PSS.
+        let algorithm = SignatureHashAlgorithm { hash, signature };
+        assert!(
+            matches!(
+                verify_key_signature(
+                    provider.crypto(),
+                    b"handshake",
+                    &algorithm,
+                    &dummy_signature,
+                    std::slice::from_ref(&pss_cert_bytes),
+                    false,
+                ),
+                Err(Error::ErrInvalidCertificateOID)
+            ),
+            "{name}: RSAE with id-RSASSA-PSS OID must fail with errInvalidCertificateOID"
+        );
+    }
+
+    Ok(())
+}
+
 // DER helpers for `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }` with a
 // fabricated modulus, so a certificate can carry an RSA public key nobody holds the private half
 // of — exactly pion's `TestPeerRSAKeySizeLimit`, which builds keys as `2^(bits-1) + 1` with

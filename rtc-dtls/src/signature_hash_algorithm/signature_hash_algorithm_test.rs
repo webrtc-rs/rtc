@@ -335,3 +335,122 @@ fn test_signature_algorithms() -> Result<()> {
 
     Ok(())
 }
+
+// Port of pion `pkg/crypto/hash` `TestHashAlgorithm_StringRoundtrip`: every hash algorithm pion
+// round-trips through `fingerprint.HashFromString` spells the name that registry uses. The
+// parse-back half of pion's round-trip cannot run here — this crate has no fingerprint
+// hash-from-string helper (the webrtc layer above accepts only literal "sha-256"
+// fingerprints) — so the port pins the spelling of each name pion's round-trip covers. pion
+// skips `none` and `ed25519` ("null"), which have no fingerprint name.
+#[test]
+fn test_hash_algorithm_string_roundtrip() {
+    let roundtripped = [
+        (HashAlgorithm::Md5, "md5"),        // [RFC3279]
+        (HashAlgorithm::Sha1, "sha-1"),     // [RFC3279]
+        (HashAlgorithm::Sha224, "sha-224"), // [RFC4055]
+        (HashAlgorithm::Sha256, "sha-256"), // [RFC4055]
+        (HashAlgorithm::Sha384, "sha-384"), // [RFC4055]
+        (HashAlgorithm::Sha512, "sha-512"), // [RFC4055]
+    ];
+
+    for (algorithm, name) in roundtripped {
+        assert_eq!(
+            algorithm.to_string(),
+            name,
+            "hash.Algorithm({algorithm:?}).String()"
+        );
+    }
+}
+
+// Port of pion `TestSelectSignatureScheme13_VersionAware`, the rows this crate's selection
+// reproduces. pion's `selectSignatureScheme13` takes an `is13` flag: DTLS 1.2 skips every PSS
+// scheme, DTLS 1.3 prefers the `RSA_PSS_RSAE` family. This crate is DTLS 1.2 only and has no
+// version-aware selection — `select_signature_scheme` never selects a PSS scheme, because
+// `crypto_scheme` has no PSS variant to hand a provider — so the rows that would select an
+// `RSA_PSS_RSAE` scheme under DTLS 1.3 are not reproduced (a PSS selection could not be signed
+// anyway).
+#[test]
+fn test_select_signature_scheme13_version_aware() -> Result<()> {
+    let provider = crypto::default_provider().map_err(|e| Error::Crypto(e.to_string()))?;
+
+    // An RSA key, imported from the PKCS#8 fixture shared with rtc-crypto: ring cannot generate
+    // RSA keypairs.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair =
+        rcgen::KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_key = CryptoPrivateKey::from_key_pair(&rsa_key_pair, provider.crypto())?;
+
+    // An ECDSA P-256 key.
+    let certificate =
+        Certificate::generate_self_signed(vec!["localhost".to_owned()], provider.crypto())?;
+    let ecdsa_key = certificate.private_key;
+
+    // DTLS 1.2 with an RSA key skips PSS and selects PKCS#1 v1.5.
+    let schemes = vec![
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::RsaPssRsaeSha256,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::Rsa,
+        },
+    ];
+    let selected = select_signature_scheme(&schemes, &rsa_key)?;
+    assert_eq!(
+        selected.signature,
+        SignatureAlgorithm::Rsa,
+        "DTLS 1.2 with RSA key skips PSS, selects PKCS#1 v1.5"
+    );
+
+    // DTLS 1.2 with an RSA key and only PSS schemes fails.
+    let schemes = vec![
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::RsaPssRsaeSha256,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha384,
+            signature: SignatureAlgorithm::RsaPssRsaeSha384,
+        },
+    ];
+    assert!(matches!(
+        select_signature_scheme(&schemes, &rsa_key),
+        Err(Error::ErrNoAvailableSignatureSchemes)
+    ));
+
+    // Only RSA_PSS_PSS schemes fails with no fallback: the RSA_PSS_PSS family is understood but
+    // never negotiated (pion's DTLS 1.3 row).
+    let schemes = vec![
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::RsaPssPssSha256,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha384,
+            signature: SignatureAlgorithm::RsaPssPssSha384,
+        },
+        SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha512,
+            signature: SignatureAlgorithm::RsaPssPssSha512,
+        },
+    ];
+    assert!(matches!(
+        select_signature_scheme(&schemes, &rsa_key),
+        Err(Error::ErrNoAvailableSignatureSchemes)
+    ));
+
+    // ECDSA works on both DTLS 1.2 and DTLS 1.3.
+    let schemes = vec![SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+    }];
+    let selected = select_signature_scheme(&schemes, &ecdsa_key)?;
+    assert_eq!(
+        selected.signature,
+        SignatureAlgorithm::Ecdsa,
+        "ECDSA works on both DTLS 1.2 and 1.3"
+    );
+
+    Ok(())
+}
