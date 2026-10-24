@@ -475,7 +475,9 @@ pub(crate) fn parse_certificate_signature_schemes(
     let mut out = vec![];
     for ss in sigs {
         let Some(algorithm) =
-            crate::extension::extension_signature_algorithms_cert::parse_signature_hash_algorithm(*ss)
+            crate::extension::extension_signature_algorithms_cert::parse_signature_hash_algorithm(
+                *ss,
+            )
         else {
             return Err(Error::ErrInvalidSignatureAlgorithm);
         };

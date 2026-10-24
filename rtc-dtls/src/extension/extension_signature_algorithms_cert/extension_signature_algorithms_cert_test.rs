@@ -105,11 +105,10 @@ fn signature_algorithms_cert_pss_schemes() -> Result<()> {
     }
     assert_eq!(raw, raw_extension_with_pss);
 
-    let roundtrip =
-        match Extension::unmarshal(&mut BufReader::new(&raw_extension_with_pss[..]))? {
-            Extension::SignatureAlgorithmsCert(roundtrip) => roundtrip,
-            _ => return Err(Error::ErrInvalidExtensionType),
-        };
+    let roundtrip = match Extension::unmarshal(&mut BufReader::new(&raw_extension_with_pss[..]))? {
+        Extension::SignatureAlgorithmsCert(roundtrip) => roundtrip,
+        _ => return Err(Error::ErrInvalidExtensionType),
+    };
     assert_eq!(roundtrip, parsed_extension_with_pss);
     Ok(())
 }
@@ -244,46 +243,50 @@ fn signature_algorithms_cert_unmarshal_errors() -> Result<()> {
     ];
     let extension = Extension::unmarshal(&mut BufReader::new(&wrong_type[..]));
     assert!(
-        !matches!(
-            extension,
-            Ok(Extension::SignatureAlgorithmsCert(_))
-        ),
+        !matches!(extension, Ok(Extension::SignatureAlgorithmsCert(_))),
         "wrong extension type must be rejected"
     );
 
     // Missing extension length. Module-level input is the body the Extension enum hands
     // over: [extension-data length][data].
-    let extension =
-        ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[][..]));
+    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[][..]));
     assert!(matches!(extension, Err(Error::ErrBufferTooSmall)));
 
     // Missing algorithms length: the declared extension data never arrives.
-    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[
-        0x00, 0x02, // extension data length: 2 bytes
-    ][..]));
+    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(
+        &[
+            0x00, 0x02, // extension data length: 2 bytes
+        ][..],
+    ));
     assert!(matches!(extension, Err(Error::ErrBufferTooSmall)));
 
     // Truncated algorithm list.
-    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[
-        0x00, 0x06, // extension data length: 6 bytes
-        0x00, 0x04, // algorithms length: 4 bytes
-        0x04, 0x03, // SHA256, ECDSA
-        0x05, // incomplete second algorithm
-    ][..]));
+    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(
+        &[
+            0x00, 0x06, // extension data length: 6 bytes
+            0x00, 0x04, // algorithms length: 4 bytes
+            0x04, 0x03, // SHA256, ECDSA
+            0x05, // incomplete second algorithm
+        ][..],
+    ));
     assert!(matches!(extension, Err(Error::ErrBufferTooSmall)));
 
     // Declared algorithm length runs past the extension data.
-    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[
-        0x00, 0x06, // extension data length: 6 bytes
-        0x00, 0x06, // algorithms length: 6 bytes, but only 2 bytes follow
-        0x04, 0x03, // SHA256, ECDSA
-    ][..]));
+    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(
+        &[
+            0x00, 0x06, // extension data length: 6 bytes
+            0x00, 0x06, // algorithms length: 6 bytes, but only 2 bytes follow
+            0x04, 0x03, // SHA256, ECDSA
+        ][..],
+    ));
     assert!(matches!(extension, Err(Error::ErrBufferTooSmall)));
 
     // Empty extension data: no algorithms length at all.
-    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(&[
-        0x00, 0x00, // extension data length: 0
-    ][..]));
+    let extension = ExtensionSignatureAlgorithmsCert::unmarshal(&mut BufReader::new(
+        &[
+            0x00, 0x00, // extension data length: 0
+        ][..],
+    ));
     assert!(matches!(extension, Err(Error::ErrLengthMismatch)));
     Ok(())
 }

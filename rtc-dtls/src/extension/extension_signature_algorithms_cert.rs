@@ -61,7 +61,9 @@ impl ExtensionSignatureAlgorithmsCert {
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let ext_data_len = read_u16(reader)?;
         let mut ext_data = vec![0u8; ext_data_len as usize];
-        reader.read_exact(&mut ext_data).map_err(|_| Error::ErrBufferTooSmall)?;
+        reader
+            .read_exact(&mut ext_data)
+            .map_err(|_| Error::ErrBufferTooSmall)?;
 
         if ext_data.len() < 2 {
             return Err(Error::ErrLengthMismatch);

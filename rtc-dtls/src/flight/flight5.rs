@@ -193,10 +193,7 @@ impl Flight for Flight5 {
         // answers when it holds nothing acceptable.
         let certificate = if state.remote_requested_certificate {
             if let Some(get_client_certificate) = &cfg.get_client_certificate {
-                let info = state
-                    .remote_certificate_request
-                    .clone()
-                    .unwrap_or_default();
+                let info = state.remote_certificate_request.clone().unwrap_or_default();
                 match get_client_certificate(&info) {
                     Ok(certificate) => Some(certificate),
                     Err(err) => {
@@ -452,21 +449,20 @@ impl Flight for Flight5 {
                 .filter(|scheme| cfg.local_signature_schemes.contains(scheme))
                 .copied()
                 .collect();
-            let signature_hash_algo = match select_signature_scheme(
-                &schemes,
-                &certificate.as_ref().unwrap().private_key,
-            ) {
-                Ok(s) => s,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::InsufficientSecurity,
-                        }),
-                        Some(err),
-                    ));
-                }
-            };
+            let signature_hash_algo =
+                match select_signature_scheme(&schemes, &certificate.as_ref().unwrap().private_key)
+                {
+                    Ok(s) => s,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::InsufficientSecurity,
+                            }),
+                            Some(err),
+                        ));
+                    }
+                };
 
             let cert_verify = match generate_certificate_verify(
                 &plain_text,

@@ -93,6 +93,7 @@ pub(crate) fn build_client_hello_message(
     cfg: &HandshakeConfig,
 ) -> Result<crate::handshake::HandshakeMessage, (Option<Alert>, Option<Error>)> {
     use crate::compression_methods::default_compression_methods;
+    use crate::extension::Extension;
     use crate::extension::extension_alpn::ExtensionAlpn;
     use crate::extension::extension_server_name::ExtensionServerName;
     use crate::extension::extension_supported_elliptic_curves::ExtensionSupportedEllipticCurves;
@@ -103,7 +104,6 @@ pub(crate) fn build_client_hello_message(
     use crate::extension::extension_use_extended_master_secret::ExtensionUseExtendedMasterSecret;
     use crate::extension::extension_use_srtp::ExtensionUseSrtp;
     use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
-    use crate::extension::Extension;
     use crate::record_layer::record_layer_header::PROTOCOL_VERSION1_2;
 
     let mut extensions = vec![
@@ -156,9 +156,7 @@ pub(crate) fn build_client_hello_message(
     }
 
     // RFC 6066 §3: literal IP addresses are not permitted in server_name.
-    if !cfg.sni_server_name.is_empty()
-        && cfg.sni_server_name.parse::<std::net::IpAddr>().is_err()
-    {
+    if !cfg.sni_server_name.is_empty() && cfg.sni_server_name.parse::<std::net::IpAddr>().is_err() {
         extensions.push(Extension::ServerName(ExtensionServerName {
             server_name: cfg.sni_server_name.clone(),
         }));

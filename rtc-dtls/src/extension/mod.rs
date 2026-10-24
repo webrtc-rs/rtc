@@ -20,10 +20,10 @@ pub mod extension_post_handshake_auth;
 pub mod extension_pre_shared_key;
 /// The `psk_key_exchange_modes` extension, which constrains PSK handshakes.
 pub mod extension_psk_key_exchange_modes;
-/// The `signature_algorithms_cert` extension, which constrains X.509 certificate signatures.
-pub mod extension_signature_algorithms_cert;
 /// Server Name Indication (SNI).
 pub mod extension_server_name;
+/// The `signature_algorithms_cert` extension, which constrains X.509 certificate signatures.
+pub mod extension_signature_algorithms_cert;
 /// The curves a client will accept for ECDHE.
 pub mod extension_supported_elliptic_curves;
 /// The EC point formats a client will accept; WebRTC uses uncompressed.

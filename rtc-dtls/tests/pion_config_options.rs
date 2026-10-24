@@ -9,16 +9,18 @@ mod common;
 use std::sync::{Arc, Mutex};
 
 use common::*;
+use rtc_dtls::cipher_suite::CipherSuiteId;
 use rtc_dtls::config::{
     CertificateRequestInfo, ClientAuthType, ClientHelloInfo, ConfigBuilder, GetCertificateFn,
     GetClientCertificateFn, VerifyConnectionFn,
 };
 use rtc_dtls::crypto::Certificate;
-use rtc_dtls::state::State;
 use rtc_dtls::curve::named_curve::NamedCurve;
 use rtc_dtls::handshake::HandshakeMessage;
-use rtc_dtls::signature_hash_algorithm::{HashAlgorithm, SignatureAlgorithm, SignatureHashAlgorithm, SignatureScheme};
-use rtc_dtls::cipher_suite::CipherSuiteId;
+use rtc_dtls::signature_hash_algorithm::{
+    HashAlgorithm, SignatureAlgorithm, SignatureHashAlgorithm, SignatureScheme,
+};
+use rtc_dtls::state::State;
 use rustls::RootCertStore;
 use shared::error::Error;
 
@@ -112,10 +114,7 @@ fn test_psk_client_verify_connection_fails() {
     );
 
     assert!(!out.ok(), "the handshake must fail");
-    let client_error = out
-        .client_error
-        .as_ref()
-        .expect("the client fails locally");
+    let client_error = out.client_error.as_ref().expect("the client fails locally");
     assert!(
         client_error.to_string().contains("verify failed"),
         "client error carries the callback's error: {client_error}"
@@ -194,7 +193,12 @@ fn test_client_certificate_verify_connection() {
     };
 
     let out = handshake(client(None), server(Some(verify_connection_ok())));
-    assert!(out.ok(), "success path: {:?}/{:?}", out.client_error, out.server_error);
+    assert!(
+        out.ok(),
+        "success path: {:?}/{:?}",
+        out.client_error,
+        out.server_error
+    );
 
     let out = handshake(client(None), server(Some(verify_connection_err())));
     assert!(!out.ok(), "server-side failure aborts the handshake");
@@ -265,9 +269,10 @@ fn test_client_certificate_get_client_certificate() {
     );
 
     // Error: the callback refuses, the client sends a fatal handshake_failure.
-    let get_client_certificate: GetClientCertificateFn = Arc::new(|_info: &CertificateRequestInfo| {
-        Err(Error::Other("no certificate for you".to_owned()))
-    });
+    let get_client_certificate: GetClientCertificateFn =
+        Arc::new(|_info: &CertificateRequestInfo| {
+            Err(Error::Other("no certificate for you".to_owned()))
+        });
     let client = builder().with_get_client_certificate(Some(get_client_certificate));
     let out = handshake(client, server);
     assert!(!out.ok(), "a refusing callback fails the handshake");
@@ -304,7 +309,9 @@ fn test_get_certificate() {
     let server = builder()
         .with_certificates(vec![bar_cert.clone()])
         .with_get_certificate(Some(get_certificate));
-    let client = builder().with_server_name("foo".to_owned()).with_insecure_skip_verify(true);
+    let client = builder()
+        .with_server_name("foo".to_owned())
+        .with_insecure_skip_verify(true);
 
     let out = handshake(client, server);
     assert!(
@@ -340,9 +347,16 @@ fn test_get_certificate() {
     let server = builder()
         .with_certificates(vec![bar_cert.clone()])
         .with_get_certificate(Some(get_certificate));
-    let client = builder().with_server_name("foo".to_owned()).with_insecure_skip_verify(true);
+    let client = builder()
+        .with_server_name("foo".to_owned())
+        .with_insecure_skip_verify(true);
     let out = handshake(client, server);
-    assert!(out.ok(), "None falls back: {:?}/{:?}", out.client_error, out.server_error);
+    assert!(
+        out.ok(),
+        "None falls back: {:?}/{:?}",
+        out.client_error,
+        out.server_error
+    );
     assert_eq!(
         out.client_state().unwrap().peer_certificates[0],
         bar_cert.certificate[0].as_ref(),
@@ -355,7 +369,9 @@ fn test_get_certificate() {
     let server = builder()
         .with_certificates(vec![bar_cert.clone()])
         .with_get_certificate(Some(get_certificate));
-    let client = builder().with_server_name("foo".to_owned()).with_insecure_skip_verify(true);
+    let client = builder()
+        .with_server_name("foo".to_owned())
+        .with_insecure_skip_verify(true);
     let out = handshake(client, server);
     assert!(!out.ok(), "a refusing callback fails the handshake");
     assert!(
@@ -446,7 +462,11 @@ fn test_skip_hello_verify() {
 fn test_elliptic_curve_configuration() {
     let cases: Vec<(&str, Vec<NamedCurve>, Vec<NamedCurve>)> = vec![
         ("curve defaulting", vec![], vec![]),
-        ("single curve", vec![NamedCurve::X25519], vec![NamedCurve::X25519]),
+        (
+            "single curve",
+            vec![NamedCurve::X25519],
+            vec![NamedCurve::X25519],
+        ),
         (
             "multiple curves",
             vec![NamedCurve::P384, NamedCurve::X25519],
@@ -523,9 +543,27 @@ fn test_certificate_verify_honors_local_signature_schemes() {
         signature: SignatureAlgorithm::Ecdsa,
     };
     let cases = vec![
-        Case { name: "reject MD5", requested: vec![ecdsa(HashAlgorithm::Md5)], local: vec![], insecure_hashes: false, want: None },
-        Case { name: "reject SHA1", requested: vec![ecdsa(HashAlgorithm::Sha1)], local: vec![], insecure_hashes: false, want: None },
-        Case { name: "reject SHA224", requested: vec![ecdsa(HashAlgorithm::Sha224)], local: vec![], insecure_hashes: false, want: None },
+        Case {
+            name: "reject MD5",
+            requested: vec![ecdsa(HashAlgorithm::Md5)],
+            local: vec![],
+            insecure_hashes: false,
+            want: None,
+        },
+        Case {
+            name: "reject SHA1",
+            requested: vec![ecdsa(HashAlgorithm::Sha1)],
+            local: vec![],
+            insecure_hashes: false,
+            want: None,
+        },
+        Case {
+            name: "reject SHA224",
+            requested: vec![ecdsa(HashAlgorithm::Sha224)],
+            local: vec![],
+            insecure_hashes: false,
+            want: None,
+        },
         Case {
             name: "reject excluded SHA384",
             requested: vec![ecdsa(HashAlgorithm::Sha384)],
@@ -533,11 +571,27 @@ fn test_certificate_verify_honors_local_signature_schemes() {
             insecure_hashes: false,
             want: None,
         },
-        Case { name: "skip weak hashes", requested: vec![ecdsa(HashAlgorithm::Md5), ecdsa(HashAlgorithm::Sha1), ecdsa(HashAlgorithm::Sha256)], local: vec![], insecure_hashes: false, want: Some(HashAlgorithm::Sha256) },
+        Case {
+            name: "skip weak hashes",
+            requested: vec![
+                ecdsa(HashAlgorithm::Md5),
+                ecdsa(HashAlgorithm::Sha1),
+                ecdsa(HashAlgorithm::Sha256),
+            ],
+            local: vec![],
+            insecure_hashes: false,
+            want: Some(HashAlgorithm::Sha256),
+        },
         // pion's client signs P-256 with SHA-384 and expects SHA-384; the providers here
         // bind each ECDSA key to a single hash, so the peer's preference survives as a
         // walk of its list down to the first scheme the key can sign: SHA-256.
-        Case { name: "retain peer preference", requested: vec![ecdsa(HashAlgorithm::Sha384), ecdsa(HashAlgorithm::Sha256)], local: vec![], insecure_hashes: false, want: Some(HashAlgorithm::Sha256) },
+        Case {
+            name: "retain peer preference",
+            requested: vec![ecdsa(HashAlgorithm::Sha384), ecdsa(HashAlgorithm::Sha256)],
+            local: vec![],
+            insecure_hashes: false,
+            want: Some(HashAlgorithm::Sha256),
+        },
         // pion's client signs ECDSA with SHA-1 here (want: SHA1). `insecure_hashes` does let
         // SHA-1 through our filter too, but the providers bind each ECDSA key to a single
         // hash and refuse to sign SHA-1, so the walk finds nothing signable — the same
@@ -545,7 +599,10 @@ fn test_certificate_verify_honors_local_signature_schemes() {
         Case {
             name: "explicit SHA1 opt in",
             requested: vec![ecdsa(HashAlgorithm::Sha1)],
-            local: vec![SignatureScheme::EcdsaWithP256AndSha256, SignatureScheme::EcdsaWithSha1],
+            local: vec![
+                SignatureScheme::EcdsaWithP256AndSha256,
+                SignatureScheme::EcdsaWithSha1,
+            ],
             insecure_hashes: true,
             want: None,
         },

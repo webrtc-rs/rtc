@@ -23,10 +23,10 @@ use crate::conn::{
 use crate::crypto::*;
 use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
+use crate::handshake::HandshakeMessage;
 use crate::handshake::handshake_message_certificate_request::HandshakeMessageCertificateRequest;
 use crate::handshake::handshake_message_client_hello::HandshakeMessageClientHello;
 use crate::handshake::handshake_message_server_hello::HandshakeMessageServerHello;
-use crate::handshake::HandshakeMessage;
 use crate::signature_hash_algorithm::{
     SignatureHashAlgorithm, SignatureScheme, parse_certificate_signature_schemes,
     parse_signature_schemes,

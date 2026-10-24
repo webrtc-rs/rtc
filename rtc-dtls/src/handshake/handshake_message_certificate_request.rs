@@ -158,7 +158,9 @@ impl HandshakeMessageCertificateRequest {
                 return Err(Error::ErrBufferTooSmall);
             }
             let mut ca = vec![0u8; ca_length];
-            reader.read_exact(&mut ca).map_err(|_| Error::ErrBufferTooSmall)?;
+            reader
+                .read_exact(&mut ca)
+                .map_err(|_| Error::ErrBufferTooSmall)?;
             certificate_authorities_names.push(ca);
         }
 
