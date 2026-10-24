@@ -1099,6 +1099,12 @@ pub enum Error {
     /// No certificate provided.
     #[error("no certificate provided")]
     ErrInvalidCertificate,
+    /// The certificate's public key algorithm OID does not match the signature scheme.
+    #[error("certificate OID does not match signature algorithm")]
+    ErrInvalidCertificateOID,
+    /// The peer's RSA public key exceeds the 8192-bit limit that bounds verification work.
+    #[error("peer RSA key exceeds 8192 bits")]
+    ErrPeerRSAKeyTooLarge,
     /// Cipher spec invalid.
     #[error("cipher spec invalid")]
     ErrInvalidCipherSpec,

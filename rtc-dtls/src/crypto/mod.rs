@@ -282,6 +282,8 @@ pub const OID_ED25519: Oid<'static> = oid!(1.3.101.112);
 pub const OID_ECDSA: Oid<'static> = oid!(1.2.840.10045.2.1);
 /// The X.509 algorithm OID for an RSA public key (`rsaEncryption`).
 pub const OID_RSA: Oid<'static> = oid!(1.2.840.113549.1.1.1);
+/// The X.509 algorithm OID for an RSA-PSS public key (`id-RSASSA-PSS`).
+pub const OID_RSASSA_PSS: Oid<'static> = oid!(1.2.840.113549.1.1.10);
 
 /// The kind of public key a certificate carries, as far as handshake signing is concerned.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -296,7 +298,9 @@ pub(crate) enum CertificateKeyKind {
 
 impl CertificateKeyKind {
     fn from_spki_oid(oid: &Oid<'_>) -> Result<Self> {
-        if *oid == OID_RSA {
+        if *oid == OID_RSA || *oid == OID_RSASSA_PSS {
+            // An `id-RSASSA-PSS` key is an RSA key too; which padding the certificate's OID
+            // allows is `validate_signature_alg_oid`'s job, as in pion.
             Ok(CertificateKeyKind::Rsa)
         } else if *oid == OID_ECDSA {
             Ok(CertificateKeyKind::Ecdsa)
@@ -306,6 +310,28 @@ impl CertificateKeyKind {
             Err(Error::ErrInvalidCertificate)
         }
     }
+}
+
+// A PSS signature scheme must be paired with the certificate public key OID its family requires,
+// as pion's validateSignatureAlgOID does (RFC 8446 §4.2.3): the RSAE variants require
+// `rsaEncryption`, the PSS variants `id-RSASSA-PSS`. Every other scheme places no OID constraint.
+fn validate_signature_alg_oid(
+    certificate_oid: &Oid<'_>,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    let required = match signature_algorithm {
+        SignatureAlgorithm::RsaPssRsaeSha256
+        | SignatureAlgorithm::RsaPssRsaeSha384
+        | SignatureAlgorithm::RsaPssRsaeSha512 => &OID_RSA,
+        SignatureAlgorithm::RsaPssPssSha256
+        | SignatureAlgorithm::RsaPssPssSha384
+        | SignatureAlgorithm::RsaPssPssSha512 => &OID_RSASSA_PSS,
+        _ => return Ok(()),
+    };
+    if certificate_oid != required {
+        return Err(Error::ErrInvalidCertificateOID);
+    }
+    Ok(())
 }
 
 // Binds the wire signature scheme to the certificate's key and hash, as pion's
@@ -394,10 +420,13 @@ fn verify_signature(
         return Err(Error::ErrLengthMismatch);
     }
 
-    let (_, certificate) = x509_parser::parse_x509_certificate(&raw_certificates[0])
-        .map_err(|e| Error::Other(e.to_string()))?;
+    let certificate = parse_peer_certificate(&raw_certificates[0])?;
 
     // The wire scheme must match the certificate's key and hash before any cryptographic work.
+    validate_signature_alg_oid(
+        certificate.tbs_certificate.subject_pki.algorithm.oid(),
+        hash_algorithm.signature,
+    )?;
     let key_kind =
         CertificateKeyKind::from_spki_oid(certificate.tbs_certificate.subject_pki.algorithm.oid())?;
     validate_handshake_signature_scheme(key_kind, hash_algorithm.hash, hash_algorithm.signature)?;
@@ -519,6 +548,51 @@ pub(crate) fn verify_certificate_verify(
     )
 }
 
+/// Matches `crypto/tls`'s default limit, bounding the verification work a peer can demand with an
+/// RSA public key (pion: `maxPeerRSAKeyBits`).
+const MAX_PEER_RSA_KEY_BITS: usize = 8192;
+
+/// The bit length of an RSA modulus, DER content bytes in hand — Go's `big.Int.BitLen`: leading
+/// zero bytes are not significant, and within the first significant byte the leading zero bits
+/// are not either.
+fn rsa_bit_length(bytes: &[u8]) -> usize {
+    let Some(first) = bytes.iter().position(|&b| b != 0) else {
+        return 0;
+    };
+    let significant = &bytes[first..];
+    significant.len() * 8 - significant[0].leading_zeros() as usize
+}
+
+/// Parses one peer certificate, rejecting an RSA public key above [`MAX_PEER_RSA_KEY_BITS`] with
+/// `errPeerRSAKeyTooLarge` before any verification work, as pion's `parsePeerCertificate` does.
+pub(crate) fn parse_peer_certificate(
+    raw: &[u8],
+) -> Result<x509_parser::certificate::X509Certificate<'_>> {
+    let (_, certificate) =
+        x509_parser::parse_x509_certificate(raw).map_err(|e| Error::Other(e.to_string()))?;
+    if certificate.tbs_certificate.subject_pki.algorithm.oid() == &OID_RSA
+        && rsa_bit_length(rsa_modulus(
+            certificate
+                .tbs_certificate
+                .subject_pki
+                .subject_public_key
+                .data
+                .as_ref(),
+        )) > MAX_PEER_RSA_KEY_BITS
+    {
+        return Err(Error::ErrPeerRSAKeyTooLarge);
+    }
+    Ok(certificate)
+}
+
+/// The raw modulus of a DER `RSAPublicKey`, empty when the subject public key is not one.
+fn rsa_modulus(subject_public_key: &[u8]) -> &[u8] {
+    use x509_parser::prelude::FromDer;
+    x509_parser::public_key::RSAPublicKey::from_der(subject_public_key)
+        .map(|(_, key)| key.modulus)
+        .unwrap_or(&[])
+}
+
 pub(crate) fn load_certs(raw_certificates: &[Vec<u8>]) -> Result<Vec<CertificateDer<'static>>> {
     if raw_certificates.is_empty() {
         return Err(Error::ErrLengthMismatch);
@@ -526,6 +600,9 @@ pub(crate) fn load_certs(raw_certificates: &[Vec<u8>]) -> Result<Vec<Certificate
 
     let mut certs = vec![];
     for raw_cert in raw_certificates {
+        // Parsing through `parse_peer_certificate` applies the peer RSA key size limit to every
+        // certificate in the chain, as pion's `loadCerts` does.
+        parse_peer_certificate(raw_cert)?;
         let cert = CertificateDer::from(raw_cert.to_vec());
         certs.push(cert);
     }
