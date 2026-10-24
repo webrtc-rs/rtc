@@ -243,7 +243,7 @@ fn test_certificate_verify() -> Result<()> {
         crypto::default_provider().map_err(crypto_error)?.crypto(),
     )?;
     let ed25519_algorithm = SignatureHashAlgorithm {
-        hash: HashAlgorithm::Sha256,
+        hash: HashAlgorithm::Ed25519,
         signature: SignatureAlgorithm::Ed25519,
     };
     let cert_verify_ed25519 = generate_certificate_verify(
@@ -386,6 +386,23 @@ fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
         signature: SignatureAlgorithm::Ecdsa,
     };
 
+    // The mock claims to support every scheme, so the pair validation is what gates the label
+    // mismatches below.
+    assert!(matches!(
+        generate_key_signature(
+            &client_random,
+            &server_random,
+            &public_key,
+            named_curve,
+            &SignatureHashAlgorithm {
+                hash: HashAlgorithm::Sha256,
+                signature: SignatureAlgorithm::Ed25519,
+            },
+            &private_key,
+        ),
+        Err(Error::ErrInvalidSignatureAlgorithm)
+    ));
+
     let key_signature = generate_key_signature(
         &client_random,
         &server_random,
@@ -405,6 +422,703 @@ fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
     assert_eq!(*call_count.lock().unwrap(), 2);
     assert_eq!(&*last_message.lock().unwrap(), handshake_bodies);
     assert_eq!(cert_verify, expected_signature);
+
+    Ok(())
+}
+
+// Port of pion `TestHandshakeSignatureSchemeBinding` (ANT-2026-0Q4PYECH): a valid signature
+// must not authenticate a different scheme, or an empty digest in place of the handshake
+// transcript. Every non-PSS row of pion's table is reproduced; the two RSA-PSS rows are omitted
+// because no provider implements PSS signing yet.
+#[test]
+fn test_handshake_signature_scheme_binding() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+    let message: &[u8] = b"handshake transcript";
+
+    struct Case {
+        name: &'static str,
+        key: CryptoPrivateKey,
+        cert: Vec<u8>,
+        hash: HashAlgorithm,
+        signature: SignatureAlgorithm,
+        valid: bool,
+    }
+
+    let mut cases = vec![];
+
+    // An RSA key and self-signed certificate. ring cannot generate RSA keypairs, so the
+    // 2048-bit PKCS#8 test fixture shared with rtc-crypto is imported and rcgen signs the
+    // certificate with it.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair = KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_cert = rsa_params
+        .self_signed(&rsa_key_pair)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_key = CryptoPrivateKey::from_key_pair(&rsa_key_pair, provider.crypto())?;
+    let rsa_cert_der = rsa_cert.der().as_ref().to_vec();
+
+    // An ECDSA P-256 key and self-signed certificate.
+    let certificate_ecdsa =
+        Certificate::generate_self_signed(vec!["localhost".to_owned()], provider.crypto())?;
+    let ecdsa_key = certificate_ecdsa.private_key.clone();
+    let ecdsa_cert_der = certificate_ecdsa
+        .certificate
+        .first()
+        .expect("self-signed certificate")
+        .as_ref()
+        .to_vec();
+
+    // An Ed25519 key and self-signed certificate.
+    let certificate_ed25519 = Certificate::generate_self_signed_with_alg(
+        vec!["localhost".to_owned()],
+        &rcgen::PKCS_ED25519,
+        provider.crypto(),
+    )?;
+    let ed25519_key = certificate_ed25519.private_key.clone();
+    let ed25519_cert_der = certificate_ed25519
+        .certificate
+        .first()
+        .expect("self-signed certificate")
+        .as_ref()
+        .to_vec();
+
+    cases.push(Case {
+        name: "RSA",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "ECDSA",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "Ed25519",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: true,
+    });
+    cases.push(Case {
+        name: "RSA labeled ECDSA",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "ECDSA labeled RSA",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "Ed25519 labeled ECDSA",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "Ed25519 wrong hash",
+        key: ed25519_key.clone(),
+        cert: ed25519_cert_der.clone(),
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA empty digest labeled Ed25519",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ed25519,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA empty digest scheme 0801",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA no hash",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Md2,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "RSA unknown hash",
+        key: rsa_key.clone(),
+        cert: rsa_cert_der.clone(),
+        hash: HashAlgorithm::Unsupported,
+        signature: SignatureAlgorithm::Rsa,
+        valid: false,
+    });
+    cases.push(Case {
+        name: "ECDSA empty digest",
+        key: ecdsa_key.clone(),
+        cert: ecdsa_cert_der.clone(),
+        hash: HashAlgorithm::Ed25519,
+        signature: SignatureAlgorithm::Ecdsa,
+        valid: false,
+    });
+
+    for tc in cases {
+        let raw_certs = vec![tc.cert.clone()];
+        let algorithm = SignatureHashAlgorithm {
+            hash: tc.hash,
+            signature: tc.signature,
+        };
+
+        if tc.valid {
+            let signature = generate_certificate_verify(message, &algorithm, &tc.key)
+                .unwrap_or_else(|e| panic!("{}: generate_certificate_verify failed: {e}", tc.name));
+
+            verify_certificate_verify(
+                provider.crypto(),
+                message,
+                &algorithm,
+                &signature,
+                &raw_certs,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("{}: verify_certificate_verify failed: {e}", tc.name));
+            verify_key_signature(
+                provider.crypto(),
+                message,
+                &algorithm,
+                &signature,
+                &raw_certs,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("{}: verify_key_signature failed: {e}", tc.name));
+
+            assert!(
+                verify_certificate_verify(
+                    provider.crypto(),
+                    b"changed transcript",
+                    &algorithm,
+                    &signature,
+                    &raw_certs,
+                    false
+                )
+                .is_err(),
+                "{}: a changed transcript must not verify",
+                tc.name
+            );
+            assert!(
+                verify_key_signature(
+                    provider.crypto(),
+                    b"changed transcript",
+                    &algorithm,
+                    &signature,
+                    &raw_certs,
+                    false
+                )
+                .is_err(),
+                "{}: a changed transcript must not verify",
+                tc.name
+            );
+        } else {
+            assert!(
+                matches!(
+                    verify_certificate_verify(
+                        provider.crypto(),
+                        message,
+                        &algorithm,
+                        &[],
+                        &raw_certs,
+                        false
+                    ),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: verify_certificate_verify must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    verify_key_signature(
+                        provider.crypto(),
+                        message,
+                        &algorithm,
+                        &[],
+                        &raw_certs,
+                        false
+                    ),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: verify_key_signature must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    generate_key_signature(&[], &[], &[], NamedCurve::X25519, &algorithm, &tc.key),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: generate_key_signature must reject the scheme",
+                tc.name
+            );
+            assert!(
+                matches!(
+                    generate_certificate_verify(message, &algorithm, &tc.key),
+                    Err(Error::ErrInvalidSignatureAlgorithm)
+                ),
+                "{}: generate_certificate_verify must reject the scheme",
+                tc.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+// RSA-PSS certificate with id-RSASSA-PSS OID (1.2.840.113549.1.1.10), copied verbatim from pion's
+// `crypto_test.go` (`rsaPSSCertificate`), which notes: "Go's x509.CreateCertificate does not
+// support creating RSA-PSS certificates, and x509.ParsePKCS8PrivateKey cannot parse RSA-PSS
+// private keys. Therefore we use this cert for OID validation testing only."
+const RSA_PSS_CERTIFICATE: &str = "
+-----BEGIN CERTIFICATE-----
+MIIDdTCCAimgAwIBAgIUOvVXWgzlj9KVp4TQe+ZATB3PkvswQQYJKoZIhvcNAQEK
+MDSgDzANBglghkgBZQMEAgEFAKEcMBoGCSqGSIb3DQEBCDANBglghkgBZQMEAgEF
+AKIDAgEgMBcxFTATBgNVBAMMDFJTQS1QU1MtVGVzdDAeFw0yNjAxMjQwNDE1MzFa
+Fw0yNzAxMjQwNDE1MzFaMBcxFTATBgNVBAMMDFJTQS1QU1MtVGVzdDCCASAwCwYJ
+KoZIhvcNAQEKA4IBDwAwggEKAoIBAQCpwVkHm2eU336pNtW7VYuu7nWUkSZxr9Oz
+DAQrZbLsdcSeWj/sSe37/EPmtQrH8f8mK7OR7mY1DrodHyAqyGeeHIwTaAMdrrMX
+X0RiPbid7w6MU3QZ1q5Hp8IAf8sLrQofchFRLDw6XkMcI4hbWtVJ9GwZiOO2gpDk
+uS7SBLEiEzKHme+UzPMFUa2xCypYd/bpO0F+h9vtPDFTCRfK6EFf7mb/QAl1UwfO
+Xq5+hMMiKWyhK2OIKhYc98k7eV7nlC4rz5tMY2v1tUJA6/fAZEmAREVE740hxmkN
+qN5Enm5tF/ipROPbmQnyCkwtZxKTLi0tz8RTq7lZXRoQr9fo/6ufAgMBAAGjUzBR
+MB0GA1UdDgQWBBRpdc2ssJhWnWTm4DPJLW3aDy71WTAfBgNVHSMEGDAWgBRpdc2s
+sJhWnWTm4DPJLW3aDy71WTAPBgNVHRMBAf8EBTADAQH/MEEGCSqGSIb3DQEBCjA0
+oA8wDQYJYIZIAWUDBAIBBQChHDAaBgkqhkiG9w0BAQgwDQYJYIZIAWUDBAIBBQCi
+AwIBIAOCAQEATkolVgnlASfTEvMElGmrLTRVPBovk7ZCpER+/H316xswuUDWKn9t
+BUhSCYinj5yywgwgx4sErnB5YkB+SR2kkE8WMAU0SNTh2kLUr4TrdqM1o0S5hGQT
+awGCPIWZjip3V0TeAqC4sWTgdy2EBYPEJ0AZGm50/yJlWiOzsdDbzceKjremCxLF
+Qgkrd/H9mRfIsybvQZ0SbhCWTbNiGpv+O3q4rJ8l3FiaNc9xt+9/FbzeRIipmVb3
+ACeCkdjZt/3rjb/tZRHcURgXYi2109wQOaIE5tAQYFCvaKp3HNdWGU1K5+AO0SIY
+k2mwB2RsEXa29/Xzj1eMyG33CDgo55AtDw==
+-----END CERTIFICATE-----
+";
+
+// Port of pion `TestCertificateOIDValidation`: a PSS signature scheme must be paired with the
+// certificate public key OID its family requires. Of pion's four subtests, the two mismatch
+// cases are reproduced here; the `PSS_with_idRSASSAPSS_OID_succeeds` case is skipped by pion
+// itself, and `RSAE_with_rsaEncryption_OID_succeeds` needs RSA-PSS signing, which no crypto
+// provider implements — the signature bytes are irrelevant to the assertion either way, since
+// the OID check fires before any cryptographic work, so a fixed dummy signature stands in.
+#[test]
+fn test_certificate_oid_validation() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let client_random = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+    let server_random = vec![0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f];
+    let public_key = vec![0x10, 0x11, 0x12, 0x13];
+    let message = value_key_message(
+        &client_random,
+        &server_random,
+        &public_key,
+        NamedCurve::X25519,
+    );
+    let dummy_signature = vec![0x42; 256];
+
+    // A certificate with the rsaEncryption OID, built from the shared RSA fixture.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair = KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_cert = rsa_params
+        .self_signed(&rsa_key_pair)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_encryption_cert_bytes = rsa_cert.der().as_ref().to_vec();
+
+    // A certificate with the id-RSASSA-PSS OID, pion's fixture verbatim.
+    let pss_cert_block = pem::parse_many(RSA_PSS_CERTIFICATE)
+        .map_err(|e| Error::InvalidPEM(e.to_string()))?
+        .pop()
+        .expect("RSA-PSS certificate fixture");
+    let pss_cert_bytes = pss_cert_block.contents().to_vec();
+
+    // PSS with rsaEncryption OID fails: the PSS family requires id-RSASSA-PSS.
+    let algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::RsaPssPssSha256,
+    };
+    assert!(
+        matches!(
+            verify_key_signature(
+                provider.crypto(),
+                &message,
+                &algorithm,
+                &dummy_signature,
+                &[rsa_encryption_cert_bytes],
+                false,
+            ),
+            Err(Error::ErrInvalidCertificateOID)
+        ),
+        "PSS with rsaEncryption OID must fail with errInvalidCertificateOID"
+    );
+
+    // RSAE with id-RSASSA-PSS OID fails: the RSAE family requires rsaEncryption.
+    let algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::RsaPssRsaeSha256,
+    };
+    assert!(
+        matches!(
+            verify_key_signature(
+                provider.crypto(),
+                &message,
+                &algorithm,
+                &dummy_signature,
+                &[pss_cert_bytes],
+                false,
+            ),
+            Err(Error::ErrInvalidCertificateOID)
+        ),
+        "RSAE with id-RSASSA-PSS OID must fail with errInvalidCertificateOID"
+    );
+
+    Ok(())
+}
+
+// Port of pion `TestRSAPSSVsPKCS1v15`, the half that is real here: an RSA key signs the key
+// exchange message with PKCS#1 v1.5/SHA-256 and the certificate verifies it. The RSA-PSS half —
+// generating and verifying a PSS signature, and the cross-verification failures in both
+// directions — needs RSA-PSS signing, which the provider abstraction does not offer
+// (rtc-crypto's `SignatureScheme` has no PSS variant; ring cannot do PSS), so those assertions
+// are not reproduced.
+#[test]
+fn test_rsa_pss_vs_pkcs1v15() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let client_random = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+    let server_random = vec![0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f];
+    let public_key = vec![0x10, 0x11, 0x12, 0x13];
+    let expected_msg = value_key_message(
+        &client_random,
+        &server_random,
+        &public_key,
+        NamedCurve::X25519,
+    );
+
+    // A certificate with the rsaEncryption OID, built from the shared RSA fixture.
+    let rsa_pem = include_str!("../../../rtc-crypto/tests/data/rsa-2048.pkcs8.pem");
+    let rsa_key_pair = KeyPair::from_pem(rsa_pem).map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let rsa_cert = rsa_params
+        .self_signed(&rsa_key_pair)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let private_key = CryptoPrivateKey::from_key_pair(&rsa_key_pair, provider.crypto())?;
+    let raw_cert = rsa_cert.der().as_ref().to_vec();
+
+    // Generate and verify the PKCS#1 v1.5 signature.
+    let algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Rsa,
+    };
+    let pkcs1_sig = generate_key_signature(
+        &client_random,
+        &server_random,
+        &public_key,
+        NamedCurve::X25519,
+        &algorithm,
+        &private_key,
+    )?;
+    assert!(
+        !pkcs1_sig.is_empty(),
+        "a 2048-bit RSA signature is 256 bytes"
+    );
+    verify_key_signature(
+        provider.crypto(),
+        &expected_msg,
+        &algorithm,
+        &pkcs1_sig,
+        &[raw_cert],
+        false,
+    )?;
+
+    Ok(())
+}
+
+// Port of pion `TestRSAPSSRSAEVariants`, the parsing half of pion's table: every RSA_PSS_RSAE
+// variant is a PSS scheme carrying its own hash, and the family binds to the `rsaEncryption`
+// certificate OID (checked here per variant, against pion's id-RSASSA-PSS fixture, as pion's
+// `RSAE_with_idRSASSAPSS_OID_fails` case does for SHA-256). The sign-and-verify half — a
+// signature over the key exchange message under each variant, verified against the certificate —
+// needs RSA-PSS signing, which the provider abstraction does not offer (rtc-crypto's
+// `SignatureScheme` has no PSS variant; ring cannot do PSS). pion itself skips the RSA_PSS_PSS
+// variants for a certificate-availability reason of the same kind.
+#[test]
+fn test_rsa_pss_rsae_variants() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let test_cases = [
+        (
+            "RSA_PSS_RSAE_SHA256",
+            HashAlgorithm::Sha256,
+            SignatureAlgorithm::RsaPssRsaeSha256,
+        ),
+        (
+            "RSA_PSS_RSAE_SHA384",
+            HashAlgorithm::Sha384,
+            SignatureAlgorithm::RsaPssRsaeSha384,
+        ),
+        (
+            "RSA_PSS_RSAE_SHA512",
+            HashAlgorithm::Sha512,
+            SignatureAlgorithm::RsaPssRsaeSha512,
+        ),
+    ];
+
+    // A certificate with the id-RSASSA-PSS OID, pion's fixture verbatim.
+    let pss_cert_block = pem::parse_many(RSA_PSS_CERTIFICATE)
+        .map_err(|e| Error::InvalidPEM(e.to_string()))?
+        .pop()
+        .expect("RSA-PSS certificate fixture");
+    let pss_cert_bytes = pss_cert_block.contents().to_vec();
+    let dummy_signature = vec![0x42; 256];
+
+    for (name, hash, signature) in test_cases {
+        // Verify IsPSS() returns true.
+        assert!(
+            signature.is_pss(),
+            "{name}: should be identified as PSS algorithm"
+        );
+
+        // Verify GetPSSHash() returns the correct hash.
+        assert_eq!(
+            signature.get_pss_hash(),
+            hash,
+            "{name}: hash extraction should match"
+        );
+
+        // Verify the RSAE family requires the rsaEncryption OID, not id-RSASSA-PSS.
+        let algorithm = SignatureHashAlgorithm { hash, signature };
+        assert!(
+            matches!(
+                verify_key_signature(
+                    provider.crypto(),
+                    b"handshake",
+                    &algorithm,
+                    &dummy_signature,
+                    std::slice::from_ref(&pss_cert_bytes),
+                    false,
+                ),
+                Err(Error::ErrInvalidCertificateOID)
+            ),
+            "{name}: RSAE with id-RSASSA-PSS OID must fail with errInvalidCertificateOID"
+        );
+    }
+
+    Ok(())
+}
+
+// DER helpers for `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }` with a
+// fabricated modulus, so a certificate can carry an RSA public key nobody holds the private half
+// of — exactly pion's `TestPeerRSAKeySizeLimit`, which builds keys as `2^(bits-1) + 1` with
+// exponent 65537.
+fn der_length(len: usize, out: &mut Vec<u8>) {
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let mut bytes = Vec::new();
+        let mut n = len;
+        while n > 0 {
+            bytes.push((n & 0xff) as u8);
+            n >>= 8;
+        }
+        bytes.reverse();
+        out.push(0x80 | bytes.len() as u8);
+        out.extend_from_slice(&bytes);
+    }
+}
+
+fn der_positive_integer(bytes: &[u8], out: &mut Vec<u8>) {
+    out.push(0x02);
+    let pad = !bytes.is_empty() && bytes[0] & 0x80 != 0;
+    let content_len = bytes.len() + usize::from(pad);
+    der_length(content_len, out);
+    if pad {
+        out.push(0);
+    }
+    out.extend_from_slice(bytes);
+}
+
+fn der_rsa_public_key(modulus_bits: usize) -> Vec<u8> {
+    // modulus = 2^(modulus_bits - 1) + 1, so its bit length is exactly `modulus_bits` for every
+    // value in pion's table, 2048 through 131072.
+    let byte_len = modulus_bits.div_ceil(8);
+    let mut modulus = vec![0u8; byte_len];
+    // The top bit, `modulus_bits - 1` counting from the least significant end, lands in the
+    // first byte of the big-endian array; its place within that byte is `(bits - 1) % 8`.
+    modulus[byte_len - 1 - (modulus_bits - 1) / 8] = 1 << ((modulus_bits - 1) % 8);
+    *modulus.last_mut().expect("non-empty modulus") |= 0x01;
+
+    let mut body = Vec::new();
+    der_positive_integer(&modulus, &mut body);
+    der_positive_integer(&[0x01, 0x00, 0x01], &mut body); // 65537
+
+    let mut out = vec![0x30];
+    der_length(body.len(), &mut out);
+    out.extend_from_slice(&body);
+    out
+}
+
+// A certificate subject public key that is a fabricated RSA key: pion needs only the modulus,
+// not the expensive keypair behind it.
+struct FabricatedRsaKey {
+    der: Vec<u8>,
+}
+
+impl rcgen::PublicKeyData for FabricatedRsaKey {
+    fn der_bytes(&self) -> &[u8] {
+        &self.der
+    }
+
+    fn algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
+        &rcgen::PKCS_RSA_SHA256
+    }
+}
+
+// Port of pion `TestPeerRSAKeySizeLimit`: a peer RSA public key above 8192 bits is rejected when
+// the certificate is parsed, before any verification work, for the RSA and RSA-PSS-RSAE
+// algorithms pion checks. The `bits <= maxPeerRSAKeyBits` PSS case is not asserted: it needs
+// RSA-PSS verification, which no crypto provider implements.
+#[test]
+fn test_peer_rsa_key_size_limit() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+
+    let issuer_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let issuer_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let issuer_cert = issuer_params
+        .self_signed(&issuer_key)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let issuer_der = issuer_cert.der().as_ref().to_vec();
+    let issuer = rcgen::Issuer::from_params(&issuer_params, &issuer_key);
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(issuer_der.clone()))
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let client_verifier: std::sync::Arc<dyn rustls::server::danger::ClientCertVerifier> =
+        rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(roots.clone()))
+            .build()
+            .map_err(|e| Error::Other(e.to_string()))?;
+    let server_verifier: std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier> =
+        rustls::client::WebPkiServerVerifier::builder(std::sync::Arc::new(roots))
+            .build()
+            .map_err(|e| Error::Other(e.to_string()))?;
+
+    let leaf_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .map_err(|e| Error::Other(e.to_string()))?;
+
+    for bits in [2048, 8191, 8192, 8193, 131072] {
+        let der = leaf_params
+            .signed_by(
+                &FabricatedRsaKey {
+                    der: der_rsa_public_key(bits),
+                },
+                &issuer,
+            )
+            .map_err(|e| Error::Other(e.to_string()))?
+            .der()
+            .as_ref()
+            .to_vec();
+        let chain = vec![der.clone()];
+        let oversized = bits > 8192;
+
+        // loadCerts rejects an oversized key before anything else sees the certificate.
+        match (load_certs(&chain), oversized) {
+            (Ok(_), false) => {}
+            (Err(Error::ErrPeerRSAKeyTooLarge), true) => {}
+            (result, _) => panic!("{bits} bits: unexpected load_certs result: {result:?}"),
+        }
+
+        for signature in [
+            SignatureAlgorithm::Rsa,
+            SignatureAlgorithm::RsaPssRsaeSha256,
+        ] {
+            let algorithm = SignatureHashAlgorithm {
+                hash: HashAlgorithm::Sha256,
+                signature,
+            };
+            // A nil signature, as in pion: verification of it fails, but the parse limit comes
+            // first for an oversized key.
+            let expected = match (oversized, signature) {
+                (false, SignatureAlgorithm::Rsa) => Error::ErrKeySignatureMismatch,
+                (true, _) => Error::ErrPeerRSAKeyTooLarge,
+                (false, _) => continue, // needs RSA-PSS verification, a provider gap
+            };
+            assert!(
+                matches!(
+                    verify_key_signature(
+                        provider.crypto(),
+                        b"handshake",
+                        &algorithm,
+                        &[],
+                        &chain,
+                        false,
+                    ),
+                    Err(ref e) if *e == expected
+                ),
+                "{bits} bits, {signature:?}: expected {expected:?} from verify_key_signature"
+            );
+            assert!(
+                matches!(
+                    verify_certificate_verify(
+                        provider.crypto(),
+                        b"handshake",
+                        &algorithm,
+                        &[],
+                        &chain,
+                        false,
+                    ),
+                    Err(ref e) if *e == expected
+                ),
+                "{bits} bits, {signature:?}: expected {expected:?} from verify_certificate_verify"
+            );
+        }
+
+        if oversized {
+            // The oversized intermediate is rejected before rustls chain verification runs.
+            let full_chain = vec![issuer_der.clone(), der];
+            assert!(
+                matches!(
+                    verify_client_cert(&full_chain, &client_verifier),
+                    Err(Error::ErrPeerRSAKeyTooLarge)
+                ),
+                "{bits} bits: verify_client_cert must reject the oversized key"
+            );
+            assert!(
+                matches!(
+                    verify_server_cert(&full_chain, &server_verifier, ""),
+                    Err(Error::ErrPeerRSAKeyTooLarge)
+                ),
+                "{bits} bits: verify_server_cert must reject the oversized key"
+            );
+        }
+    }
 
     Ok(())
 }

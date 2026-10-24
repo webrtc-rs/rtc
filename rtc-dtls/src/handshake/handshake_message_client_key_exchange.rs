@@ -41,6 +41,9 @@ impl HandshakeMessageClientKeyExchange {
         }
 
         if !self.public_key.is_empty() {
+            if self.public_key.len() > 255 {
+                return Err(Error::ErrPublicKeyTooLong);
+            }
             writer.write_u8(self.public_key.len() as u8)?;
             writer.write_all(&self.public_key)?;
         } else {

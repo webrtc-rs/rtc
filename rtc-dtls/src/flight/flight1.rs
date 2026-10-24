@@ -120,7 +120,11 @@ impl Flight for Flight1 {
         let message = super::build_client_hello_message(state, cfg)?;
 
         Ok(vec![Packet {
-            record: RecordLayer::new(PROTOCOL_VERSION1_2, 0, Content::Handshake(Handshake::new(message))),
+            record: RecordLayer::new(
+                PROTOCOL_VERSION1_2,
+                0,
+                Content::Handshake(Handshake::new(message)),
+            ),
             should_encrypt: false,
             reset_local_sequence_number: false,
         }])

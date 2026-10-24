@@ -85,6 +85,10 @@ impl HandshakeMessageCertificateRequest {
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.certificate_types.len() > 255 {
+            return Err(Error::ErrCertificateTypesTooLong);
+        }
+
         writer.write_u8(self.certificate_types.len() as u8)?;
         for v in &self.certificate_types {
             writer.write_u8(*v as u8)?;
@@ -92,8 +96,7 @@ impl HandshakeMessageCertificateRequest {
 
         writer.write_u16::<BigEndian>(2 * self.signature_hash_algorithms.len() as u16)?;
         for v in &self.signature_hash_algorithms {
-            writer.write_u8(v.hash as u8)?;
-            writer.write_u8(v.signature as u8)?;
+            writer.write_all(&v.scheme_bytes()?)?;
         }
 
         // Distinguished Names
@@ -113,7 +116,8 @@ impl HandshakeMessageCertificateRequest {
 
     /// Decodes one of these messages from `reader`.
     ///
-    /// Entries that do not name a known certificate type or algorithm are skipped, as in pion.
+    /// Unrecognized certificate types and signature schemes are silently skipped rather than
+    /// failing the handshake, as in pion.
     ///
     /// # Errors
     ///
@@ -123,7 +127,8 @@ impl HandshakeMessageCertificateRequest {
 
         let mut certificate_types = vec![];
         for _ in 0..certificate_types_length {
-            let cert_type: ClientCertificateType = reader.read_u8()?.into();
+            let cert_type = reader.read_u8()?.into();
+            // Skip unrecognized certificate types rather than failing the handshake.
             if cert_type != ClientCertificateType::Unsupported {
                 certificate_types.push(cert_type);
             }
@@ -133,13 +138,11 @@ impl HandshakeMessageCertificateRequest {
 
         let mut signature_hash_algorithms = vec![];
         for _ in (0..signature_hash_algorithms_length).step_by(2) {
-            let hash = reader.read_u8()?;
-            let signature = reader.read_u8()?;
-            // Hybrid encoding, as in pion: a known RSA-PSS code point is read as its full
-            // u16 value, everything else byte-split; unknown pairs are skipped.
-            if let Some(algorithm) = crate::extension::extension_signature_algorithms_cert::parse_signature_hash_algorithm(
-                u16::from_be_bytes([hash, signature]),
-            ) {
+            let scheme = reader.read_u16::<BigEndian>()?;
+            // Skip unrecognized schemes rather than failing the handshake (Firefox offers DSA
+            // pairs, for instance). The hybrid encoding reads a known RSA-PSS code point as
+            // its full u16 value, everything else byte-split.
+            if let Ok(algorithm) = SignatureHashAlgorithm::from_scheme(scheme) {
                 signature_hash_algorithms.push(algorithm);
             }
         }

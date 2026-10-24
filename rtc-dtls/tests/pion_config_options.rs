@@ -85,11 +85,7 @@ fn test_psk_server_verify_connection_fails() {
     );
 
     assert!(!out.ok(), "the handshake must fail");
-    let server_error = out
-        .server_error
-        .as_ref()
-        .expect("the server fails locally")
-        .clone();
+    let server_error = out.server_error.as_ref().expect("the server fails locally");
     assert!(
         server_error.to_string().contains("verify failed"),
         "server error carries the callback's error: {server_error}"

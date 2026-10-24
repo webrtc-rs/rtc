@@ -12,6 +12,9 @@ use ctr::cipher::StreamCipher as CtrStreamCipher;
 use ctr::{CtrCore, flavors};
 use md5::{Digest, Md5};
 
+#[cfg(test)]
+mod common_test;
+
 const AES_BLOCK_LEN: usize = 16;
 const CCM_NONCE_LEN: usize = 12;
 

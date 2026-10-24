@@ -168,6 +168,7 @@ pub(crate) fn build_client_hello_message(
         version: PROTOCOL_VERSION1_2,
         random: state.local_random.clone(),
         cookie: state.cookie.clone(),
+        session_id: vec![],
         cipher_suites: cfg.local_cipher_suites.clone(),
         compression_methods: default_compression_methods(),
         extensions,

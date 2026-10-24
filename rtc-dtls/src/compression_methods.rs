@@ -1,4 +1,4 @@
-use shared::error::Result;
+use shared::error::*;
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
@@ -39,8 +39,12 @@ impl CompressionMethods {
     ///
     /// # Errors
     ///
-    /// Fails on a write error, or if a field exceeds the length its wire format allows.
+    /// Fails on a write error, or if there are more methods than the one-byte length field can
+    /// hold.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.ids.len() > 255 {
+            return Err(Error::ErrCompressionMethodsTooLong);
+        }
         writer.write_u8(self.ids.len() as u8)?;
 
         for id in &self.ids {

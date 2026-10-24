@@ -611,11 +611,12 @@ impl Flight for Flight4 {
         let server_hello = HandshakeMessageServerHello {
             version: PROTOCOL_VERSION1_2,
             random: state.local_random.clone(),
+            session_id: vec![],
             cipher_suite: {
                 if let Some(cipher_suite) = &state.cipher_suite {
                     cipher_suite.id()
                 } else {
-                    CipherSuiteId::Unsupported
+                    CipherSuiteId::Unsupported(0)
                 }
             },
             compression_method: default_compression_methods().ids[0],

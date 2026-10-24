@@ -1081,12 +1081,30 @@ pub enum Error {
     /// Cookie must not be longer then 255 bytes.
     #[error("cookie must not be longer then 255 bytes")]
     ErrCookieTooLong,
+    /// Session ID must not be longer than 255 bytes.
+    #[error("session ID must not be longer than 255 bytes")]
+    ErrSessionIdTooLong,
+    /// Too many compression methods to encode.
+    #[error("too many compression methods to encode")]
+    ErrCompressionMethodsTooLong,
+    /// Too many certificate types to encode.
+    #[error("too many certificate types to encode")]
+    ErrCertificateTypesTooLong,
+    /// Public key must not be longer than 255 bytes.
+    #[error("public key must not be longer than 255 bytes")]
+    ErrPublicKeyTooLong,
     /// PSK Identity Hint provided but PSK is nil.
     #[error("PSK Identity Hint provided but PSK is nil")]
     ErrIdentityNoPsk,
     /// No certificate provided.
     #[error("no certificate provided")]
     ErrInvalidCertificate,
+    /// The certificate's public key algorithm OID does not match the signature scheme.
+    #[error("certificate OID does not match signature algorithm")]
+    ErrInvalidCertificateOID,
+    /// The peer's RSA public key exceeds the 8192-bit limit that bounds verification work.
+    #[error("peer RSA key exceeds 8192 bits")]
+    ErrPeerRSAKeyTooLarge,
     /// Cipher spec invalid.
     #[error("cipher spec invalid")]
     ErrInvalidCipherSpec,
@@ -1126,6 +1144,9 @@ pub enum Error {
     /// Invalid signature algorithm.
     #[error("invalid signature algorithm")]
     ErrInvalidSignatureAlgorithm,
+    /// Invalid or unencodable signature-hash algorithm pair.
+    #[error("invalid signature hash algorithm")]
+    ErrInvalidSignHashAlgorithm,
     /// Expected and actual key signature do not match.
     #[error("expected and actual key signature do not match")]
     ErrKeySignatureMismatch,
