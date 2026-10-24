@@ -139,9 +139,9 @@ use crate::rtp_transceiver::rtp_sender::{
 };
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::{
-    BandwidthEstimator, CongestionControlBuilder, NackGeneratorBuilder, NackResponderBuilder,
-    PacerBuilder, ReceiverReportBuilder, Rfc8888Builder, SenderReportBuilder, TwccReceiverBuilder,
-    TwccSenderBuilder,
+    BandwidthEstimator, CongestionControlBuilder, KeyframeRequestForwarderBuilder,
+    NackGeneratorBuilder, NackResponderBuilder, PacerBuilder, ReceiverReportBuilder,
+    Rfc8888Builder, SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
 };
 
 /// The chain registry these helpers take and return, and the positions they place interceptors at.
@@ -307,6 +307,40 @@ pub fn configure_rtcp_reports(registry: Registry) -> Registry {
     registry
         .with(Slot::ReceiverReport, ReceiverReportBuilder::new().build())
         .with(Slot::SenderReport, SenderReportBuilder::new().build())
+}
+
+/// Delivers keyframe requests (PLI and FIR) from the remote to the application.
+///
+/// Inbound RTCP does not reach [`poll_read`](sansio::Protocol::poll_read): the interceptors act on
+/// reports and feedback, and the rest is dropped. A keyframe request is the exception that an
+/// application, rather than an interceptor, can answer. An SFU needs it to relay a subscriber's
+/// request to the publisher of the stream it asks about; a plain sender needs it to know when to
+/// produce a keyframe.
+///
+/// The requests arrive as [`RTCMessage::RtcpPacket`](crate::peer_connection::message::RTCMessage::RtcpPacket)
+/// tagged with the id of the track they are about.
+///
+/// # Examples
+///
+/// ```
+/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::{
+///     configure_keyframe_request_forwarding, register_default_interceptors,
+/// };
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+/// let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
+/// let registry = configure_keyframe_request_forwarding(registry);
+/// # Ok(())
+/// # }
+/// ```
+pub fn configure_keyframe_request_forwarding(registry: Registry) -> Registry {
+    registry.with(
+        Slot::KeyframeRequests,
+        KeyframeRequestForwarderBuilder::new().build(),
+    )
 }
 
 /// Registers RTP header extensions required for simulcast streaming.

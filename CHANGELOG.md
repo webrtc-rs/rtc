@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-interceptor`, `rtc`: `KeyframeRequestForwarderInterceptor` at the new `Slot::KeyframeRequests`
+  (application-most), and `configure_keyframe_request_forwarding` to register it. Inbound RTCP is
+  dropped at the end of the interceptor chain, so an application never saw the keyframe requests
+  (PLI, FIR) a subscriber sends: an SFU could not relay them to the publisher, and a sender could
+  not tell when to produce a keyframe. The forwarder delivers those two kinds, tagged with the
+  track they are about (the sending track for a stream this endpoint sends, including every layer
+  of a simulcast stream), and leaves reports and other feedback to the interceptors that act on
+  them. `tests/simulcast_sender_keyframe_requests.rs` pins it.
 - `rtc-dtls`: pion's config callbacks and options (pion/dtls v3.1.15 issue #24):
   `ConfigBuilder::with_verify_connection` (run by both roles once the peer's `Finished` is
   verified; an error sends a fatal `bad_certificate` alert), `with_get_certificate`

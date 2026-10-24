@@ -163,6 +163,16 @@ pub enum Slot {
     /// see this endpoint's own buffering depth as network delay variation — a delay signal
     /// manufactured locally and indistinguishable, at the far end, from a congested path.
     JitterBuffer = 13_000,
+    /// `KeyframeRequestForwarderInterceptor` — delivers keyframe requests (PLI, FIR) to the
+    /// application.
+    ///
+    /// **Inbound only.**
+    ///
+    /// **Why here — application-most, so it narrows what everything before it has already seen.**
+    /// Inbound RTCP is dropped at the end of the chain unless an interceptor marks it for the
+    /// application; this one marks the keyframe requests and leaves the reports, NACKs and
+    /// feedback to the interceptors that act on them.
+    KeyframeRequests = 14_000,
     /// Anywhere else, for an interceptor this crate knows nothing about.
     ///
     /// The named slots are spaced a thousand apart so one of your own fits between any two of them
@@ -212,6 +222,7 @@ impl Slot {
             Self::SenderReport => 11_000,
             Self::IntervalPli => 12_000,
             Self::JitterBuffer => 13_000,
+            Self::KeyframeRequests => 14_000,
             Self::Custom(position) => position,
         }
     }
@@ -667,6 +678,7 @@ mod tests {
             Slot::SenderReport,
             Slot::IntervalPli,
             Slot::JitterBuffer,
+            Slot::KeyframeRequests,
         ];
 
         for pair in named.windows(2) {
