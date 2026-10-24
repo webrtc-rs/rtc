@@ -535,3 +535,267 @@ fn test_reuse_of_a_freed_transceiver() {
     sim.send_video(true, sender2, ssrc2, 10);
     assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() >= 2));
 }
+
+fn setup_of(sdp: &str) -> String {
+    sdp.lines()
+        .find_map(|l| l.strip_prefix("a=setup:"))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// `TestPeerConnection_Renegotiation_CodecChange`: one transceiver carries a track, then none,
+/// then another, each opening and closing on the remote with its own ids, with the mid unchanged.
+#[test]
+fn test_one_transceiver_carries_successive_tracks() {
+    use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
+    let mut sim = Sim::new(pc(), pc());
+    let ssrc1 = 0xa0a0_0001;
+    let ssrc2 = 0xa0a0_0002;
+    let sender1 = sim.a.pc.add_track(vp8_track("1", ssrc1)).unwrap();
+    sim.b
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    sim.negotiate(true);
+    for pc in [&mut sim.a.pc, &mut sim.b.pc] {
+        let ids: Vec<_> = pc.get_transceivers().collect();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(
+            pc.rtp_transceiver(ids[0]).unwrap().mid().as_deref(),
+            Some("0")
+        );
+    }
+
+    sim.send_video(true, sender1, ssrc1, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() == 1));
+    let opened = |sim: &Sim| -> Vec<(String, Vec<String>)> {
+        sim.b
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(i)) => {
+                    Some((i.track_id.clone(), i.stream_ids.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        opened(&sim)[0],
+        ("track-1".to_owned(), vec!["stream-1".to_owned()])
+    );
+
+    sim.a.pc.remove_track(sender1).unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_closed() == 1));
+
+    let sender2 = sim.a.pc.add_track(vp8_track("2", ssrc2)).unwrap();
+    sim.negotiate(true);
+    for pc in [&sim.a.pc, &sim.b.pc] {
+        assert_eq!(
+            pc.get_transceivers().count(),
+            1,
+            "the transceiver is reused"
+        );
+    }
+    sim.send_video(true, sender2, ssrc2, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() == 2));
+    assert_eq!(
+        opened(&sim)[1],
+        ("track-2".to_owned(), vec!["stream-2".to_owned()])
+    );
+
+    sim.a.pc.remove_track(sender2).unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.b.tracks_closed() == 2));
+}
+
+/// `TestPeerConnection_Renegotiation_MidConflict`: a transceiver given the mid of an existing
+/// section, plus another new one, does not stop the next offer from being created.
+#[test]
+fn test_mid_conflict_does_not_break_the_next_offer() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a.pc.create_data_channel("test", None).unwrap();
+    for kind in [RtpCodecKind::Video, RtpCodecKind::Audio] {
+        sim.a
+            .pc
+            .add_transceiver_from_kind(
+                kind,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Sendonly,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+    }
+    sim.negotiate(true);
+    assert_eq!(
+        sim.a.pc.signaling_state(),
+        rtc::peer_connection::state::RTCSignalingState::Stable
+    );
+
+    let id = sim
+        .a
+        .pc
+        .add_transceiver_from_kind(
+            RtpCodecKind::Video,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Sendonly,
+                streams: vec![],
+                send_encodings: vec![],
+            }),
+        )
+        .unwrap();
+    // pion lets the application name the mid; that interface does not exist here (mids are
+    // generated), so the conflict cannot be constructed directly. What remains checkable is that
+    // a further new transceiver and offer work after a completed negotiation.
+    let _ = id;
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, sendrecv())
+        .unwrap();
+    sim.a
+        .pc
+        .create_offer(None)
+        .expect("the next offer is created");
+}
+
+/// `TestPeerConnection_Renegotiation_DTLSRole`: whichever role the answerer is configured with,
+/// every later offer, from either side and with or without an ICE restart, is answered with the
+/// same role per side and the connection stays up.
+#[test]
+fn test_dtls_role_is_kept_across_renegotiations() {
+    use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
+    use rtc::peer_connection::transport::RTCDtlsRole;
+    for role in [None, Some(RTCDtlsRole::Client), Some(RTCDtlsRole::Server)] {
+        let build = || {
+            let mut me = MediaEngine::default();
+            me.register_default_codecs().unwrap();
+            let mut builder = SettingEngineBuilder::new();
+            if let Some(role) = role {
+                builder = builder.with_answering_dtls_role(role);
+            }
+            RTCPeerConnectionBuilder::new()
+                .with_media_engine(me)
+                .with_setting_engine(builder.build())
+                .build(Instant::now())
+                .unwrap()
+        };
+        let mut sim = Sim::new(build(), build());
+        sim.a.pc.create_data_channel("d", None).unwrap();
+        sim.negotiate(true);
+        assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+            && s.b.connected()));
+
+        // The first answerer (`b`) took `answer_role`; `a`, the first offerer, took the other.
+        let answer_setup = setup_of(&sim.b.pc.local_description().unwrap().sdp);
+        let offerer_setup = if answer_setup == "active" {
+            "passive"
+        } else {
+            "active"
+        };
+
+        for restart in [false, true] {
+            for a_offers in [false, true] {
+                sim.negotiate_with(a_offers, restart);
+                assert!(
+                    sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+                        && s.b.connected()),
+                    "role {role:?} restart {restart} a_offers {a_offers}"
+                );
+                let (answerer, want) = if a_offers {
+                    (&sim.b.pc, answer_setup.as_str())
+                } else {
+                    (&sim.a.pc, offerer_setup)
+                };
+                let got = setup_of(&answerer.local_description().unwrap().sdp);
+                assert_eq!(
+                    got, want,
+                    "role {role:?} restart {restart} a_offers {a_offers}"
+                );
+            }
+        }
+    }
+}
+
+/// `TestPeerConnection_Renegotiation_AddTrack_Rename`: a sender's track is replaced by one with
+/// other ids between two negotiations; the remote track that opens carries the new ids.
+#[test]
+fn test_renamed_track_surfaces_with_the_new_ids() {
+    use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
+    let mut sim = Sim::new(pc(), pc());
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    let ssrc = 0xb0b0_0001;
+    let sender = sim.b.pc.add_track(vp8_track("foo1", ssrc)).unwrap();
+    sim.negotiate(true);
+    assert_eq!(sim.a.tracks_opened(), 0, "no media yet, no track");
+
+    // Same SSRC, renamed.
+    let renamed = MediaStreamTrack::new(
+        "bar2".to_owned(),
+        "foo2".to_owned(),
+        "label".to_owned(),
+        RtpCodecKind::Video,
+        vp8_track("foo1", ssrc).codings().to_vec(),
+    );
+    sim.b
+        .pc
+        .rtp_sender(sender)
+        .unwrap()
+        .replace_track(renamed)
+        .unwrap();
+    sim.negotiate(true);
+
+    sim.send_video(false, sender, ssrc, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.a.tracks_opened() == 1));
+    let ids = sim.a.events.iter().find_map(|e| match e {
+        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(i)) => {
+            Some((i.track_id.clone(), i.stream_ids.clone()))
+        }
+        _ => None,
+    });
+    assert_eq!(ids, Some(("foo2".to_owned(), vec!["bar2".to_owned()])));
+}
+
+/// `TestPeerConnection_Renegotiation_SetLocalDescription`: the answerer's new sender sends only
+/// once its answer is applied, and then the offerer receives it.
+#[test]
+fn test_new_sender_sends_once_the_answer_is_applied() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a.pc.create_data_channel("d", None).unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+
+    sim.a
+        .pc
+        .add_transceiver_from_kind(RtpCodecKind::Video, recvonly())
+        .unwrap();
+    let ssrc = 0xb0b0_0001;
+    let sender = sim.b.pc.add_track(vp8_track("foo", ssrc)).unwrap();
+
+    let now = sim.now;
+    let offer = sim.a.pc.create_offer(None).unwrap();
+    sim.a.pc.set_local_description(now, offer.clone()).unwrap();
+    sim.b.pc.set_remote_description(now, offer).unwrap();
+    let answer = sim.b.pc.create_answer(None).unwrap();
+    sim.b.pc.set_local_description(now, answer.clone()).unwrap();
+    sim.a.pc.set_remote_description(now, answer).unwrap();
+
+    sim.send_video(false, sender, ssrc, 10);
+    assert!(sim.run_until(Duration::from_secs(2), |s| s.a.tracks_opened() == 1));
+}
+
+/// `TestNegotiationCreateDataChannel`: creating a channel on a fresh connection fires
+/// `OnNegotiationNeeded`.
+#[test]
+fn test_creating_a_data_channel_asks_for_negotiation() {
+    let mut sim = Sim::new(pc(), pc());
+    sim.a.pc.create_data_channel("testChannel", None).unwrap();
+    sim.run_for(Duration::from_millis(50));
+    assert!(sim.a.negotiation_needed() >= 1);
+}

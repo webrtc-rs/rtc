@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `add_transceiver_from_kind` accepts a sending direction without `send_encodings`: one encoding
+  with a fresh SSRC and the engine's codec is used (W3C `addTransceiver`, pion), instead of
+  `ErrInvalidDirection`.
 - `rtc-ice`: ICE renomination (draft-thatcher-ice-renomination-01), as in pion: the controlling
   agent can move a live call to another pair with `Agent::renominate_candidate`, optionally by
   itself (`AgentConfig::automatic_renomination`: a direct path replacing a relayed one, an RTT

@@ -683,3 +683,39 @@ fn test_start_right_receiver() {
         "the second track opens on the second receiver"
     );
 }
+
+/// A sending transceiver created from a kind, with no track and no encodings (what pion's
+/// `AddTransceiverFromKind` with `Sendonly` makes, and what an SFU does before it has media):
+/// it gets a fresh SSRC and a negotiated codec, and media written to it reaches the peer.
+#[test]
+fn test_sendonly_transceiver_from_kind_sends() {
+    let mut sim = Sim::new(pc(), pc());
+    let id = sim
+        .a
+        .pc
+        .add_transceiver_from_kind(
+            RtpCodecKind::Video,
+            init(RTCRtpTransceiverDirection::Sendonly),
+        )
+        .unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+
+    let sender = sim.a.pc.rtp_transceiver(id).unwrap().sender().unwrap();
+    let ssrc = sim
+        .a
+        .pc
+        .rtp_sender(sender)
+        .unwrap()
+        .get_parameters()
+        .encodings[0]
+        .rtp_coding_parameters
+        .ssrc
+        .expect("an SSRC was chosen");
+    sim.send_video(true, sender, ssrc, 10);
+    assert!(
+        sim.run_until(Duration::from_secs(2), |s| s.b.tracks_opened() == 1),
+        "the peer receives the track"
+    );
+}
