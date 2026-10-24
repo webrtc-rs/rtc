@@ -18,6 +18,12 @@ pub mod crypto_ccm;
 pub mod crypto_chacha20;
 /// AES-GCM authenticated encryption.
 pub mod crypto_gcm;
+/// The DTLS 1.3 key schedule: HKDF-Extract, HKDF-Expand-Label and Derive-Secret
+/// ([RFC 8446 §7.1], [RFC 9147 §5.9]), composed from the crypto provider's HKDF.
+///
+/// [RFC 8446 §7.1]: https://datatracker.ietf.org/doc/html/rfc8446#section-7.1
+/// [RFC 9147 §5.9]: https://datatracker.ietf.org/doc/html/rfc9147#section-5.9
+pub mod keyschedule;
 
 use std::convert::TryFrom;
 use std::sync::Arc;
@@ -37,7 +43,7 @@ use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 
 use crate::curve::named_curve::*;
 use crate::record_layer::record_layer_header::*;
-use crate::signature_hash_algorithm::{SignatureAlgorithm, SignatureHashAlgorithm};
+use crate::signature_hash_algorithm::{HashAlgorithm, SignatureAlgorithm, SignatureHashAlgorithm};
 use shared::error::*;
 
 pub(crate) fn crypto_error(error: crypto::CryptoError) -> Error {
@@ -262,10 +268,16 @@ pub(crate) fn generate_key_signature(
     algorithm: &SignatureHashAlgorithm,
     private_key: &CryptoPrivateKey,
 ) -> Result<Vec<u8>> {
+    validate_signature_hash_pair(algorithm.hash, algorithm.signature)?;
+    let scheme = algorithm.crypto_scheme()?;
+    if !private_key.signing_key.supports(scheme) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
     let msg = value_key_message(client_random, server_random, public_key, named_curve);
     private_key
         .signing_key
-        .sign(algorithm.crypto_scheme()?, &msg)
+        .sign(scheme, &msg)
         .map_err(crypto_error)
 }
 
@@ -274,6 +286,133 @@ pub(crate) fn generate_key_signature(
 pub const OID_ED25519: Oid<'static> = oid!(1.3.101.112);
 /// The X.509 algorithm OID for ECDSA with a named curve.
 pub const OID_ECDSA: Oid<'static> = oid!(1.2.840.10045.2.1);
+/// The X.509 algorithm OID for an RSA public key (`rsaEncryption`).
+pub const OID_RSA: Oid<'static> = oid!(1.2.840.113549.1.1.1);
+/// The X.509 algorithm OID for an RSA-PSS public key (`id-RSASSA-PSS`).
+pub const OID_RSASSA_PSS: Oid<'static> = oid!(1.2.840.113549.1.1.10);
+
+/// The kind of public key a certificate carries, as far as handshake signing is concerned.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CertificateKeyKind {
+    /// An Ed25519 key; signs the message directly, with no separate hash.
+    Ed25519,
+    /// An ECDSA key over a NIST curve.
+    Ecdsa,
+    /// An RSA key, used with PKCS#1 v1.5 or (not yet) PSS padding.
+    Rsa,
+}
+
+impl CertificateKeyKind {
+    fn from_spki_oid(oid: &Oid<'_>) -> Result<Self> {
+        if *oid == OID_RSA || *oid == OID_RSASSA_PSS {
+            // An `id-RSASSA-PSS` key is an RSA key too; which padding the certificate's OID
+            // allows is `validate_signature_alg_oid`'s job, as in pion.
+            Ok(CertificateKeyKind::Rsa)
+        } else if *oid == OID_ECDSA {
+            Ok(CertificateKeyKind::Ecdsa)
+        } else if *oid == OID_ED25519 {
+            Ok(CertificateKeyKind::Ed25519)
+        } else {
+            Err(Error::ErrInvalidCertificate)
+        }
+    }
+}
+
+// A PSS signature scheme must be paired with the certificate public key OID its family requires,
+// as pion's validateSignatureAlgOID does (RFC 8446 §4.2.3): the RSAE variants require
+// `rsaEncryption`, the PSS variants `id-RSASSA-PSS`. Every other scheme places no OID constraint.
+fn validate_signature_alg_oid(
+    certificate_oid: &Oid<'_>,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    let required = match signature_algorithm {
+        SignatureAlgorithm::RsaPssRsaeSha256
+        | SignatureAlgorithm::RsaPssRsaeSha384
+        | SignatureAlgorithm::RsaPssRsaeSha512 => &OID_RSA,
+        SignatureAlgorithm::RsaPssPssSha256
+        | SignatureAlgorithm::RsaPssPssSha384
+        | SignatureAlgorithm::RsaPssPssSha512 => &OID_RSASSA_PSS,
+        _ => return Ok(()),
+    };
+    if certificate_oid != required {
+        return Err(Error::ErrInvalidCertificateOID);
+    }
+    Ok(())
+}
+
+// Binds the wire signature scheme to the certificate's key and hash, as pion's
+// validateHandshakeSignatureScheme does. RSA and ECDSA keys must never sign or verify a
+// digest-less handshake, and an Ed25519 key must be labeled with the Ed25519 scheme: a valid
+// signature over one scheme must not authenticate a different one.
+pub(crate) fn validate_handshake_signature_scheme(
+    key_kind: CertificateKeyKind,
+    hash_algorithm: HashAlgorithm,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    if key_kind == CertificateKeyKind::Ed25519 {
+        if signature_algorithm == SignatureAlgorithm::Ed25519
+            && hash_algorithm == HashAlgorithm::Ed25519
+        {
+            return Ok(());
+        }
+
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    // pion rejects every hash with no crypto hash — `None` (this crate's `Md2` code point),
+    // Ed25519's "null" hash, and unknown values — for non-Ed25519 keys.
+    if matches!(
+        hash_algorithm,
+        HashAlgorithm::Md2 | HashAlgorithm::Ed25519 | HashAlgorithm::Unsupported
+    ) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    match key_kind {
+        CertificateKeyKind::Ecdsa => {
+            if signature_algorithm == SignatureAlgorithm::Ecdsa {
+                return Ok(());
+            }
+        }
+        CertificateKeyKind::Rsa => {
+            // get_pss_hash returns the `Md2` code point for non-PSS schemes, which the
+            // no-real-hash check above already excluded.
+            if signature_algorithm == SignatureAlgorithm::Rsa
+                || signature_algorithm.get_pss_hash() == hash_algorithm
+            {
+                return Ok(());
+            }
+        }
+        CertificateKeyKind::Ed25519 => {}
+    }
+
+    Err(Error::ErrInvalidSignatureAlgorithm)
+}
+
+// The wire-scheme rules that hold regardless of key type, mirroring the key-independent half of
+// pion's validateHandshakeSignatureScheme: an Ed25519 signature must be paired with the
+// Ed25519 hash, and every other signature needs a real hash.
+pub(crate) fn validate_signature_hash_pair(
+    hash_algorithm: HashAlgorithm,
+    signature_algorithm: SignatureAlgorithm,
+) -> Result<()> {
+    if signature_algorithm == SignatureAlgorithm::Ed25519 {
+        if hash_algorithm == HashAlgorithm::Ed25519 {
+            return Ok(());
+        }
+
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    if matches!(
+        hash_algorithm,
+        HashAlgorithm::Md2 | HashAlgorithm::Ed25519 | HashAlgorithm::Unsupported
+    ) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
+    Ok(())
+}
 
 fn verify_signature(
     crypto: &dyn crypto::RTCCrypto,
@@ -287,14 +426,31 @@ fn verify_signature(
         return Err(Error::ErrLengthMismatch);
     }
 
-    let (_, certificate) = x509_parser::parse_x509_certificate(&raw_certificates[0])
-        .map_err(|e| Error::Other(e.to_string()))?;
+    let certificate = parse_peer_certificate(&raw_certificates[0])?;
+
+    // The wire scheme must match the certificate's key and hash before any cryptographic work.
+    validate_signature_alg_oid(
+        certificate.tbs_certificate.subject_pki.algorithm.oid(),
+        hash_algorithm.signature,
+    )?;
+    let key_kind =
+        CertificateKeyKind::from_spki_oid(certificate.tbs_certificate.subject_pki.algorithm.oid())?;
+    validate_handshake_signature_scheme(key_kind, hash_algorithm.hash, hash_algorithm.signature)?;
 
     let encoding = match hash_algorithm.signature {
         SignatureAlgorithm::Ed25519 => PublicKeyEncoding::Ed25519Raw,
         SignatureAlgorithm::Ecdsa => PublicKeyEncoding::EcUncompressedPoint,
         SignatureAlgorithm::Rsa => PublicKeyEncoding::RsaPkcs1Der,
-        SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
+        // The PSS schemes are parsed on the wire but no provider signs or verifies them yet,
+        // and anonymous pairs have no key to verify against.
+        SignatureAlgorithm::RsaPssRsaeSha256
+        | SignatureAlgorithm::RsaPssRsaeSha384
+        | SignatureAlgorithm::RsaPssRsaeSha512
+        | SignatureAlgorithm::RsaPssPssSha256
+        | SignatureAlgorithm::RsaPssPssSha384
+        | SignatureAlgorithm::RsaPssPssSha512
+        | SignatureAlgorithm::Anonymous
+        | SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
     };
     if hash_algorithm.signature == SignatureAlgorithm::Rsa
         && remote_key_signature.len() < 256
@@ -368,9 +524,15 @@ pub(crate) fn generate_certificate_verify(
     algorithm: &SignatureHashAlgorithm,
     private_key: &CryptoPrivateKey,
 ) -> Result<Vec<u8>> {
+    validate_signature_hash_pair(algorithm.hash, algorithm.signature)?;
+    let scheme = algorithm.crypto_scheme()?;
+    if !private_key.signing_key.supports(scheme) {
+        return Err(Error::ErrInvalidSignatureAlgorithm);
+    }
+
     private_key
         .signing_key
-        .sign(algorithm.crypto_scheme()?, handshake_bodies)
+        .sign(scheme, handshake_bodies)
         .map_err(crypto_error)
 }
 
@@ -392,6 +554,51 @@ pub(crate) fn verify_certificate_verify(
     )
 }
 
+/// Matches `crypto/tls`'s default limit, bounding the verification work a peer can demand with an
+/// RSA public key (pion: `maxPeerRSAKeyBits`).
+const MAX_PEER_RSA_KEY_BITS: usize = 8192;
+
+/// The bit length of an RSA modulus, DER content bytes in hand — Go's `big.Int.BitLen`: leading
+/// zero bytes are not significant, and within the first significant byte the leading zero bits
+/// are not either.
+fn rsa_bit_length(bytes: &[u8]) -> usize {
+    let Some(first) = bytes.iter().position(|&b| b != 0) else {
+        return 0;
+    };
+    let significant = &bytes[first..];
+    significant.len() * 8 - significant[0].leading_zeros() as usize
+}
+
+/// Parses one peer certificate, rejecting an RSA public key above [`MAX_PEER_RSA_KEY_BITS`] with
+/// `errPeerRSAKeyTooLarge` before any verification work, as pion's `parsePeerCertificate` does.
+pub(crate) fn parse_peer_certificate(
+    raw: &[u8],
+) -> Result<x509_parser::certificate::X509Certificate<'_>> {
+    let (_, certificate) =
+        x509_parser::parse_x509_certificate(raw).map_err(|e| Error::Other(e.to_string()))?;
+    if certificate.tbs_certificate.subject_pki.algorithm.oid() == &OID_RSA
+        && rsa_bit_length(rsa_modulus(
+            certificate
+                .tbs_certificate
+                .subject_pki
+                .subject_public_key
+                .data
+                .as_ref(),
+        )) > MAX_PEER_RSA_KEY_BITS
+    {
+        return Err(Error::ErrPeerRSAKeyTooLarge);
+    }
+    Ok(certificate)
+}
+
+/// The raw modulus of a DER `RSAPublicKey`, empty when the subject public key is not one.
+fn rsa_modulus(subject_public_key: &[u8]) -> &[u8] {
+    use x509_parser::prelude::FromDer;
+    x509_parser::public_key::RSAPublicKey::from_der(subject_public_key)
+        .map(|(_, key)| key.modulus)
+        .unwrap_or(&[])
+}
+
 pub(crate) fn load_certs(raw_certificates: &[Vec<u8>]) -> Result<Vec<CertificateDer<'static>>> {
     if raw_certificates.is_empty() {
         return Err(Error::ErrLengthMismatch);
@@ -399,6 +606,9 @@ pub(crate) fn load_certs(raw_certificates: &[Vec<u8>]) -> Result<Vec<Certificate
 
     let mut certs = vec![];
     for raw_cert in raw_certificates {
+        // Parsing through `parse_peer_certificate` applies the peer RSA key size limit to every
+        // certificate in the chain, as pion's `loadCerts` does.
+        parse_peer_certificate(raw_cert)?;
         let cert = CertificateDer::from(raw_cert.to_vec());
         certs.push(cert);
     }

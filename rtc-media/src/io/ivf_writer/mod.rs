@@ -10,7 +10,7 @@ use rtp::packetizer::Depacketizer;
 
 use crate::io::Writer;
 use crate::io::ivf_reader::IVFFileHeader;
-use shared::error::Result;
+use shared::error::{Error, Result};
 
 /// Codec type for IVF writer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,6 +36,20 @@ impl IvfCodec {
         }
     }
 
+    /// The codec for a MIME type: `video/VP8`, `video/VP9` or `video/AV1`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ErrNoSuchCodec`] for any other string.
+    pub fn from_mime_type(mime_type: &str) -> Result<Self> {
+        match mime_type {
+            "video/VP8" => Ok(IvfCodec::Vp8),
+            "video/VP9" => Ok(IvfCodec::Vp9),
+            "video/AV1" => Ok(IvfCodec::Av1),
+            _ => Err(Error::ErrNoSuchCodec),
+        }
+    }
+
     /// Get FOURCC bytes for this codec
     pub fn fourcc(&self) -> [u8; 4] {
         match self {
@@ -55,10 +69,26 @@ pub struct IVFWriter<W: Write + Seek> {
     codec: IvfCodec,
     /// AV1 depacketizer (lazily initialized)
     av1_depacketizer: Option<Av1Depacketizer>,
+    timebase_numerator: u32,
+    timebase_denominator: u32,
+    first_frame_timestamp: u32,
+    direct_pts: bool,
+    closed: bool,
 }
+
+/// RTP video always runs on a 90 kHz clock.
+const CLOCK_RATE: u64 = 90000;
 
 impl<W: Write + Seek> IVFWriter<W> {
     /// new initialize a new IVF writer with an io.Writer output
+    ///
+    /// The header's width, height and timebase are written as given; the timebase also turns
+    /// RTP timestamps into frame PTS values (see [`IVFWriter::with_direct_pts`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ErrInvalidMediaTimebase`] if the timebase denominator is zero, or an I/O error
+    /// while writing the header.
     pub fn new(writer: W, header: &IVFFileHeader) -> Result<Self> {
         let codec = IvfCodec::from_fourcc(&header.four_cc);
 
@@ -69,11 +99,38 @@ impl<W: Write + Seek> IVFWriter<W> {
             current_frame: None,
             codec,
             av1_depacketizer: None,
+            timebase_numerator: header.timebase_numerator,
+            timebase_denominator: header.timebase_denominator,
+            first_frame_timestamp: 0,
+            direct_pts: false,
+            closed: false,
         };
 
         w.write_header(header)?;
+        if header.timebase_denominator == 0 {
+            return Err(Error::ErrInvalidMediaTimebase);
+        }
 
         Ok(w)
+    }
+
+    /// The output the writer writes to.
+    pub fn get_ref(&self) -> &W {
+        &self.writer
+    }
+
+    /// Consumes the writer and returns its output. Call [`Writer::close`] first to have the
+    /// frame count in the file header filled in.
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+
+    /// Writes RTP timestamps (relative to the first frame) straight into the frame headers as
+    /// PTS, with no millisecond conversion, preserving full precision. Pair it with a header
+    /// timebase that matches the RTP clock, e.g. numerator 1 and denominator 90000.
+    pub fn with_direct_pts(mut self) -> Self {
+        self.direct_pts = true;
+        self
     }
 
     fn write_header(&mut self, header: &IVFFileHeader) -> Result<()> {
@@ -94,7 +151,7 @@ impl<W: Write + Seek> IVFWriter<W> {
     }
 
     /// Write VP8 packet
-    fn write_vp8(&mut self, packet: &rtp::Packet) -> Result<()> {
+    fn write_vp8(&mut self, packet: &rtp::Packet, timestamp: u64) -> Result<()> {
         let mut depacketizer = rtp::codec::vp8::Vp8Packet::default();
         let payload = depacketizer.depacketize(&packet.payload)?;
 
@@ -121,11 +178,11 @@ impl<W: Write + Seek> IVFWriter<W> {
             return Ok(());
         }
 
-        self.write_current_frame()
+        self.write_current_frame(timestamp)
     }
 
     /// Write VP9 packet
-    fn write_vp9(&mut self, packet: &rtp::Packet) -> Result<()> {
+    fn write_vp9(&mut self, packet: &rtp::Packet, timestamp: u64) -> Result<()> {
         let mut depacketizer = rtp::codec::vp9::Vp9Packet::default();
         let payload = depacketizer.depacketize(&packet.payload)?;
 
@@ -146,11 +203,11 @@ impl<W: Write + Seek> IVFWriter<W> {
             return Ok(());
         }
 
-        self.write_current_frame()
+        self.write_current_frame(timestamp)
     }
 
     /// Write AV1 packet
-    fn write_av1(&mut self, packet: &rtp::Packet) -> Result<()> {
+    fn write_av1(&mut self, packet: &rtp::Packet, timestamp: u64) -> Result<()> {
         // Initialize depacketizer if needed
         if self.av1_depacketizer.is_none() {
             self.av1_depacketizer = Some(Av1Depacketizer::new());
@@ -187,7 +244,7 @@ impl<W: Write + Seek> IVFWriter<W> {
             frame_with_delimiter.extend_from_slice(&current_frame);
         }
 
-        self.write_frame(&frame_with_delimiter)
+        self.write_frame(&frame_with_delimiter, timestamp)
     }
 
     /// Append payload to current frame
@@ -205,7 +262,7 @@ impl<W: Write + Seek> IVFWriter<W> {
     }
 
     /// Write current frame to output
-    fn write_current_frame(&mut self) -> Result<()> {
+    fn write_current_frame(&mut self, timestamp: u64) -> Result<()> {
         if let Some(current_frame) = &self.current_frame {
             if current_frame.is_empty() {
                 return Ok(());
@@ -215,13 +272,19 @@ impl<W: Write + Seek> IVFWriter<W> {
         }
 
         let frame_content = self.current_frame.take().unwrap();
-        self.write_frame(&frame_content)
+        self.write_frame(&frame_content, timestamp)
     }
 
     /// Write frame data to output
-    fn write_frame(&mut self, frame: &[u8]) -> Result<()> {
+    fn write_frame(&mut self, frame: &[u8], timestamp: u64) -> Result<()> {
+        let pts = if self.direct_pts {
+            timestamp
+        } else {
+            timestamp.wrapping_mul(self.timebase_numerator as u64)
+                / self.timebase_denominator as u64
+        };
         self.writer.write_u32::<LittleEndian>(frame.len() as u32)?; // Frame length
-        self.writer.write_u64::<LittleEndian>(self.count)?; // PTS
+        self.writer.write_u64::<LittleEndian>(pts)?; // PTS
         self.count += 1;
         self.writer.write_all(frame)?;
         Ok(())
@@ -231,19 +294,39 @@ impl<W: Write + Seek> IVFWriter<W> {
 impl<W: Write + Seek> Writer for IVFWriter<W> {
     /// write_rtp adds a new packet and writes the appropriate headers for it
     fn write_rtp(&mut self, packet: &rtp::Packet) -> Result<()> {
+        if self.closed {
+            return Err(Error::ErrFileNotOpened);
+        }
         if packet.payload.is_empty() {
             return Ok(());
         }
 
+        if self.count == 0 {
+            self.first_frame_timestamp = packet.header.timestamp;
+        }
+        let elapsed = packet
+            .header
+            .timestamp
+            .wrapping_sub(self.first_frame_timestamp) as u64;
+        let timestamp = if self.direct_pts {
+            elapsed
+        } else {
+            1000 * elapsed / CLOCK_RATE
+        };
+
         match self.codec {
-            IvfCodec::Vp8 => self.write_vp8(packet),
-            IvfCodec::Vp9 => self.write_vp9(packet),
-            IvfCodec::Av1 => self.write_av1(packet),
+            IvfCodec::Vp8 => self.write_vp8(packet, timestamp),
+            IvfCodec::Vp9 => self.write_vp9(packet, timestamp),
+            IvfCodec::Av1 => self.write_av1(packet, timestamp),
         }
     }
 
     /// close stops the recording
     fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
         // Update the frame count
         self.writer.seek(SeekFrom::Start(24))?;
         self.writer.write_u32::<LittleEndian>(self.count as u32)?;

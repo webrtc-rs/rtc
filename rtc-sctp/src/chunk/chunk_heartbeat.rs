@@ -58,25 +58,56 @@ impl Chunk for ChunkHeartbeat {
             return Err(Error::ErrChunkTypeNotHeartbeat);
         }
 
-        if raw.len() <= CHUNK_HEADER_SIZE {
+        let body = &raw.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + header.value_length as usize);
+
+        // If the body is completely empty, accept it but don't populate params.
+        if body.is_empty() {
+            return Ok(ChunkHeartbeat { params: vec![] });
+        }
+
+        // A parameter header (TLV) is at least 4 bytes.
+        if body.len() < PARAM_HEADER_LENGTH {
             return Err(Error::ErrHeartbeatNotLongEnoughInfo);
         }
 
-        let p =
-            build_param(&raw.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + header.value_length()))?;
-        if p.header().typ != ParamType::HeartbeatInfo {
+        // The chunk must carry exactly one Heartbeat Info parameter: check the
+        // parameter type before validating its advertised length, as pion does.
+        let param_type = ParamType::from(u16::from_be_bytes([body[0], body[1]]));
+        if param_type != ParamType::HeartbeatInfo {
             return Err(Error::ErrHeartbeatParam);
         }
+
+        let p_header = ParamHeader::unmarshal(body).map_err(|_| Error::ErrParseParamTypeFailed)?;
+        let plen = p_header.value_length as usize + PARAM_HEADER_LENGTH;
+        if plen < PARAM_HEADER_LENGTH || plen > body.len() {
+            return Err(Error::ErrHeartbeatNotLongEnoughInfo);
+        }
+
+        let p = build_param(&body.slice(..plen)).map_err(|_| Error::ErrHeartbeatChunkUnmarshal)?;
         let params = vec![p];
+
+        // Any trailing bytes beyond the single param must be all zeros.
+        if body[plen..].iter().any(|&b| b != 0) {
+            return Err(Error::ErrHeartbeatExtraNonZero);
+        }
 
         Ok(ChunkHeartbeat { params })
     }
 
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
-        self.header().marshal_to(buf)?;
-        for p in &self.params {
-            buf.extend_from_slice(&p.marshal()?);
+        // Exactly one Heartbeat Info param is required.
+        if self.params.len() != 1 {
+            return Err(Error::ErrHeartbeatMarshalNoInfo);
         }
+        if self.params[0].header().typ != ParamType::HeartbeatInfo {
+            return Err(Error::ErrHeartbeatParam);
+        }
+
+        self.header().marshal_to(buf)?;
+        let pp = self.params[0]
+            .marshal()
+            .map_err(|_| Error::ErrHeartbeatChunkUnmarshal)?;
+        buf.extend_from_slice(&pp);
         Ok(buf.len())
     }
 

@@ -76,6 +76,8 @@ pub(crate) mod timer;
 mod association_test;
 #[cfg(test)]
 mod interleaving_test;
+#[cfg(test)]
+mod stream_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -1989,8 +1991,12 @@ impl Association {
     /// the queued chunks it now covers. The peer chooses how far ahead that is, so this must not
     /// walk the gap TSN by TSN.
     fn advance_peer_last_tsn(&mut self, new_cumulative_tsn: u32) {
-        self.payload_queue.advance_cumulative(new_cumulative_tsn);
-        self.peer_last_tsn = new_cumulative_tsn;
+        // Exactly 2^31 ahead is the RFC 1982 ambiguity point: not "ahead", so it moves nothing.
+        if sna32lt(self.peer_last_tsn, new_cumulative_tsn) {
+            self.payload_queue
+                .advance_cumulative_tsn(new_cumulative_tsn);
+            self.peer_last_tsn = new_cumulative_tsn;
+        }
     }
 
     fn handle_i_forward_tsn(&mut self, c: &ChunkIForwardTsn) -> Result<Vec<Packet>> {

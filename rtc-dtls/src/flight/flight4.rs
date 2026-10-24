@@ -465,8 +465,20 @@ impl Flight for Flight4 {
         };
 
         // A psk suite is sent no CertificateRequest (see `generate`), so skip `client_auth`
-        // rather than fail it for a certificate it was never asked for.
+        // rather than fail it for a certificate it was never asked for. `verify_connection`
+        // still runs, as in pion.
         if state.is_cipher_suite_psk() {
+            if let Some(verify_connection) = &cfg.verify_connection
+                && let Err(err) = verify_connection(state)
+            {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::BadCertificate,
+                    }),
+                    Some(err),
+                ));
+            }
             return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
         }
 
@@ -518,9 +530,20 @@ impl Flight for Flight4 {
                     ));
                 }
             }
-            ClientAuthType::NoClientCert | ClientAuthType::RequestClientCert => {
-                return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
-            }
+            ClientAuthType::NoClientCert | ClientAuthType::RequestClientCert => {}
+        }
+
+        // Once the peer's Finished checks out, the application gets the final say, as in pion.
+        if let Some(verify_connection) = &cfg.verify_connection
+            && let Err(err) = verify_connection(state)
+        {
+            return Err((
+                Some(Alert {
+                    alert_level: AlertLevel::Fatal,
+                    alert_description: AlertDescription::BadCertificate,
+                }),
+                Some(err),
+            ));
         }
 
         Ok(Box::new(Flight6 {}) as Box<dyn Flight>)
@@ -585,25 +608,32 @@ impl Flight for Flight4 {
             ));
         }
 
+        let server_hello = HandshakeMessageServerHello {
+            version: PROTOCOL_VERSION1_2,
+            random: state.local_random.clone(),
+            session_id: vec![],
+            cipher_suite: {
+                if let Some(cipher_suite) = &state.cipher_suite {
+                    cipher_suite.id()
+                } else {
+                    CipherSuiteId::Unsupported(0)
+                }
+            },
+            compression_method: default_compression_methods().ids[0],
+            extensions,
+        };
+        // The hook may replace the message entirely; its replacement is what is sent and
+        // hashed into the transcript, as in pion.
+        let server_hello_message = match &cfg.server_hello_message_hook {
+            Some(hook) => hook(server_hello),
+            None => HandshakeMessage::ServerHello(server_hello),
+        };
+
         let mut pkts = vec![Packet {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
                 0,
-                Content::Handshake(Handshake::new(HandshakeMessage::ServerHello(
-                    HandshakeMessageServerHello {
-                        version: PROTOCOL_VERSION1_2,
-                        random: state.local_random.clone(),
-                        cipher_suite: {
-                            if let Some(cipher_suite) = &state.cipher_suite {
-                                cipher_suite.id()
-                            } else {
-                                CipherSuiteId::Unsupported
-                            }
-                        },
-                        compression_method: default_compression_methods().ids[0],
-                        extensions,
-                    },
-                ))),
+                Content::Handshake(Handshake::new(server_hello_message)),
             ),
             should_encrypt: false,
             reset_local_sequence_number: false,
@@ -611,16 +641,22 @@ impl Flight for Flight4 {
 
         if !state.is_cipher_suite_psk() {
             // The name the client asked for in its SNI, not this server's own configuration.
-            let certificate = match cfg.get_certificate(&state.server_name) {
-                Ok(cert) => cert,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::HandshakeFailure,
-                        }),
-                        Some(err),
-                    ));
+            // The certificate was picked while negotiating the hello; the fallback covers a
+            // handshake driven directly through a `HandshakeConfig` without that step.
+            let certificate = if let Some(certificate) = &state.server_certificate {
+                certificate.clone()
+            } else {
+                match cfg.get_certificate(&state.server_name) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::HandshakeFailure,
+                            }),
+                            Some(err),
+                        ));
+                    }
                 }
             };
 
@@ -717,19 +753,24 @@ impl Flight for Flight4 {
             }
 
             if cfg.client_auth as u8 > ClientAuthType::NoClientCert as u8 {
+                let request = HandshakeMessageCertificateRequest {
+                    certificate_types: vec![
+                        ClientCertificateType::RsaSign,
+                        ClientCertificateType::EcdsaSign,
+                    ],
+                    signature_hash_algorithms: cfg.local_signature_schemes.clone(),
+                    certificate_authorities_names: vec![],
+                };
+                // The hook may rewrite the request — pion uses this to test scheme selection.
+                let request_message = match &cfg.certificate_request_message_hook {
+                    Some(hook) => hook(request),
+                    None => HandshakeMessage::CertificateRequest(request),
+                };
                 pkts.push(Packet {
                     record: RecordLayer::new(
                         PROTOCOL_VERSION1_2,
                         0,
-                        Content::Handshake(Handshake::new(HandshakeMessage::CertificateRequest(
-                            HandshakeMessageCertificateRequest {
-                                certificate_types: vec![
-                                    ClientCertificateType::RsaSign,
-                                    ClientCertificateType::EcdsaSign,
-                                ],
-                                signature_hash_algorithms: cfg.local_signature_schemes.clone(),
-                            },
-                        ))),
+                        Content::Handshake(Handshake::new(request_message)),
                     ),
                     should_encrypt: false,
                     reset_local_sequence_number: false,

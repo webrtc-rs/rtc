@@ -1387,8 +1387,8 @@ async fn test_cipher_suite_configuration() -> Result<()> {
         ),
         (
             "Invalid CipherSuite",
-            vec![CipherSuiteId::Unsupported],
-            vec![CipherSuiteId::Unsupported],
+            vec![CipherSuiteId::Unsupported(0)],
+            vec![CipherSuiteId::Unsupported(0)],
             Some(Error::ErrInvalidCipherSuite),
             Some(Error::ErrInvalidCipherSuite),
             None,

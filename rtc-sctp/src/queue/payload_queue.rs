@@ -159,24 +159,6 @@ impl PayloadQueue {
         Some(c)
     }
 
-    /// Drops every queued TSN up to and including `tsn`, in time proportional to what is
-    /// queued rather than to how far `tsn` is from the cumulative point. A FORWARD-TSN may name
-    /// a TSN billions ahead; stepping there one TSN at a time would stall the association.
-    pub(crate) fn advance_cumulative(&mut self, tsn: u32) {
-        while let Some(&front) = self.sorted.front() {
-            if !sna32lte(front, tsn) {
-                break;
-            }
-            if self.pop(front).is_none() {
-                // Index disagreement: still make progress, never loop.
-                self.sorted.pop_front();
-                if let Some(c) = self.chunk_map.remove(&front) {
-                    self.n_bytes = self.n_bytes.saturating_sub(c.user_data.len());
-                }
-            }
-        }
-    }
-
     pub(crate) fn message_tsns(&self, id: MessageId) -> Vec<u32> {
         self.message_tsns
             .get(&id)
@@ -204,6 +186,26 @@ impl PayloadQueue {
         std::mem::take(&mut self.dup_tsn)
     }
 
+    /// Removes every queued TSN up to and including `new_cumulative_tsn`.
+    ///
+    /// RFC 3758 §3.6: when a FORWARD-TSN advances the cumulative point, every
+    /// TSN it covers is acknowledged — including ones that were already queued
+    /// as gaps above the old cumulative point, which must leave the queue (and
+    /// with it the SACK gap report). Mirrors pion's
+    /// `receivePayloadQueue.advanceCumulativeTSN` range clearing.
+    pub(crate) fn advance_cumulative_tsn(&mut self, new_cumulative_tsn: u32) {
+        while let Some(&front) = self.sorted.front() {
+            if !sna32lte(front, new_cumulative_tsn) {
+                break;
+            }
+            if self.pop(front).is_none() {
+                // An inconsistent message index refuses the pop; leave the
+                // rest to the caller's guards instead of spinning.
+                break;
+            }
+        }
+    }
+
     pub(crate) fn get_gap_ack_blocks(&self, cumulative_tsn: u32) -> Vec<GapAckBlock> {
         if self.chunk_map.is_empty() {
             return vec![];
@@ -212,11 +214,11 @@ impl PayloadQueue {
         let mut b = GapAckBlock::default();
         let mut gap_ack_blocks = vec![];
         for (i, tsn) in self.sorted.iter().enumerate() {
-            let diff = if *tsn >= cumulative_tsn {
-                (*tsn - cumulative_tsn) as u16
-            } else {
-                0
-            };
+            // Serial-number offset from the cumulative TSN. Queued TSNs are
+            // always ahead of it, so this is the plain distance even across
+            // the 32-bit wrap (pion computes the same uint16 wrapping
+            // difference).
+            let diff = tsn.wrapping_sub(cumulative_tsn) as u16;
 
             if i == 0 {
                 b.start = diff;

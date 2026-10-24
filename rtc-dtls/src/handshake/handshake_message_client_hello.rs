@@ -25,6 +25,8 @@ pub struct HandshakeMessageClientHello {
     pub(crate) version: ProtocolVersion,
     pub(crate) random: HandshakeRandom,
     pub(crate) cookie: Vec<u8>,
+    /// The session ID a resuming or compatibility-minded client sends; carried but not used.
+    pub(crate) session_id: Vec<u8>,
 
     pub(crate) cipher_suites: Vec<CipherSuiteId>,
     pub(crate) compression_methods: CompressionMethods,
@@ -36,6 +38,7 @@ impl PartialEq for HandshakeMessageClientHello {
         if !(self.version == other.version
             && self.random == other.random
             && self.cookie == other.cookie
+            && self.session_id == other.session_id
             && self.compression_methods == other.compression_methods
             && self.extensions == other.extensions
             && self.cipher_suites.len() == other.cipher_suites.len())
@@ -63,6 +66,7 @@ impl fmt::Debug for HandshakeMessageClientHello {
         let s = [
             format!("version: {:?} random: {:?}", self.version, self.random),
             format!("cookie: {:?}", self.cookie),
+            format!("session_id: {:?}", self.session_id),
             format!("cipher_suites: {cipher_suites_str:?}"),
             format!("compression_methods: {:?}", self.compression_methods),
             format!("extensions: {:?}", self.extensions),
@@ -74,6 +78,54 @@ impl fmt::Debug for HandshakeMessageClientHello {
 const HANDSHAKE_MESSAGE_CLIENT_HELLO_VARIABLE_WIDTH_START: usize = 34;
 
 impl HandshakeMessageClientHello {
+    /// The protocol version the client offered.
+    pub fn version(&self) -> ProtocolVersion {
+        self.version
+    }
+
+    /// The client's random.
+    pub fn random(&self) -> &HandshakeRandom {
+        &self.random
+    }
+
+    /// The cookie the server challenged the client with, empty on the first hello.
+    pub fn cookie(&self) -> &[u8] {
+        &self.cookie
+    }
+
+    /// The cipher suites the client offered.
+    pub fn cipher_suites(&self) -> &[CipherSuiteId] {
+        &self.cipher_suites
+    }
+
+    /// The compression methods the client offered.
+    pub fn compression_methods(&self) -> &CompressionMethods {
+        &self.compression_methods
+    }
+
+    /// The hello's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    /// Replaces the extensions, for a `client_hello_message_hook`.
+    pub fn set_extensions(&mut self, extensions: Vec<Extension>) {
+        self.extensions = extensions;
+    }
+
+    /// Replaces the cookie, for a `client_hello_message_hook`.
+    pub fn set_cookie(&mut self, cookie: Vec<u8>) {
+        self.cookie = cookie;
+    }
+
+    /// Replaces the 28 random bytes, for a `client_hello_message_hook`.
+    pub fn set_random_bytes(
+        &mut self,
+        random_bytes: [u8; crate::handshake::handshake_random::RANDOM_BYTES_LENGTH],
+    ) {
+        self.random.random_bytes = random_bytes;
+    }
+
     /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ClientHello
@@ -87,7 +139,7 @@ impl HandshakeMessageClientHello {
         len += self.random.size();
 
         // SessionID
-        len += 1;
+        len += 1 + self.session_id.len();
 
         len += 1 + self.cookie.len();
 
@@ -112,20 +164,24 @@ impl HandshakeMessageClientHello {
         if self.cookie.len() > 255 {
             return Err(Error::ErrCookieTooLong);
         }
+        if self.session_id.len() > 255 {
+            return Err(Error::ErrSessionIdTooLong);
+        }
 
         writer.write_u8(self.version.major)?;
         writer.write_u8(self.version.minor)?;
         self.random.marshal(writer)?;
 
         // SessionID
-        writer.write_u8(0x00)?;
+        writer.write_u8(self.session_id.len() as u8)?;
+        writer.write_all(&self.session_id)?;
 
         writer.write_u8(self.cookie.len() as u8)?;
         writer.write_all(&self.cookie)?;
 
         writer.write_u16::<BigEndian>(2 * self.cipher_suites.len() as u16)?;
         for cipher_suite in &self.cipher_suites {
-            writer.write_u16::<BigEndian>(*cipher_suite as u16)?;
+            writer.write_u16::<BigEndian>(cipher_suite.code_point())?;
         }
 
         self.compression_methods.marshal(writer)?;
@@ -158,7 +214,6 @@ impl HandshakeMessageClientHello {
         let session_id_len = reader.read_u8()? as usize;
         let mut session_id = vec![0; session_id_len];
         reader.read_exact(&mut session_id)?;
-
         let cookie_len = reader.read_u8()? as usize;
         let mut cookie = vec![0; cookie_len];
         reader.read_exact(&mut cookie)?;
@@ -189,6 +244,7 @@ impl HandshakeMessageClientHello {
             version: ProtocolVersion { major, minor },
             random,
             cookie,
+            session_id,
 
             cipher_suites,
             compression_methods,

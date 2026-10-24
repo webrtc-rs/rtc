@@ -1,6 +1,11 @@
 use crypto::{ActiveKeyExchange, KeyExchangeAlgorithm, RTCCrypto};
 use shared::error::*;
 
+use std::fmt;
+
+#[cfg(test)]
+mod named_curve_test;
+
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -15,6 +20,17 @@ pub enum NamedCurve {
     P384 = 0x0018,
     /// `X25519` (`0x001d`).
     X25519 = 0x001d,
+}
+
+impl fmt::Display for NamedCurve {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            NamedCurve::X25519 => write!(f, "X25519"),
+            NamedCurve::P256 => write!(f, "P-256"),
+            NamedCurve::P384 => write!(f, "P-384"),
+            NamedCurve::Unsupported => write!(f, "{:#x}", *self as u16),
+        }
+    }
 }
 
 impl From<u16> for NamedCurve {

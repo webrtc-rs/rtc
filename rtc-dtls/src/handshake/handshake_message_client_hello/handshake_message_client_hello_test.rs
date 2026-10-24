@@ -38,6 +38,7 @@ fn test_handshake_message_client_hello() -> Result<()> {
             0xe6, 0x14, 0x3a, 0x1b, 0x04, 0xea, 0x9e, 0x7a, 0x14, 0xd6, 0x6c, 0x57, 0xd0, 0x0e,
             0x32, 0x85, 0x76, 0x18, 0xde, 0xd8,
         ],
+        session_id: vec![],
         cipher_suites: vec![
             CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
             CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
@@ -72,4 +73,105 @@ fn test_handshake_message_client_hello() -> Result<()> {
     );
 
     Ok(())
+}
+
+// Port of pion `TestHandshakeMessageClientHelloSessionID`: a hello carrying a 32-byte session ID
+// parses it back out and re-marshals byte for byte.
+#[test]
+fn test_handshake_message_client_hello_session_id() -> Result<()> {
+    let raw_client_hello = vec![
+        0xfe, 0xfd, 0xb6, 0x2f, 0xce, 0x5c, 0x42, 0x54, 0xff, 0x86, 0xe1, 0x24, 0x41, 0x91, 0x42,
+        0x62, 0x15, 0xad, 0x16, 0xc9, 0x15, 0x8d, 0x95, 0x71, 0x8a, 0xbb, 0x22, 0xd7, 0x47, 0xec,
+        0xd8, 0x3d, 0xdc, 0x4b, 0x20, 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9,
+        0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+        0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x14, 0xe6, 0x14, 0x3a, 0x1b, 0x04, 0xea, 0x9e,
+        0x7a, 0x14, 0xd6, 0x6c, 0x57, 0xd0, 0x0e, 0x32, 0x85, 0x76, 0x18, 0xde, 0xd8, 0x00, 0x04,
+        0xc0, 0x2b, 0xc0, 0x0a, 0x01, 0x00, 0x00, 0x08, 0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0x00,
+        0x1d,
+    ];
+
+    let session_id = vec![
+        0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee,
+        0xef, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd,
+        0xfe, 0xff,
+    ];
+
+    let mut reader = BufReader::new(raw_client_hello.as_slice());
+    let c = HandshakeMessageClientHello::unmarshal(&mut reader)?;
+    assert_eq!(session_id, c.session_id);
+
+    let mut raw = vec![];
+    {
+        let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+        c.marshal(&mut writer)?;
+    }
+    assert_eq!(
+        raw, raw_client_hello,
+        "handshakeMessageClientHello marshal: got {raw:?}, want {raw_client_hello:?}"
+    );
+
+    Ok(())
+}
+
+// Port of pion `TestHandshakeMessageClientHello_SessionIDTooLong`: the session ID is prefixed
+// with a one-byte length, so more than 255 bytes cannot be marshaled.
+#[test]
+fn test_handshake_message_client_hello_session_id_too_long() {
+    let c = HandshakeMessageClientHello {
+        version: ProtocolVersion {
+            major: 0xFE,
+            minor: 0xFD,
+        },
+        random: HandshakeRandom {
+            gmt_unix_time: SystemTime::UNIX_EPOCH,
+            random_bytes: [0; 28],
+        },
+        cookie: vec![],
+        session_id: vec![0; 256],
+        cipher_suites: vec![],
+        compression_methods: CompressionMethods {
+            ids: vec![CompressionMethodId::Null],
+        },
+        extensions: vec![],
+    };
+
+    let mut raw = vec![];
+    let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+    assert!(matches!(
+        c.marshal(&mut writer),
+        Err(Error::ErrSessionIdTooLong)
+    ));
+}
+
+// Port of pion `TestHandshakeMessageClientHello_CompressionMethodsTooLong`: the compression
+// methods vector is prefixed with a one-byte length, so more than 255 entries cannot be
+// marshaled.
+#[test]
+fn test_handshake_message_client_hello_compression_methods_too_long() {
+    let compression_methods = CompressionMethods {
+        ids: vec![CompressionMethodId::Null; 256],
+    };
+
+    let c = HandshakeMessageClientHello {
+        version: ProtocolVersion {
+            major: 0xFE,
+            minor: 0xFD,
+        },
+        random: HandshakeRandom {
+            gmt_unix_time: SystemTime::UNIX_EPOCH,
+            random_bytes: [0; 28],
+        },
+        cookie: vec![],
+        session_id: vec![],
+        cipher_suites: vec![],
+        compression_methods,
+        extensions: vec![],
+    };
+
+    let mut raw = vec![];
+    let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+    assert!(matches!(
+        c.marshal(&mut writer),
+        Err(Error::ErrCompressionMethodsTooLong)
+    ));
 }

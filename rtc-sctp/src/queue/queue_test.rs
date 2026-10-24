@@ -8,6 +8,7 @@ use bytes::{Bytes, BytesMut};
 use super::payload_queue::*;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::chunk::chunk_selective_ack::GapAckBlock;
+use crate::util::{sna32gt, sna32lt, sna32lte};
 
 fn make_payload(tsn: u32, n_bytes: usize) -> ChunkPayloadData {
     ChunkPayloadData {
@@ -79,7 +80,7 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
     pq.push(make_payload(5, 0), 0);
     pq.push(make_payload(6, 0), 0);
 
-    let gab1 = vec![GapAckBlock { start: 1, end: 6 }];
+    let gab1 = [GapAckBlock { start: 1, end: 6 }];
     let gab2 = pq.get_gap_ack_blocks(0);
     assert!(!gab2.is_empty());
     assert_eq!(gab2.len(), 1);
@@ -90,7 +91,7 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
     pq.push(make_payload(8, 0), 0);
     pq.push(make_payload(9, 0), 0);
 
-    let gab1 = vec![
+    let gab1 = [
         GapAckBlock { start: 1, end: 6 },
         GapAckBlock { start: 8, end: 9 },
     ];
@@ -189,6 +190,219 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
 }
 
 ///////////////////////////////////////////////////////////////////
+//receive_payload_queue_test
+///////////////////////////////////////////////////////////////////
+
+/// Port of pion's `TestReceivePayloadQueue` (receive_payload_queue_test.go).
+///
+/// rtc-sctp's `PayloadQueue` is the receive queue, but unlike pion's
+/// `receivePayloadQueue` it does not own the cumulative TSN — the association
+/// does (`peer_last_tsn`). The helpers below drive the queue exactly as the
+/// association does, so every assertion maps one-to-one onto pion's:
+///
+/// - [`receive_push`] mirrors `receivePayloadQueue.push`: the maxTSNOffset
+///   bound (512 here) is checked first and refuses without recording a
+///   duplicate, then at-or-below-cumulative and already-queued TSNs are
+///   recorded as duplicates, and only genuinely new TSNs are queued.
+///   (In the association the bound lives in `handle_data`'s
+///   `within_tsn_offset` gate.)
+/// - [`receive_pop_in_order`] mirrors `pop(false)` / the association's
+///   `handle_peer_last_tsn_and_acknowledgement` advance loop.
+/// - [`receive_pop_force`] mirrors `pop(true)` / the association's
+///   FORWARD-TSN advance.
+const RECEIVE_MAX_TSN_OFFSET: u32 = 512;
+
+fn receive_push(pq: &mut PayloadQueue, cum_tsn: u32, tsn: u32) -> bool {
+    if sna32gt(tsn, cum_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET)) {
+        return false; // beyond the receive window: refused, not a duplicate
+    }
+    pq.push(make_payload(tsn, 0), cum_tsn)
+}
+
+fn receive_can_push(pq: &PayloadQueue, cum_tsn: u32, tsn: u32) -> bool {
+    !sna32gt(tsn, cum_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET))
+        && pq.can_push(&make_payload(tsn, 0), cum_tsn)
+}
+
+fn receive_pop_in_order(pq: &mut PayloadQueue, cum_tsn: &mut u32) -> bool {
+    if pq.pop(cum_tsn.wrapping_add(1)).is_some() {
+        *cum_tsn = cum_tsn.wrapping_add(1);
+        true
+    } else {
+        false
+    }
+}
+
+fn receive_pop_force(pq: &mut PayloadQueue, cum_tsn: &mut u32) -> bool {
+    let popped = pq.pop(cum_tsn.wrapping_add(1)).is_some();
+    *cum_tsn = cum_tsn.wrapping_add(1);
+    popped
+}
+
+fn assert_gap_blocks(actual: &[GapAckBlock], expected: &[(u16, u16)]) {
+    assert_eq!(expected.len(), actual.len(), "gap ack block count mismatch");
+    for (i, (start, end)) in expected.iter().enumerate() {
+        assert_eq!(*start, actual[i].start, "gap ack block {i} start mismatch");
+        assert_eq!(*end, actual[i].end, "gap ack block {i} end mismatch");
+    }
+}
+
+#[test]
+fn receive_payload_queue() {
+    let init_tsn: u32 = u32::MAX - 10;
+    let mut cum_tsn = init_tsn - 2;
+    let mut pq = PayloadQueue::new();
+
+    assert_eq!(init_tsn - 2, cum_tsn);
+    assert_eq!(0, pq.len());
+    assert!(pq.get_last_tsn_received().is_none());
+    assert!(pq.get_gap_ack_blocks(cum_tsn).is_empty());
+
+    // force pop empty queue to advance cumulative TSN
+    assert!(!receive_pop_force(&mut pq, &mut cum_tsn));
+    assert_eq!(init_tsn - 1, cum_tsn);
+    assert_eq!(0, pq.len());
+    assert!(pq.get_gap_ack_blocks(cum_tsn).is_empty());
+
+    let next_tsn = init_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET - 1);
+    assert!(receive_push(&mut pq, cum_tsn, next_tsn));
+    assert_eq!(1, pq.len());
+    assert_eq!(Some(&next_tsn), pq.get_last_tsn_received());
+    assert!(pq.get(next_tsn).is_some());
+
+    assert!(receive_push(&mut pq, cum_tsn, init_tsn));
+    assert!(!receive_can_push(&pq, cum_tsn, init_tsn - 1));
+    assert!(!receive_can_push(
+        &pq,
+        cum_tsn,
+        init_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET)
+    ));
+    assert!(!receive_push(
+        &mut pq,
+        cum_tsn,
+        init_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET)
+    ));
+    assert!(receive_can_push(&pq, cum_tsn, next_tsn.wrapping_sub(1)));
+    assert_eq!(2, pq.len());
+
+    assert_gap_blocks(
+        &pq.get_gap_ack_blocks(cum_tsn),
+        &[
+            (1, 1),
+            (RECEIVE_MAX_TSN_OFFSET as u16, RECEIVE_MAX_TSN_OFFSET as u16),
+        ],
+    );
+
+    assert!(receive_pop_in_order(&mut pq, &mut cum_tsn));
+    assert_eq!(1, pq.len());
+    assert_eq!(init_tsn, cum_tsn);
+    assert!(!receive_pop_in_order(&mut pq, &mut cum_tsn));
+    assert_eq!(init_tsn, cum_tsn);
+
+    let mut size = pq.len();
+    // push tsn with two gaps
+    // tsn_range = [[start,end]...]
+    let tsn_range = [
+        [init_tsn.wrapping_add(5), init_tsn.wrapping_add(6)],
+        [init_tsn.wrapping_add(9), init_tsn.wrapping_add(140)],
+    ];
+    let (range0, range1) = (tsn_range[0], tsn_range[1]);
+
+    let mut tsn = range0[0];
+    while sna32lte(tsn, range0[1]) {
+        assert!(receive_push(&mut pq, cum_tsn, tsn));
+        assert!(!receive_pop_in_order(&mut pq, &mut cum_tsn));
+        assert!(pq.get(tsn).is_some());
+        tsn = tsn.wrapping_add(1);
+    }
+    size += (range0[1].wrapping_sub(range0[0]) + 1) as usize;
+
+    let mut tsn = range1[0];
+    while sna32lte(tsn, range1[1]) {
+        assert!(receive_push(&mut pq, cum_tsn, tsn));
+        assert!(!receive_pop_in_order(&mut pq, &mut cum_tsn));
+        assert!(pq.get(tsn).is_some());
+        tsn = tsn.wrapping_add(1);
+    }
+    size += (range1[1].wrapping_sub(range1[0]) + 1) as usize;
+
+    assert_eq!(size, pq.len());
+    assert_gap_blocks(
+        &pq.get_gap_ack_blocks(cum_tsn),
+        &[
+            (5, 6),
+            (9, 140),
+            (
+                RECEIVE_MAX_TSN_OFFSET as u16 - 1,
+                RECEIVE_MAX_TSN_OFFSET as u16 - 1,
+            ),
+        ],
+    );
+
+    // push duplicate tsns
+    assert!(!receive_push(&mut pq, cum_tsn, init_tsn - 2));
+    assert!(!receive_push(&mut pq, cum_tsn, range0[0]));
+    assert!(!receive_push(&mut pq, cum_tsn, range0[0]));
+    assert!(!receive_push(&mut pq, cum_tsn, next_tsn));
+    assert!(!receive_push(
+        &mut pq,
+        cum_tsn,
+        init_tsn.wrapping_add(RECEIVE_MAX_TSN_OFFSET + 1)
+    ));
+    let duplicates = pq.pop_duplicates();
+    assert_eq!(
+        vec![init_tsn - 2, range0[0], range0[0], next_tsn],
+        duplicates
+    );
+
+    // force pop to advance cumulative TSN to fill the gap [initTSN, initTSN+4]
+    let mut tsn = init_tsn.wrapping_add(1);
+    while sna32lt(tsn, range0[0]) {
+        assert!(!receive_pop_force(&mut pq, &mut cum_tsn));
+        assert_eq!(size, pq.len());
+        assert_eq!(tsn, cum_tsn);
+        tsn = tsn.wrapping_add(1);
+    }
+
+    let mut tsn = range0[0];
+    while sna32lte(tsn, range0[1]) {
+        assert!(receive_pop_in_order(&mut pq, &mut cum_tsn));
+        assert_eq!(tsn, cum_tsn);
+        tsn = tsn.wrapping_add(1);
+    }
+    assert!(!receive_pop_in_order(&mut pq, &mut cum_tsn));
+    assert_eq!(range0[1], cum_tsn);
+    assert_gap_blocks(&pq.get_gap_ack_blocks(cum_tsn), &[(3, 134), (505, 505)]);
+
+    // fill the gap with received tsn
+    let mut tsn = range0[1].wrapping_add(1);
+    while sna32lt(tsn, range1[0]) {
+        assert!(receive_push(&mut pq, cum_tsn, tsn), "tsn {tsn}");
+        tsn = tsn.wrapping_add(1);
+    }
+    let mut tsn = range0[1].wrapping_add(1);
+    while sna32lte(tsn, range1[1]) {
+        assert!(receive_pop_in_order(&mut pq, &mut cum_tsn));
+        assert_eq!(tsn, cum_tsn);
+        tsn = tsn.wrapping_add(1);
+    }
+    assert!(!receive_pop_in_order(&mut pq, &mut cum_tsn));
+    assert_eq!(range1[1], cum_tsn);
+    assert_gap_blocks(&pq.get_gap_ack_blocks(cum_tsn), &[(371, 371)]);
+
+    // gap block cross end tsn
+    let end_tsn = RECEIVE_MAX_TSN_OFFSET - 1;
+    let mut tsn = next_tsn.wrapping_add(1);
+    while sna32lte(tsn, end_tsn) {
+        assert!(receive_push(&mut pq, cum_tsn, tsn));
+        tsn = tsn.wrapping_add(1);
+    }
+    assert_gap_blocks(&pq.get_gap_ack_blocks(cum_tsn), &[(371, 382)]);
+
+    assert!(!pq.get_gap_ack_blocks_string(cum_tsn).is_empty());
+}
+
+///////////////////////////////////////////////////////////////////
 //pending_queue_test
 ///////////////////////////////////////////////////////////////////
 use super::pending_queue::*;
@@ -262,7 +476,7 @@ fn test_pending_base_queue_push_and_pop() -> Result<()> {
 fn test_pending_base_queue_out_of_bounce() -> Result<()> {
     let mut pq = PendingBaseQueue::new();
     assert!(pq.pop_front().is_none(), "should be none");
-    assert!(pq.get(0).is_none(), "should be none");
+    assert!(pq.front().is_none(), "should be none");
 
     pq.push_back(make_data_chunk(0, false, NO_FRAGMENT));
     assert!(pq.get(1).is_none(), "should be none");
@@ -477,7 +691,7 @@ fn test_reassembly_queue_ordered_fragments() -> Result<()> {
         assert_eq!(chunks.ppi, org_ppi, "should have valid ppi");
         assert_eq!(&buf[..n], b"ABCDEFG", "data should match");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     Ok(())
@@ -589,7 +803,7 @@ fn test_reassembly_queue_unordered_fragments() -> Result<()> {
         assert_eq!(chunks.ppi, org_ppi, "should have valid ppi");
         assert_eq!(&buf[..n], b"ABCDEFGH", "data should match");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     Ok(())
@@ -643,7 +857,7 @@ fn test_reassembly_queue_ordered_and_unordered_fragments() -> Result<()> {
         assert_eq!(chunks.ppi, org_ppi, "should have valid ppi");
         assert_eq!(&buf[..n], b"DEF", "data should match");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     // Next should read ordered chunks
@@ -654,7 +868,7 @@ fn test_reassembly_queue_ordered_and_unordered_fragments() -> Result<()> {
         assert_eq!(chunks.ppi, org_ppi, "should have valid ppi");
         assert_eq!(&buf[..n], b"ABC", "data should match");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     Ok(())
@@ -773,7 +987,7 @@ fn test_reassembly_queue_unordered_complete_skips_incomplete() -> Result<()> {
         assert_eq!(chunks.ppi, org_ppi, "should have valid ppi");
         assert_eq!(&buf[..n], b"GOOD", "data should match");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     Ok(())
@@ -908,7 +1122,7 @@ fn test_reassembly_queue_detect_buffer_too_short() -> Result<()> {
         }
         assert_eq!(0, rq.get_num_bytes(), "num bytes mismatch");
     } else {
-        assert!(false);
+        panic!("expected a complete chunk set");
     }
 
     Ok(())
@@ -1031,6 +1245,49 @@ fn test_reassembly_queue_forward_tsn_for_unordered_framents() -> Result<()> {
         "there should be one chunk kept"
     );
     assert_eq!(3, rq.get_num_bytes(), "num bytes mismatch");
+
+    Ok(())
+}
+
+// pion: "fragmented and unfragmented chunks with the same ssn". A complete
+// unfragmented message must not be merged with a fragment of another message
+// that reuses the same SSN (SSN wraparound): each gets its own chunk set.
+#[test]
+fn test_reassembly_queue_fragmented_and_unfragmented_chunks_with_the_same_ssn() -> Result<()> {
+    let mut rq = ReassemblyQueue::new(0);
+
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+    let ssn: u16 = 6;
+
+    let chunk = ChunkPayloadData {
+        payload_type: org_ppi,
+        tsn: 12,
+        beginning_fragment: true,
+        ending_fragment: true,
+        stream_sequence_number: ssn,
+        user_data: Bytes::from_static(b"DEF"),
+        ..Default::default()
+    };
+
+    let complete = rq.push(chunk);
+    assert!(complete, "chunk set should be complete");
+    assert_eq!(3, rq.get_num_bytes(), "num bytes mismatch");
+
+    let chunk = ChunkPayloadData {
+        payload_type: org_ppi,
+        beginning_fragment: true,
+        tsn: 11,
+        stream_sequence_number: ssn,
+        user_data: Bytes::from_static(b"ABC"),
+        ..Default::default()
+    };
+
+    let complete = rq.push(chunk);
+    assert!(!complete, "chunk set should not be complete yet");
+    assert_eq!(6, rq.get_num_bytes(), "num bytes mismatch");
+
+    assert_eq!(2, rq.ordered.len(), "there should be two chunks");
+    assert_eq!(6, rq.get_num_bytes(), "num bytes mismatch");
 
     Ok(())
 }

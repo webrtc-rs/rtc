@@ -392,7 +392,9 @@ impl PendingQueue {
             return None;
         };
         let first = message.peek()?;
-        let n_bytes = self.n_bytes.checked_sub(first.user_data.len())?;
+        // Guard against negative values (should never happen, but just in case):
+        // pion clamps the counter to zero rather than refusing the pop.
+        let n_bytes = self.n_bytes.saturating_sub(first.user_data.len());
         let queue_len = self.queue_len.checked_sub(1)?;
         let c = match message {
             QueuedMessage::Whole(_) => {
@@ -664,5 +666,43 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// Port of pion's `TestPendingQueue_PopErrors` (pending_queue_test.go).
+    ///
+    /// Only the portable subtests are reproduced:
+    /// - `ErrUnexpectedQState when not selected and not beginningFragment`
+    ///   maps to `pop` refusing (returning `None`).
+    /// - `nBytes guard clamps to zero when underflows` maps to the byte
+    ///   counter's defensive clamp.
+    ///
+    /// The four "wrong chunk popped" subtests are not portable: pion's
+    /// `pop(chunk)` validates that the caller passes back the exact chunk that
+    /// was peeked, while this queue's `pop` takes fragment flags and always
+    /// pops the selected queue's front, so those error paths cannot be
+    /// expressed (let alone triggered) through the Rust API.
+    #[test]
+    fn pending_queue_pop_errors() {
+        // Popping a non-beginning fragment while nothing is selected is
+        // refused (pion: ErrUnexpectedQState).
+        let mut queue = PendingQueue::new();
+        let mid = fragment(false, false, false);
+        assert!(queue.pop(mid.beginning_fragment, mid.unordered).is_none());
+
+        // The nBytes guard clamps to zero on underflow. pion mutates
+        // `q.nBytes` directly to force the underflow; this queue keeps the
+        // same defensive clamp.
+        let mut queue = PendingQueue::new();
+        let mut chunk = fragment(true, true, false);
+        chunk.user_data = Bytes::from(vec![0u8; 10]);
+        queue.push_message(vec![chunk]);
+        queue.n_bytes = 5;
+        let peeked = queue.peek().unwrap();
+        assert!(
+            queue
+                .pop(peeked.beginning_fragment, peeked.unordered)
+                .is_some()
+        );
+        assert_eq!(0, queue.get_num_bytes());
     }
 }

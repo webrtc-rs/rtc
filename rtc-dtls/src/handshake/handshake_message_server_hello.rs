@@ -24,6 +24,8 @@ https://tools.ietf.org/html/rfc5246#section-7.4.1.3
 pub struct HandshakeMessageServerHello {
     pub(crate) version: ProtocolVersion,
     pub(crate) random: HandshakeRandom,
+    /// The session ID the client offered, echoed back; carried but not used.
+    pub(crate) session_id: Vec<u8>,
 
     pub(crate) cipher_suite: CipherSuiteId,
     pub(crate) compression_method: CompressionMethodId,
@@ -34,6 +36,7 @@ impl PartialEq for HandshakeMessageServerHello {
     fn eq(&self, other: &Self) -> bool {
         self.version == other.version
             && self.random == other.random
+            && self.session_id == other.session_id
             && self.compression_method == other.compression_method
             && self.extensions == other.extensions
             && self.cipher_suite == other.cipher_suite
@@ -44,6 +47,7 @@ impl fmt::Debug for HandshakeMessageServerHello {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = [
             format!("version: {:?} random: {:?}", self.version, self.random),
+            format!("session_id: {:?}", self.session_id),
             format!("cipher_suites: {:?}", self.cipher_suite),
             format!("compression_method: {:?}", self.compression_method),
             format!("extensions: {:?}", self.extensions),
@@ -53,6 +57,36 @@ impl fmt::Debug for HandshakeMessageServerHello {
 }
 
 impl HandshakeMessageServerHello {
+    /// The protocol version the server chose.
+    pub fn version(&self) -> ProtocolVersion {
+        self.version
+    }
+
+    /// The server's random.
+    pub fn random(&self) -> &HandshakeRandom {
+        &self.random
+    }
+
+    /// The cipher suite the server chose.
+    pub fn cipher_suite(&self) -> CipherSuiteId {
+        self.cipher_suite
+    }
+
+    /// The compression method the server chose.
+    pub fn compression_method(&self) -> CompressionMethodId {
+        self.compression_method
+    }
+
+    /// The hello's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    /// Replaces the extensions, for a `server_hello_message_hook`.
+    pub fn set_extensions(&mut self, extensions: Vec<Extension>) {
+        self.extensions = extensions;
+    }
+
     /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ServerHello
@@ -63,7 +97,7 @@ impl HandshakeMessageServerHello {
         let mut len = 2 + self.random.size();
 
         // SessionID
-        len += 1;
+        len += 1 + self.session_id.len();
 
         len += 2;
 
@@ -83,14 +117,19 @@ impl HandshakeMessageServerHello {
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.session_id.len() > 255 {
+            return Err(Error::ErrSessionIdTooLong);
+        }
+
         writer.write_u8(self.version.major)?;
         writer.write_u8(self.version.minor)?;
         self.random.marshal(writer)?;
 
         // SessionID
-        writer.write_u8(0x00)?;
+        writer.write_u8(self.session_id.len() as u8)?;
+        writer.write_all(&self.session_id)?;
 
-        writer.write_u16::<BigEndian>(self.cipher_suite as u16)?;
+        writer.write_u16::<BigEndian>(self.cipher_suite.code_point())?;
 
         writer.write_u8(self.compression_method as u8)?;
 
@@ -120,8 +159,8 @@ impl HandshakeMessageServerHello {
 
         // Session ID
         let session_id_len = reader.read_u8()? as usize;
-        let mut session_id_buffer = vec![0u8; session_id_len];
-        reader.read_exact(&mut session_id_buffer)?;
+        let mut session_id = vec![0u8; session_id_len];
+        reader.read_exact(&mut session_id)?;
 
         let cipher_suite: CipherSuiteId = reader.read_u16::<BigEndian>()?.into();
 
@@ -142,6 +181,7 @@ impl HandshakeMessageServerHello {
         Ok(HandshakeMessageServerHello {
             version: ProtocolVersion { major, minor },
             random,
+            session_id,
 
             cipher_suite,
             compression_method,

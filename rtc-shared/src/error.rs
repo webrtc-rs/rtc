@@ -1081,12 +1081,30 @@ pub enum Error {
     /// Cookie must not be longer then 255 bytes.
     #[error("cookie must not be longer then 255 bytes")]
     ErrCookieTooLong,
+    /// Session ID must not be longer than 255 bytes.
+    #[error("session ID must not be longer than 255 bytes")]
+    ErrSessionIdTooLong,
+    /// Too many compression methods to encode.
+    #[error("too many compression methods to encode")]
+    ErrCompressionMethodsTooLong,
+    /// Too many certificate types to encode.
+    #[error("too many certificate types to encode")]
+    ErrCertificateTypesTooLong,
+    /// Public key must not be longer than 255 bytes.
+    #[error("public key must not be longer than 255 bytes")]
+    ErrPublicKeyTooLong,
     /// PSK Identity Hint provided but PSK is nil.
     #[error("PSK Identity Hint provided but PSK is nil")]
     ErrIdentityNoPsk,
     /// No certificate provided.
     #[error("no certificate provided")]
     ErrInvalidCertificate,
+    /// The certificate's public key algorithm OID does not match the signature scheme.
+    #[error("certificate OID does not match signature algorithm")]
+    ErrInvalidCertificateOID,
+    /// The peer's RSA public key exceeds the 8192-bit limit that bounds verification work.
+    #[error("peer RSA key exceeds 8192 bits")]
+    ErrPeerRSAKeyTooLarge,
     /// Cipher spec invalid.
     #[error("cipher spec invalid")]
     ErrInvalidCipherSpec,
@@ -1126,6 +1144,9 @@ pub enum Error {
     /// Invalid signature algorithm.
     #[error("invalid signature algorithm")]
     ErrInvalidSignatureAlgorithm,
+    /// Invalid or unencodable signature-hash algorithm pair.
+    #[error("invalid signature hash algorithm")]
+    ErrInvalidSignHashAlgorithm,
     /// Expected and actual key signature do not match.
     #[error("expected and actual key signature do not match")]
     ErrKeySignatureMismatch,
@@ -1188,6 +1209,83 @@ pub enum Error {
     /// Data length and declared length do not match.
     #[error("data length and declared length do not match")]
     ErrLengthMismatch,
+    /// The `key_share` extension is malformed.
+    #[error("invalid key_share format")]
+    ErrInvalidKeyShareFormat,
+    /// The `key_share` extension repeats a group.
+    #[error("duplicate key_share group")]
+    ErrDuplicateKeyShare,
+    /// The `supported_versions` extension is malformed.
+    #[error("invalid supported_versions format")]
+    ErrInvalidSupportedVersionsFormat,
+    /// A DTLS version outside the valid `legacy_version` range ([RFC 9147 §5.3]).
+    ///
+    /// [RFC 9147 §5.3]: https://datatracker.ietf.org/html/rfc9147#section-5.3
+    #[error("invalid dtls version was provided")]
+    ErrInvalidDtlsVersion,
+    /// The `pre_shared_key` extension is malformed.
+    #[error("invalid Pre-Shared Key extension format")]
+    ErrPreSharedKeyFormat,
+    /// The `psk_key_exchange_modes` extension is malformed.
+    #[error("invalid Pre-Shared Key Exchange Modes extension format")]
+    ErrPskKeyExchangeModesFormat,
+    /// The `psk_key_exchange_modes` extension carries no mode.
+    #[error("no mode set for the Pre-Shared Key Exchange Modes extension")]
+    ErrNoPskKeyExchangeMode,
+    /// The `early_data` extension is malformed.
+    #[error("invalid Early Data Indication extension format")]
+    ErrEarlyDataIndicationFormat,
+    /// The `certificate_authorities` extension is malformed.
+    #[error("invalid Certificate Authorities extension format")]
+    ErrInvalidCertificateAuthoritiesFormat,
+    /// An `oid_filters` entry carries no OID.
+    #[error("no oid set for a OID filter")]
+    ErrEmptyOidFilter,
+    /// The `oid_filters` extension is malformed.
+    #[error("invalid OID filters extension format")]
+    ErrOidFiltersFormat,
+    /// The `oid_filters` extension repeats an OID.
+    #[error("duplicate OID filters")]
+    ErrDuplicateOid,
+    /// The TLS 1.3 `cookie` extension is malformed.
+    #[error("invalid cookie format")]
+    ErrCookieExtFormat,
+    /// The `connection_id` extension is malformed.
+    #[error("invalid connection ID format")]
+    ErrInvalidConnectionIdFormat,
+    /// A `certificate_request_context` longer than its 1-byte length prefix allows.
+    #[error("certificate request context must not be longer than 255 bytes")]
+    ErrCertificateRequestContextTooLong,
+    /// A TLS 1.3 `Certificate` entry is malformed.
+    #[error("invalid certificate entry")]
+    ErrInvalidCertificateEntry,
+    /// A TLS 1.3 `Certificate` list longer than its 3-byte length prefix allows.
+    #[error("certificate list must not be longer than 2^24-1 bytes")]
+    ErrCertificateListTooLong,
+    /// A `certificate_request_context` that does not decode.
+    #[error("invalid certificate request context")]
+    ErrInvalidCertificateRequestContext,
+    /// A TLS 1.3 `CertificateRequest` without the required `signature_algorithms` extension.
+    #[error("signature_algorithms extension is required in CertificateRequest")]
+    ErrMissingSignatureAlgorithmsExtension,
+    /// An extensions block whose length is outside `<2..2^16-1>`.
+    #[error("extensions data must be between 2 and 2^16-1 bytes")]
+    ErrInvalidExtensionsLength,
+    /// HKDF was called without a hash function.
+    #[error("HKDF-Extract expected a non-nil hash function")]
+    ErrHkdfMissingHashFunction,
+    /// An HKDF-Expand-Label label shorter than the `opaque label<7..255>` minimum.
+    #[error("HKDF-Expand-Label expected a label with length >= 7")]
+    ErrHkdfLabelTooSmall,
+    /// An HKDF-Expand-Label label longer than the `opaque label<7..255>` maximum.
+    #[error("HKDF-Expand-Label expected a label with length <= 255")]
+    ErrHkdfLabelTooBig,
+    /// An HKDF-Expand-Label context longer than `opaque context<0..255>` allows.
+    #[error("HKDF-Expand-Label expected a context with length <= 255")]
+    ErrHkdfContextTooBig,
+    /// An HKDF-Expand-Label output longer than one expansion can produce.
+    #[error("HKDF-Expand-Label expected a length <= 65535")]
+    ErrHkdfLengthTooBig,
     /// Buffer not long enough to contain nonce.
     #[error("buffer not long enough to contain nonce")]
     ErrNotEnoughRoomForNonce,
@@ -1334,6 +1432,12 @@ pub enum Error {
     /// Failed unmarshalling param in Heartbeat Chunk.
     #[error("failed unmarshalling param in Heartbeat Chunk")]
     ErrHeartbeatChunkUnmarshal,
+    /// Heartbeat has non-zero trailing bytes after last parameter.
+    #[error("heartbeat has non-zero trailing bytes after last parameter")]
+    ErrHeartbeatExtraNonZero,
+    /// Heartbeat marshal requires exactly one Heartbeat Info parameter.
+    #[error("heartbeat marshal requires exactly one Heartbeat Info parameter")]
+    ErrHeartbeatMarshalNoInfo,
     /// Unimplemented.
     #[error("unimplemented")]
     ErrUnimplemented,
@@ -1697,6 +1801,9 @@ pub enum Error {
     /// Invalid nil packet.
     #[error("invalid nil packet")]
     ErrInvalidNilPacket,
+    /// No IVF codec exists for the given MIME type.
+    #[error("no codec for this MimeType")]
+    ErrNoSuchCodec,
 
     /// Bad header signature.
     #[error("bad header signature")]

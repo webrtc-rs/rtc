@@ -86,6 +86,18 @@ pub(crate) fn get_padding_size(len: usize) -> usize {
     (PADDING_MULTIPLE - (len % PADDING_MULTIPLE)) % PADDING_MULTIPLE
 }
 
+/// Append `cnt` zero bytes to `raw`, as pion's `padByte`.
+///
+/// A negative `cnt` is clamped to zero, exactly like pion's helper: callers
+/// compute it with [`get_padding_size`], which never yields more than
+/// `PADDING_MULTIPLE - 1`, but the pion unit test pins the defensive clamp.
+pub(crate) fn pad_byte(mut raw: Vec<u8>, cnt: isize) -> Vec<u8> {
+    if cnt > 0 {
+        raw.resize(raw.len() + cnt as usize, 0);
+    }
+    raw
+}
+
 /// Allocate and zero this data once.
 /// We need to use it for the checksum and don't want to allocate/clear each time.
 pub(crate) static FOUR_ZEROES: Bytes = Bytes::from_static(&[0, 0, 0, 0]);
@@ -364,6 +376,22 @@ mod test {
         assert_eq!(0, consumed);
         assert!(source.has_remaining());
         assert_eq!(3, source.remaining());
+    }
+
+    /// Port of pion's `TestPadByte_Success` (util_test.go).
+    #[test]
+    fn test_pad_byte_success() {
+        let tt: [(Vec<u8>, isize, Vec<u8>); 5] = [
+            (vec![0x1, 0x2], 0, vec![0x1, 0x2]),
+            (vec![0x1, 0x2], 1, vec![0x1, 0x2, 0x0]),
+            (vec![0x1, 0x2], 2, vec![0x1, 0x2, 0x0, 0x0]),
+            (vec![0x1, 0x2], 3, vec![0x1, 0x2, 0x0, 0x0, 0x0]),
+            (vec![0x1, 0x2], -1, vec![0x1, 0x2]),
+        ];
+
+        for (i, (value, pad_len, expected)) in tt.into_iter().enumerate() {
+            assert_eq!(expected, pad_byte(value, pad_len), "test {i} not equal");
+        }
     }
 
     const DIV: isize = 16;

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod cipher_suite_test;
+
 /// Shared implementation for the AES-128-CCM suites.
 pub mod cipher_suite_aes_128_ccm;
 /// Shared implementation for the AES-128-GCM-SHA256 suites.
@@ -52,6 +55,7 @@ use cipher_suite_tls_psk_with_chacha20_poly1305_sha256::*;
 // CipherSuiteID is an ID for our supported CipherSuites
 // Supported Cipher Suites
 #[allow(non_camel_case_types)]
+#[repr(u16)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The cipher suites this crate can negotiate, by their IANA code points.
 #[non_exhaustive]
@@ -97,8 +101,35 @@ pub enum CipherSuiteId {
     /// suite list that the client supports secure renegotiation (RFC 5746 §3.3).
     Tls_Empty_Renegotiation_Info_Scsv = 0x00ff,
 
-    /// A code point this crate does not implement.
-    Unsupported,
+    /// A code point this crate does not implement, carrying the wire value it was decoded from.
+    /// pion's `CipherSuiteID` is a plain `uint16`, and formats an unimplemented code point as its
+    /// hex value rather than a name; the payload keeps that possible here.
+    Unsupported(u16),
+}
+
+impl CipherSuiteId {
+    /// The suite's code point, the value carried on the wire.
+    #[must_use]
+    pub const fn code_point(self) -> u16 {
+        match self {
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm => 0xc0ac,
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm_8 => 0xc0ae,
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256 => 0xc02b,
+            Self::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256 => 0xc02f,
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha => 0xc00a,
+            Self::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha => 0xc014,
+            Self::Tls_Psk_With_Aes_128_Ccm => 0xc0a4,
+            Self::Tls_Psk_With_Aes_128_Ccm_8 => 0xc0a8,
+            Self::Tls_Psk_With_Aes_128_Gcm_Sha256 => 0x00a8,
+            Self::Tls_Psk_With_Aes_256_Ccm_8 => 0xc0a9,
+            Self::Tls_Psk_With_Aes_128_Cbc_Sha256 => 0x00ae,
+            Self::Tls_Psk_With_ChaCha20_Poly1305_Sha256 => 0xccab,
+            Self::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => 0xcca8,
+            Self::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256 => 0xcca9,
+            Self::Tls_Empty_Renegotiation_Info_Scsv => 0x00ff,
+            Self::Unsupported(code_point) => code_point,
+        }
+    }
 }
 
 impl fmt::Display for CipherSuiteId {
@@ -144,7 +175,9 @@ impl fmt::Display for CipherSuiteId {
                 write!(f, "TLS_EMPTY_RENEGOTIATION_INFO_SCSV")
             }
 
-            _ => write!(f, "Unsupported CipherSuiteID"),
+            // An unimplemented code point has no name; pion's `CipherSuiteName` falls back to its
+            // hex value, upper-cased and zero-padded to four digits.
+            CipherSuiteId::Unsupported(code_point) => write!(f, "0x{code_point:04X}"),
         }
     }
 }
@@ -177,7 +210,7 @@ impl From<u16> for CipherSuiteId {
 
             0x00ff => CipherSuiteId::Tls_Empty_Renegotiation_Info_Scsv,
 
-            _ => CipherSuiteId::Unsupported,
+            code_point => CipherSuiteId::Unsupported(code_point),
         }
     }
 }
@@ -215,7 +248,9 @@ impl From<&str> for CipherSuiteId {
             "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256" => {
                 CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256
             }
-            _ => CipherSuiteId::Unsupported,
+            // A name with no code point behind it; the zero payload is the TLS_NULL_WITH_NULL_NULL
+            // code point, which no suite implements.
+            _ => CipherSuiteId::Unsupported(0),
         }
     }
 }
@@ -245,7 +280,7 @@ impl CipherSuiteId {
             | Self::Tls_Psk_With_ChaCha20_Poly1305_Sha256 => {
                 CryptoAlgorithm::Aead(AeadAlgorithm::ChaCha20Poly1305)
             }
-            Self::Tls_Empty_Renegotiation_Info_Scsv | Self::Unsupported => return false,
+            Self::Tls_Empty_Renegotiation_Info_Scsv | Self::Unsupported(_) => return false,
         };
         // The certificate-based AES-256-CBC-SHA suites MAC records with HMAC-SHA-1; every other
         // suite — including the PSK CBC-SHA-256 one (RFC 5487), whose MAC is HMAC-SHA-256 — is
@@ -438,4 +473,43 @@ pub(crate) fn parse_cipher_suites(
     } else {
         Ok(filtered_cipher_suites)
     }
+}
+
+/// A cipher suite this crate implements, described the way `crypto/tls` describes its suites:
+/// identity, name, the protocol versions it runs under, and whether it has known weaknesses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CipherSuiteInfo {
+    /// The suite's code point.
+    pub id: CipherSuiteId,
+    /// The suite's IANA name.
+    pub name: String,
+    /// The DTLS versions this suite runs under; every suite this crate implements is DTLS 1.2.
+    pub supported_versions: Vec<ProtocolVersion>,
+    /// Whether the suite has known security problems. No suite this crate implements has any.
+    pub insecure: bool,
+}
+
+fn to_cipher_suite_info(c: &dyn CipherSuite) -> CipherSuiteInfo {
+    CipherSuiteInfo {
+        id: c.id(),
+        name: c.to_string(),
+        supported_versions: vec![PROTOCOL_VERSION1_2],
+        insecure: false,
+    }
+}
+
+/// Returns the cipher suites this crate implements, excluding those with security issues, which
+/// [`insecure_cipher_suites`] returns.
+#[must_use]
+pub fn cipher_suites() -> Vec<CipherSuiteInfo> {
+    all_cipher_suites()
+        .iter()
+        .map(|suite| to_cipher_suite_info(suite.as_ref()))
+        .collect()
+}
+
+/// Returns the cipher suites this crate implements that have security issues. None do.
+#[must_use]
+pub fn insecure_cipher_suites() -> Vec<CipherSuiteInfo> {
+    Vec::new()
 }

@@ -42,9 +42,13 @@ impl ExtensionUseExtendedMasterSecret {
     ///
     /// # Errors
     ///
-    /// Fails if `reader` is truncated or its contents are not a valid encoding.
+    /// Fails if `reader` is truncated, or the extension carries a non-empty body, which the
+    /// format does not define (pion: `errLengthMismatch`).
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
-        let _ = reader.read_u16::<BigEndian>()?;
+        let length = reader.read_u16::<BigEndian>()?;
+        if length != 0 {
+            return Err(Error::ErrLengthMismatch);
+        }
 
         Ok(ExtensionUseExtendedMasterSecret { supported: true })
     }

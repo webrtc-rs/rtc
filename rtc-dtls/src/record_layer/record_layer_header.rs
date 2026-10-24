@@ -29,6 +29,11 @@ pub const DTLS1_0MAJOR: u8 = 0xfe;
 /// Minor version byte for DTLS 1.0.
 pub const DTLS1_0MINOR: u8 = 0xff;
 
+/// Major version byte for DTLS 1.3.
+pub const DTLS1_3MAJOR: u8 = 0xfe;
+/// Minor version byte for DTLS 1.3.
+pub const DTLS1_3MINOR: u8 = 0xfc;
+
 // VERSION_DTLS12 is the DTLS version in the same style as
 // VersionTLSXX from crypto/tls
 /// DTLS 1.2 as a single 16-bit value.
@@ -44,6 +49,57 @@ pub const PROTOCOL_VERSION1_2: ProtocolVersion = ProtocolVersion {
     major: DTLS1_2MAJOR,
     minor: DTLS1_2MINOR,
 };
+/// DTLS 1.3 as a [`ProtocolVersion`].
+///
+/// Only the `legacy_version` field of a hello carries this value in DTLS 1.3; the record layer
+/// keeps using `DTLS1.2` there ([RFC 9147 §5.1]).
+///
+/// [RFC 9147 §5.1]: https://datatracker.ietf.org/html/rfc9147#section-5.1
+pub const PROTOCOL_VERSION1_3: ProtocolVersion = ProtocolVersion {
+    major: DTLS1_3MAJOR,
+    minor: DTLS1_3MINOR,
+};
+
+impl ProtocolVersion {
+    /// Determines if two protocol versions are equal, as pion's `Version.Equal`.
+    #[must_use]
+    pub fn equal(&self, other: ProtocolVersion) -> bool {
+        self.major == other.major && self.minor == other.minor
+    }
+}
+
+/// Returns `true` if the version is supported by this crate. Only DTLS 1.2 is currently
+/// supported; DTLS 1.3 is a work in progress.
+#[must_use]
+pub fn is_supported_bytes(major: u8, minor: u8) -> bool {
+    major == DTLS1_2MAJOR && minor == DTLS1_2MINOR
+}
+
+/// Returns `true` if `version` is supported by this crate; see [`is_supported_bytes`].
+#[must_use]
+pub fn is_supported_version(version: ProtocolVersion) -> bool {
+    version.equal(PROTOCOL_VERSION1_2)
+}
+
+/// Returns `true` if the bytes represent a valid DTLS version as defined in [RFC 9147] §5.3
+/// (`legacy_version`), whether or not it is *supported* — see [`is_supported_bytes`] for that.
+///
+/// [RFC 9147]: https://datatracker.ietf.org/doc/html/rfc9147#section-5.3
+#[must_use]
+pub fn is_valid_bytes(major: u8, minor: u8) -> bool {
+    major == 0xfe && (minor == 0xff || minor == 0xfd || minor == 0xfc)
+}
+
+/// Returns `true` if `version` represents a valid DTLS version; see [`is_valid_bytes`].
+#[must_use]
+pub fn is_valid_version(version: ProtocolVersion) -> bool {
+    version.equal(PROTOCOL_VERSION1_0)
+        || version.equal(PROTOCOL_VERSION1_2)
+        || version.equal(ProtocolVersion {
+            major: 0xfe,
+            minor: 0xfc, // DTLS 1.3
+        })
+}
 
 /// ## Specifications
 ///
@@ -56,6 +112,26 @@ pub struct ProtocolVersion {
     pub major: u8,
     /// The minor version byte.
     pub minor: u8,
+}
+
+impl ProtocolVersion {
+    /// Whether this is a *valid* DTLS version as defined by the `legacy_version` field
+    /// ([RFC 9147 §5.3]): DTLS 1.0, 1.2 or 1.3.
+    ///
+    /// Valid is not the same as *supported*: the record layer of this crate only accepts 1.0 and
+    /// 1.2. The `supported_versions` extension parses any valid value, mirroring pion's
+    /// `protocol.IsValidVersion`.
+    ///
+    /// [RFC 9147 §5.3]: https://datatracker.ietf.org/html/rfc9147#section-5.3
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        matches!(
+            (self.major, self.minor),
+            (DTLS1_0MAJOR, DTLS1_0MINOR)
+                | (DTLS1_2MAJOR, DTLS1_2MINOR)
+                | (DTLS1_3MAJOR, DTLS1_3MINOR)
+        )
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]

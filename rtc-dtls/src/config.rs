@@ -23,9 +23,15 @@ use crate::conn::{
 use crate::crypto::*;
 use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
+use crate::handshake::HandshakeMessage;
+use crate::handshake::handshake_message_certificate_request::HandshakeMessageCertificateRequest;
+use crate::handshake::handshake_message_client_hello::HandshakeMessageClientHello;
+use crate::handshake::handshake_message_server_hello::HandshakeMessageServerHello;
 use crate::signature_hash_algorithm::{
-    SignatureHashAlgorithm, SignatureScheme, parse_signature_schemes,
+    SignatureHashAlgorithm, SignatureScheme, parse_certificate_signature_schemes,
+    parse_signature_schemes,
 };
+use crate::state::State;
 use crypto::RTCCryptoProvider;
 use log::warn;
 use shared::error::*;
@@ -112,6 +118,8 @@ pub struct ConfigBuilder {
     certificates: Vec<Certificate>,
     cipher_suites: Vec<CipherSuiteId>,
     signature_schemes: Vec<SignatureScheme>,
+    certificate_signature_schemes: Vec<SignatureScheme>,
+    elliptic_curves: Vec<NamedCurve>,
     srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     supported_protocols: Vec<String>,
     client_auth: ClientAuthType,
@@ -120,9 +128,17 @@ pub struct ConfigBuilder {
     psk: Option<PskCallback>,
     psk_identity_hint: Option<Vec<u8>>,
     insecure_skip_verify: bool,
+    insecure_skip_verify_hello: bool,
     insecure_hashes: bool,
     insecure_verification: bool,
     verify_peer_certificate: Option<VerifyPeerCertificateFn>,
+    verify_connection: Option<VerifyConnectionFn>,
+    get_certificate: Option<GetCertificateFn>,
+    get_client_certificate: Option<GetClientCertificateFn>,
+    hello_random_bytes_generator: Option<HelloRandomBytesGeneratorFn>,
+    client_hello_message_hook: Option<ClientHelloMessageHook>,
+    server_hello_message_hook: Option<ServerHelloMessageHook>,
+    certificate_request_message_hook: Option<CertificateRequestMessageHook>,
     key_logger: Option<Arc<dyn KeyLogger>>,
     roots_cas: rustls::RootCertStore,
     client_cas: rustls::RootCertStore,
@@ -139,6 +155,8 @@ impl Default for ConfigBuilder {
             certificates: vec![],
             cipher_suites: vec![],
             signature_schemes: vec![],
+            certificate_signature_schemes: vec![],
+            elliptic_curves: vec![],
             srtp_protection_profiles: vec![],
             supported_protocols: vec![],
             client_auth: ClientAuthType::default(),
@@ -147,9 +165,17 @@ impl Default for ConfigBuilder {
             psk: None,
             psk_identity_hint: None,
             insecure_skip_verify: false,
+            insecure_skip_verify_hello: false,
             insecure_hashes: false,
             insecure_verification: false,
             verify_peer_certificate: None,
+            verify_connection: None,
+            get_certificate: None,
+            get_client_certificate: None,
+            hello_random_bytes_generator: None,
+            client_hello_message_hook: None,
+            server_hello_message_hook: None,
+            certificate_request_message_hook: None,
             key_logger: None,
             roots_cas: rustls::RootCertStore::empty(),
             client_cas: rustls::RootCertStore::empty(),
@@ -189,6 +215,28 @@ impl ConfigBuilder {
     /// signature_schemes contains the signature and hash schemes that the peer requests to verify.
     pub fn with_signature_schemes(mut self, signature_schemes: Vec<SignatureScheme>) -> Self {
         self.signature_schemes = signature_schemes;
+        self
+    }
+
+    /// certificate_signature_schemes contains the signature and hash schemes that may be used
+    /// in digital signatures over X.509 certificates, which is distinct from
+    /// [`with_signature_schemes`](Self::with_signature_schemes) (handshake signatures).
+    ///
+    /// When non-empty, a client sends the `signature_algorithms_cert` extension (type 50)
+    /// alongside `signature_algorithms`, and a server retains the schemes a client offers
+    /// there, as in pion.
+    pub fn with_certificate_signature_schemes(
+        mut self,
+        certificate_signature_schemes: Vec<SignatureScheme>,
+    ) -> Self {
+        self.certificate_signature_schemes = certificate_signature_schemes;
+        self
+    }
+
+    /// elliptic_curves restricts the curves offered and accepted for ECDHE, most preferred
+    /// first. Empty (the default) offers the crate's default curve list in its default order.
+    pub fn with_elliptic_curves(mut self, elliptic_curves: Vec<NamedCurve>) -> Self {
+        self.elliptic_curves = elliptic_curves;
         self
     }
 
@@ -266,6 +314,15 @@ impl ConfigBuilder {
         self
     }
 
+    /// insecure_skip_verify_hello, when set on a server, lets a ClientHello that skips the
+    /// HelloVerifyRequest cookie exchange be answered directly, as in pion. The cookie
+    /// exchange is a defence against using the handshake for amplification, so this should
+    /// only be enabled on networks where that trade-off is acceptable.
+    pub fn with_insecure_skip_verify_hello(mut self, insecure_skip_verify_hello: bool) -> Self {
+        self.insecure_skip_verify_hello = insecure_skip_verify_hello;
+        self
+    }
+
     /// insecure_hashes allows the use of hashing algorithms that are known
     /// to be vulnerable.
     pub fn with_insecure_hashes(mut self, insecure_hashes: bool) -> Self {
@@ -296,6 +353,83 @@ impl ConfigBuilder {
         verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     ) -> Self {
         self.verify_peer_certificate = verify_peer_certificate;
+        self
+    }
+
+    /// VerifyConnection, if not nil, is called after normal certificate/PSK verification
+    /// and after `verify_peer_certificate`, by both client and server, once the peer's
+    /// `Finished` has been verified. An error aborts the handshake: a fatal
+    /// `bad_certificate` alert is sent to the peer and the callback's error is returned
+    /// locally, as in pion.
+    pub fn with_verify_connection(mut self, verify_connection: Option<VerifyConnectionFn>) -> Self {
+        self.verify_connection = verify_connection;
+        self
+    }
+
+    /// get_certificate, on a server, chooses the certificate to present from the information
+    /// in the client's ClientHello (SNI `server_name`, offered cipher suites, signature
+    /// schemes, curves and random bytes). `None` falls back to the configured certificates
+    /// and `name_to_certificate` selection, as in pion; an error aborts the handshake with a
+    /// `handshake_failure` alert.
+    pub fn with_get_certificate(mut self, get_certificate: Option<GetCertificateFn>) -> Self {
+        self.get_certificate = get_certificate;
+        self
+    }
+
+    /// get_client_certificate, on a client, chooses the certificate to present when the
+    /// server sends a CertificateRequest, whose acceptable signature schemes and certificate
+    /// authorities arrive in a [`CertificateRequestInfo`]. An error aborts the handshake with
+    /// a `handshake_failure` alert, as in pion.
+    pub fn with_get_client_certificate(
+        mut self,
+        get_client_certificate: Option<GetClientCertificateFn>,
+    ) -> Self {
+        self.get_client_certificate = get_client_certificate;
+        self
+    }
+
+    /// hello_random_bytes_generator overrides the 28 random bytes of the client's hello
+    /// random. The generator's output feeds key derivation exactly like the provider's
+    /// randomness would; a debugging and fingerprinting facility, as in pion.
+    pub fn with_hello_random_bytes_generator(
+        mut self,
+        hello_random_bytes_generator: Option<HelloRandomBytesGeneratorFn>,
+    ) -> Self {
+        self.hello_random_bytes_generator = hello_random_bytes_generator;
+        self
+    }
+
+    /// client_hello_message_hook, when set on the client, receives the ClientHello about to
+    /// be sent and returns the handshake message to send instead — the same message with
+    /// tweaks, or a different one entirely. A testing and fingerprinting facility, as in
+    /// pion.
+    pub fn with_client_hello_message_hook(
+        mut self,
+        client_hello_message_hook: Option<ClientHelloMessageHook>,
+    ) -> Self {
+        self.client_hello_message_hook = client_hello_message_hook;
+        self
+    }
+
+    /// server_hello_message_hook, when set on the server, receives the ServerHello about to
+    /// be sent and returns the handshake message to send instead. A testing and
+    /// fingerprinting facility, as in pion.
+    pub fn with_server_hello_message_hook(
+        mut self,
+        server_hello_message_hook: Option<ServerHelloMessageHook>,
+    ) -> Self {
+        self.server_hello_message_hook = server_hello_message_hook;
+        self
+    }
+
+    /// certificate_request_message_hook, when set on the server, receives the
+    /// CertificateRequest about to be sent and returns the handshake message to send
+    /// instead. A testing and fingerprinting facility, as in pion.
+    pub fn with_certificate_request_message_hook(
+        mut self,
+        certificate_request_message_hook: Option<CertificateRequestMessageHook>,
+    ) -> Self {
+        self.certificate_request_message_hook = certificate_request_message_hook;
         self
     }
 
@@ -396,12 +530,16 @@ pub enum ExtendedMasterSecretType {
 
 impl ConfigBuilder {
     fn offered_cipher_suites(&self, is_client: bool) -> Result<Vec<Box<dyn CipherSuite>>> {
-        // a client offers one family or the other, while a server can only offer them if
-        // it actually holds a certificate.
+        // As pion's `includeCertificateSuites`: certificate suites are offered unless this is a
+        // PSK-only endpoint — certificates, `get_certificate` or `get_client_certificate` all
+        // bring them back.
+        let has_certificate_answer = !self.certificates.is_empty()
+            || self.get_certificate.is_some()
+            || self.get_client_certificate.is_some();
         let exclude_certificate = if is_client {
-            self.psk.is_some()
+            self.psk.is_some() && !has_certificate_answer
         } else {
-            self.certificates.is_empty()
+            !has_certificate_answer
         };
 
         parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), exclude_certificate)
@@ -419,7 +557,11 @@ impl ConfigBuilder {
         }
 
         if !is_client && self.psk.is_none() && self.certificates.is_empty() {
-            return Err(Error::ErrServerMustHaveCertificate);
+            // A server may present no certificate of its own as long as `get_certificate`
+            // will answer for it, as in pion.
+            if self.get_certificate.is_none() {
+                return Err(Error::ErrServerMustHaveCertificate);
+            }
         }
 
         // A server may hold both and let each handshake pick
@@ -481,12 +623,40 @@ impl ConfigBuilder {
             })
             .collect();
 
+        // Certificate-signature schemes are parsed with the same hybrid decoding pion uses for
+        // `signature_algorithms_cert`: full-u16 PSS code points next to byte-split 1.2 pairs.
+        let cert_sigs: Vec<u16> = self
+            .certificate_signature_schemes
+            .iter()
+            .map(|x| *x as u16)
+            .collect();
+        let local_certificate_signature_schemes = if cert_sigs.is_empty() {
+            vec![]
+        } else {
+            parse_certificate_signature_schemes(&cert_sigs, self.insecure_hashes)?
+                .into_iter()
+                .filter(|algorithm| {
+                    algorithm.crypto_scheme().is_ok_and(|scheme| {
+                        crypto_provider
+                            .crypto()
+                            .supports(crypto::CryptoAlgorithm::Signature(scheme))
+                    })
+                })
+                .collect()
+        };
+
         let has_non_psk_suites = local_cipher_suites.iter().any(|(_, is_psk)| !is_psk);
         if has_non_psk_suites && local_signature_schemes.is_empty() {
             return Err(Error::ErrNoAvailableSignatureSchemes);
         }
 
-        let local_named_curves: Vec<_> = [NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384]
+        let configured_curves = if self.elliptic_curves.is_empty() {
+            // pion's `defaultCurves`.
+            vec![NamedCurve::X25519, NamedCurve::P256, NamedCurve::P384]
+        } else {
+            self.elliptic_curves.clone()
+        };
+        let local_named_curves: Vec<_> = configured_curves
             .into_iter()
             .filter(|curve| {
                 curve.crypto_algorithm().is_ok_and(|algorithm| {
@@ -500,7 +670,7 @@ impl ConfigBuilder {
             return Err(Error::ErrNoAvailableCipherSuites);
         }
 
-        if !is_client && has_non_psk_suites {
+        if !is_client && has_non_psk_suites && !self.certificates.is_empty() {
             let signing_key = &self.certificates[0].private_key.signing_key;
             local_cipher_suites.retain(|(id, is_psk)| {
                 *is_psk
@@ -618,6 +788,7 @@ impl ConfigBuilder {
             local_cipher_suites,
             local_named_curves,
             local_signature_schemes,
+            local_certificate_signature_schemes,
             extended_master_secret: self.extended_master_secret,
             local_srtp_protection_profiles: self.srtp_protection_profiles,
             local_supported_protocols: self.supported_protocols,
@@ -627,8 +798,16 @@ impl ConfigBuilder {
             local_certificates: self.certificates,
             name_to_certificate,
             insecure_skip_verify: self.insecure_skip_verify,
+            insecure_skip_verify_hello: self.insecure_skip_verify_hello,
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
+            verify_connection: self.verify_connection.take(),
+            get_certificate: self.get_certificate.take(),
+            get_client_certificate: self.get_client_certificate.take(),
+            hello_random_bytes_generator: self.hello_random_bytes_generator.take(),
+            client_hello_message_hook: self.client_hello_message_hook.take(),
+            server_hello_message_hook: self.server_hello_message_hook.take(),
+            certificate_request_message_hook: self.certificate_request_message_hook.take(),
             key_logger: self.key_logger.clone(),
             roots_cas: self.roots_cas,
             server_cert_verifier,
@@ -648,6 +827,102 @@ impl ConfigBuilder {
 /// goes.
 pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
+
+/// A callback run against the handshake state once the peer's `Finished` has been verified,
+/// after normal certificate/PSK verification and `verify_peer_certificate`.
+pub type VerifyConnectionFn = Arc<dyn (Fn(&State) -> Result<()>) + Send + Sync>;
+
+/// A callback that chooses a server certificate from a client's ClientHello.
+pub type GetCertificateFn =
+    Arc<dyn (Fn(&ClientHelloInfo) -> Result<Option<Certificate>>) + Send + Sync>;
+
+/// A callback that chooses a client certificate in answer to a server's CertificateRequest.
+pub type GetClientCertificateFn =
+    Arc<dyn (Fn(&CertificateRequestInfo) -> Result<Certificate>) + Send + Sync>;
+
+/// Produces the 28 random bytes of a client hello random.
+pub type HelloRandomBytesGeneratorFn =
+    Arc<dyn (Fn() -> [u8; crate::handshake::handshake_random::RANDOM_BYTES_LENGTH]) + Send + Sync>;
+
+/// Rewrites the ClientHello about to be sent; the returned message is sent and enters the
+/// transcript.
+pub type ClientHelloMessageHook =
+    Arc<dyn (Fn(HandshakeMessageClientHello) -> HandshakeMessage) + Send + Sync>;
+
+/// Rewrites the ServerHello about to be sent; the returned message is sent and enters the
+/// transcript.
+pub type ServerHelloMessageHook =
+    Arc<dyn (Fn(HandshakeMessageServerHello) -> HandshakeMessage) + Send + Sync>;
+
+/// Rewrites the CertificateRequest about to be sent; the returned message is sent and enters
+/// the transcript.
+pub type CertificateRequestMessageHook =
+    Arc<dyn (Fn(HandshakeMessageCertificateRequest) -> HandshakeMessage) + Send + Sync>;
+
+/// Information from a received ClientHello, handed to [`GetCertificateFn`] so a server can
+/// pick a certificate.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientHelloInfo {
+    /// The server name the client asked for through SNI, empty when it sent none.
+    pub server_name: String,
+    /// The cipher suites the client offered.
+    pub cipher_suites: Vec<CipherSuiteId>,
+    /// The signature and hash pairs the client offered.
+    pub signature_schemes: Vec<SignatureHashAlgorithm>,
+    /// The curves the client offered for ECDHE.
+    pub elliptic_curves: Vec<NamedCurve>,
+    /// The 28 random bytes of the client's hello random.
+    pub random_bytes: [u8; crate::handshake::handshake_random::RANDOM_BYTES_LENGTH],
+}
+
+impl ClientHelloInfo {
+    /// Builds the summary a server sees of a ClientHello.
+    pub fn new(
+        server_name: String,
+        cipher_suites: Vec<CipherSuiteId>,
+        signature_schemes: Vec<SignatureHashAlgorithm>,
+        elliptic_curves: Vec<NamedCurve>,
+        random_bytes: [u8; crate::handshake::handshake_random::RANDOM_BYTES_LENGTH],
+    ) -> Self {
+        Self {
+            server_name,
+            cipher_suites,
+            signature_schemes,
+            elliptic_curves,
+            random_bytes,
+        }
+    }
+}
+
+/// Information from a server's CertificateRequest, handed to [`GetClientCertificateFn`] so a
+/// client can pick a certificate.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CertificateRequestInfo {
+    /// The certificate types the server accepts; an empty list means no restriction.
+    pub certificate_types: Vec<crate::client_certificate_type::ClientCertificateType>,
+    /// The signature and hash pairs the server listed as acceptable.
+    pub signature_hash_algorithms: Vec<SignatureHashAlgorithm>,
+    /// DER-encoded distinguished names of the certificate authorities the server accepts;
+    /// an empty list means it has no preference.
+    pub certificate_authorities: Vec<Vec<u8>>,
+}
+
+impl CertificateRequestInfo {
+    /// Builds the summary a client sees of a server's CertificateRequest.
+    pub fn new(
+        certificate_types: Vec<crate::client_certificate_type::ClientCertificateType>,
+        signature_hash_algorithms: Vec<SignatureHashAlgorithm>,
+        certificate_authorities: Vec<Vec<u8>>,
+    ) -> Self {
+        Self {
+            certificate_types,
+            signature_hash_algorithms,
+            certificate_authorities,
+        }
+    }
+}
 
 /// Receives handshake key material in the NSS key log format, once per completed key
 /// derivation.
@@ -802,6 +1077,7 @@ pub struct HandshakeConfig {
     pub(crate) local_cipher_suites: Vec<CipherSuiteId>, // Available CipherSuites
     pub(crate) local_named_curves: Vec<NamedCurve>,
     pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
+    pub(crate) local_certificate_signature_schemes: Vec<SignatureHashAlgorithm>, // Schemes for certificate signatures, empty = fall back to local_signature_schemes
     pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
     pub(crate) local_supported_protocols: Vec<String>, // ALPN protocols, if empty no ALPN
@@ -812,8 +1088,16 @@ pub struct HandshakeConfig {
     pub(crate) local_certificates: Vec<Certificate>,
     pub(crate) name_to_certificate: HashMap<String, Certificate>,
     pub(crate) insecure_skip_verify: bool,
+    pub(crate) insecure_skip_verify_hello: bool,
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
+    pub(crate) verify_connection: Option<VerifyConnectionFn>,
+    pub(crate) get_certificate: Option<GetCertificateFn>,
+    pub(crate) get_client_certificate: Option<GetClientCertificateFn>,
+    pub(crate) hello_random_bytes_generator: Option<HelloRandomBytesGeneratorFn>,
+    pub(crate) client_hello_message_hook: Option<ClientHelloMessageHook>,
+    pub(crate) server_hello_message_hook: Option<ServerHelloMessageHook>,
+    pub(crate) certificate_request_message_hook: Option<CertificateRequestMessageHook>,
     /// Where completed key derivations are reported, for traffic decryption.
     pub(crate) key_logger: Option<Arc<dyn KeyLogger>>,
     pub(crate) roots_cas: rustls::RootCertStore,
@@ -865,6 +1149,7 @@ impl HandshakeConfig {
             local_cipher_suites: vec![],
             local_named_curves: vec![],
             local_signature_schemes: vec![],
+            local_certificate_signature_schemes: vec![],
             extended_master_secret: ExtendedMasterSecretType::Disable,
             local_srtp_protection_profiles: vec![],
             local_supported_protocols: vec![],
@@ -874,8 +1159,16 @@ impl HandshakeConfig {
             local_certificates: vec![],
             name_to_certificate: HashMap::new(),
             insecure_skip_verify: false,
+            insecure_skip_verify_hello: false,
             insecure_verification: false,
             verify_peer_certificate: None,
+            verify_connection: None,
+            get_certificate: None,
+            get_client_certificate: None,
+            hello_random_bytes_generator: None,
+            client_hello_message_hook: None,
+            server_hello_message_hook: None,
+            certificate_request_message_hook: None,
             key_logger: None,
             roots_cas: rustls::RootCertStore::empty(),
             server_cert_verifier: default_verifier_adapter().and_then(|adapter| {
@@ -892,6 +1185,23 @@ impl HandshakeConfig {
 
     pub(crate) fn provider(&self) -> &Arc<dyn RTCCryptoProvider> {
         &self.crypto_provider
+    }
+
+    /// Chooses the certificate to present, as pion's `getCertificate`: the callback runs when
+    /// one is configured and either no certificates are held or the client named a server
+    /// through SNI; `Ok(None)` and "no callback" fall through to the configured certificates
+    /// and `name_to_certificate` selection.
+    pub(crate) fn get_certificate_for_hello(&self, info: &ClientHelloInfo) -> Result<Certificate> {
+        if let Some(get_certificate) = &self.get_certificate
+            && (self.local_certificates.is_empty() || !info.server_name.is_empty())
+        {
+            match get_certificate(info) {
+                Ok(Some(certificate)) => return Ok(certificate),
+                Ok(None) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        self.get_certificate(&info.server_name)
     }
 
     pub(crate) fn get_certificate(&self, server_name: &str) -> Result<Certificate> {
@@ -962,4 +1272,31 @@ mod file_key_logger_tests {
         );
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+/// Summarizes a received ClientHello for [`GetCertificateFn`]: the SNI it named, the cipher
+/// suites, signature schemes and curves it offered, and its random bytes.
+pub(crate) fn client_hello_info(client_hello: &HandshakeMessageClientHello) -> ClientHelloInfo {
+    let mut info = ClientHelloInfo {
+        server_name: String::new(),
+        cipher_suites: client_hello.cipher_suites.clone(),
+        signature_schemes: vec![],
+        elliptic_curves: vec![],
+        random_bytes: client_hello.random.random_bytes,
+    };
+    for extension in &client_hello.extensions {
+        match extension {
+            crate::extension::Extension::ServerName(e) => {
+                info.server_name.clone_from(&e.server_name);
+            }
+            crate::extension::Extension::SupportedSignatureAlgorithms(e) => {
+                info.signature_schemes = e.signature_hash_algorithms.clone();
+            }
+            crate::extension::Extension::SupportedEllipticCurves(e) => {
+                info.elliptic_curves = e.elliptic_curves.clone();
+            }
+            _ => {}
+        }
+    }
+    info
 }
