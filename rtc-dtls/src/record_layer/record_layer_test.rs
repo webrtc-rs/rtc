@@ -116,3 +116,187 @@ fn test_record_layer_round_trip() -> Result<()> {
 
     Ok(())
 }
+
+// Port of pion `pkg/protocol` `TestVersionEqual`.
+#[test]
+fn test_version_equal() {
+    let tests = [
+        (
+            "same-1.0",
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xff,
+            },
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xff,
+            },
+            true,
+        ),
+        (
+            "same-1.2",
+            PROTOCOL_VERSION1_2,
+            PROTOCOL_VERSION1_2,
+            true,
+        ),
+        (
+            "same-1.3",
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfc,
+            },
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfc,
+            },
+            true,
+        ),
+        (
+            "diff-major",
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfd,
+            },
+            ProtocolVersion {
+                major: 0xff,
+                minor: 0xfd,
+            },
+            false,
+        ),
+        (
+            "diff-minor",
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfd,
+            },
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfc,
+            },
+            false,
+        ),
+        (
+            "completely-diff",
+            ProtocolVersion {
+                major: 0x03,
+                minor: 0x03,
+            },
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xff,
+            },
+            false,
+        ),
+    ];
+
+    for (name, a, b, want) in tests {
+        assert_eq!(a.equal(b), want, "Equal({a:?},{b:?}) for {name}");
+    }
+}
+
+// Port of pion `pkg/protocol` `TestIsSupportedBytes`: only DTLS 1.2 is supported.
+#[test]
+fn test_is_supported_bytes() {
+    let cases = [
+        (0xfe, 0xfd, true),  // DTLS 1.2
+        (0xfe, 0xfc, false), // DTLS 1.3 (WIP)
+        (0xfe, 0xff, false), // DTLS 1.0 not supported
+        (0x03, 0x03, false), // TLS 1.2, not DTLS
+        (0x00, 0x00, false),
+    ];
+
+    for (major, minor, want) in cases {
+        assert_eq!(
+            is_supported_bytes(major, minor),
+            want,
+            "IsSupportedBytes({major:#04x},{minor:#04x})"
+        );
+    }
+}
+
+// Port of pion `pkg/protocol` `TestIsSupportedVersion`.
+#[test]
+fn test_is_supported_version() {
+    let cases = [
+        (PROTOCOL_VERSION1_2, true),
+        // DTLS 1.3 (WIP)
+        (
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfc,
+            },
+            false,
+        ),
+        // DTLS 1.0, not supported
+        (PROTOCOL_VERSION1_0, false),
+        // TLS 1.2, not DTLS
+        (
+            ProtocolVersion {
+                major: 0x03,
+                minor: 0x03,
+            },
+            false,
+        ),
+    ];
+
+    for (version, want) in cases {
+        assert_eq!(is_supported_version(version), want, "IsSupportedVersion({version:?})");
+    }
+}
+
+// Port of pion `pkg/protocol` `TestIsValidBytes`: feff (1.0), fefd (1.2) and fefc (1.3) are
+// valid DTLS versions per RFC 9147 §5.3, whether or not they are supported.
+#[test]
+fn test_is_valid_bytes() {
+    let cases = [
+        (0xfe, 0xff, true),  // DTLS 1.0 (valid, though not supported)
+        (0xfe, 0xfd, true),  // DTLS 1.2
+        (0xfe, 0xfc, true),  // DTLS 1.3
+        (0xfe, 0x00, false), // invalid
+        (0x03, 0x03, false), // TLS 1.2, invalid
+    ];
+
+    for (major, minor, want) in cases {
+        assert_eq!(
+            is_valid_bytes(major, minor),
+            want,
+            "IsValidBytes({major:#04x},{minor:#04x})"
+        );
+    }
+}
+
+// Port of pion `pkg/protocol` `TestIsValidVersion`.
+#[test]
+fn test_is_valid_version() {
+    let cases = [
+        (PROTOCOL_VERSION1_0, true),
+        (PROTOCOL_VERSION1_2, true),
+        (
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0xfc,
+            },
+            true,
+        ),
+        // invalid
+        (
+            ProtocolVersion {
+                major: 0xfe,
+                minor: 0x00,
+            },
+            false,
+        ),
+        // TLS 1.2
+        (
+            ProtocolVersion {
+                major: 0x03,
+                minor: 0x03,
+            },
+            false,
+        ),
+    ];
+
+    for (version, want) in cases {
+        assert_eq!(is_valid_version(version), want, "IsValidVersion({version:?})");
+    }
+}
