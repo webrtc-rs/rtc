@@ -1682,6 +1682,9 @@ pub enum Error {
     /// Invalid nil packet.
     #[error("invalid nil packet")]
     ErrInvalidNilPacket,
+    /// No IVF codec exists for the given MIME type.
+    #[error("no codec for this MimeType")]
+    ErrNoSuchCodec,
 
     /// Bad header signature.
     #[error("bad header signature")]
