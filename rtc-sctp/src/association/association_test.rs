@@ -309,6 +309,89 @@ fn test_handle_forward_tsn_dup_forward_tsn_chunk_should_generate_sack() -> Resul
     Ok(())
 }
 
+/// Port of pion's `TestReceivePayloadQueueAdvanceCumulativeTSN`
+/// (receive_payload_queue_test.go).
+///
+/// rtc-sctp's receive queue does not own the cumulative TSN — the association
+/// does (`peer_last_tsn`), and its FORWARD-TSN handler is what advances it —
+/// so the pion queue-level scenario is driven through `handle_forward_tsn`,
+/// which now clears every covered TSN like pion's `advanceCumulativeTSN`.
+#[test]
+fn receive_payload_queue_advance_cumulative_tsn() -> Result<()> {
+    let init_tsn = u32::MAX - 10;
+    let mut a = Association {
+        use_forward_tsn: true,
+        peer_last_tsn: init_tsn,
+        ..Default::default()
+    };
+
+    for tsn in [init_tsn + 3, init_tsn + 5, init_tsn.wrapping_add(20)] {
+        assert!(a.payload_queue.push(payload_chunk(tsn, 1), a.peer_last_tsn));
+    }
+
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn + 5,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn + 5, a.peer_last_tsn);
+    assert_eq!(1, a.payload_queue.len());
+    assert!(a.payload_queue.get(init_tsn + 3).is_none());
+    assert!(a.payload_queue.get(init_tsn + 5).is_none());
+    assert!(a.payload_queue.get(init_tsn.wrapping_add(20)).is_some());
+    let gaps = a.payload_queue.get_gap_ack_blocks(a.peer_last_tsn);
+    assert_eq!(1, gaps.len());
+    assert_eq!(15, gaps[0].start);
+    assert_eq!(15, gaps[0].end);
+
+    // A forward point behind the current cumulative point is out of date and
+    // must not move anything.
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn + 4,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn + 5, a.peer_last_tsn);
+    assert_eq!(1, a.payload_queue.len());
+    assert!(a.payload_queue.get(init_tsn.wrapping_add(20)).is_some());
+
+    // A far forward jump acknowledges everything queued.
+    let new_cumulative_tsn = init_tsn.wrapping_add((1 << 31) - 1);
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(new_cumulative_tsn, a.peer_last_tsn);
+    assert_eq!(0, a.payload_queue.len());
+    assert!(a.payload_queue.get_last_tsn_received().is_none());
+    assert!(
+        a.payload_queue
+            .get_gap_ack_blocks(a.peer_last_tsn)
+            .is_empty()
+    );
+
+    // Exactly 2^31 ahead is the RFC 1982 ambiguity point: not "less than",
+    // so the cumulative point must not move (pion's sna32LT guard).
+    let mut a = Association {
+        use_forward_tsn: true,
+        peer_last_tsn: init_tsn,
+        ..Default::default()
+    };
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn.wrapping_add(1 << 31),
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn, a.peer_last_tsn);
+
+    Ok(())
+}
+
 #[test]
 fn test_assoc_create_new_stream() -> Result<()> {
     let mut a = Association::default();
