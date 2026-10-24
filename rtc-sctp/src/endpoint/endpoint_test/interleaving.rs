@@ -629,9 +629,9 @@ fn a_chunk_that_contradicts_the_negotiation_aborts_with_a_protocol_violation() {
         })
     });
     type Make<'a> = &'a dyn Fn() -> Box<dyn Chunk>;
-    let data_plain: Make = &|| payload(false);
-    let data_idata: Make = &|| payload(true);
-    let cases: Vec<(&str, bool, bool, Make, &str)> = vec![
+    let data_plain: Make<'_> = &|| payload(false);
+    let data_idata: Make<'_> = &|| payload(true);
+    let cases: Vec<(&str, bool, bool, Make<'_>, &str)> = vec![
         (
             "DATA after interleaving negotiated",
             true,
