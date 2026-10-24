@@ -68,6 +68,8 @@ pub(crate) mod timer;
 
 #[cfg(test)]
 mod association_test;
+#[cfg(test)]
+mod stream_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -1731,10 +1733,14 @@ impl Association {
         //   its cumulative TSN point to the value carried in the FORWARD TSN
         //   chunk,
 
-        // Advance peer_last_tsn
-        while sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
-            self.payload_queue.pop(self.peer_last_tsn + 1); // may not exist
-            self.peer_last_tsn += 1;
+        // Advance peer_last_tsn. The forwarded range may cover TSNs that were
+        // already received as gaps above the old cumulative point: RFC 3758
+        // §3.6 advances the cumulative TSN past them, so they leave the queue
+        // (and the SACK gap report). pion: advanceCumulativeTSN.
+        if sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
+            self.payload_queue
+                .advance_cumulative_tsn(c.new_cumulative_tsn);
+            self.peer_last_tsn = c.new_cumulative_tsn;
         }
 
         // Report new peer_last_tsn value and abandoned largest SSN value to

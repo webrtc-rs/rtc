@@ -1396,6 +1396,12 @@ pub enum Error {
     /// Failed unmarshalling param in Heartbeat Chunk.
     #[error("failed unmarshalling param in Heartbeat Chunk")]
     ErrHeartbeatChunkUnmarshal,
+    /// Heartbeat has non-zero trailing bytes after last parameter.
+    #[error("heartbeat has non-zero trailing bytes after last parameter")]
+    ErrHeartbeatExtraNonZero,
+    /// Heartbeat marshal requires exactly one Heartbeat Info parameter.
+    #[error("heartbeat marshal requires exactly one Heartbeat Info parameter")]
+    ErrHeartbeatMarshalNoInfo,
     /// Unimplemented.
     #[error("unimplemented")]
     ErrUnimplemented,
