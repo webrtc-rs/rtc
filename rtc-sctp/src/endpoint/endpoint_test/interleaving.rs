@@ -99,14 +99,13 @@ fn interleaving_is_negotiated_only_when_both_sides_offer_it() {
             pair_with(interleaving_config(client), interleaving_config(server));
         let expect = client && server;
 
-        for (name, assoc) in [("client", pair.client_conn_mut(client_ch) as &Association)] {
-            assert_eq!(
-                expect, assoc.use_interleaving,
-                "{name} client={client} server={server}"
-            );
-            assert_eq!(expect, assoc.use_iforward_tsn, "{name} i-forward-tsn");
-            assert_eq!(!expect, assoc.use_forward_tsn, "{name} forward-tsn");
-        }
+        let assoc = pair.client_conn_mut(client_ch);
+        assert_eq!(
+            expect, assoc.use_interleaving,
+            "client={client} server={server}"
+        );
+        assert_eq!(expect, assoc.use_iforward_tsn, "i-forward-tsn");
+        assert_eq!(!expect, assoc.use_forward_tsn, "forward-tsn");
         let server_assoc = pair.server_conn_mut(server_ch);
         assert_eq!(expect, server_assoc.use_interleaving);
         assert_eq!(expect, server_assoc.use_iforward_tsn);
@@ -534,7 +533,7 @@ fn a_reset_stream_restarts_its_message_identifiers() {
         .unwrap();
     pair.drive();
     // Both sides have dropped the stream; opening it again starts from zero.
-    assert!(pair.client_conn_mut(client_ch).streams.get(&si).is_none());
+    assert!(!pair.client_conn_mut(client_ch).streams.contains_key(&si));
 
     pair.client_wire.clear();
     open_stream(&mut pair, client_ch, server_ch, si);

@@ -325,3 +325,267 @@ impl InterleavedQueue {
         self.virtual_time = before;
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::super::pending_queue::PendingQueue;
+    use super::*;
+    use bytes::Bytes;
+
+    /// pion's `makeStreamDataChunk`: an unfragmented chunk on `stream`, whose TSN field serves as
+    /// a chunk id (the pending queue never looks at it).
+    fn stream_chunk(tsn: u32, stream: u16, len: usize) -> ChunkPayloadData {
+        ChunkPayloadData {
+            tsn,
+            stream_identifier: stream,
+            beginning_fragment: true,
+            ending_fragment: true,
+            user_data: Bytes::from(vec![0u8; len]),
+            ..Default::default()
+        }
+    }
+
+    fn queue(kind: SchedulerKind) -> PendingQueue {
+        let mut q = PendingQueue::new();
+        q.set_interleaving(Some(kind)).unwrap();
+        q
+    }
+
+    fn rr() -> SchedulerKind {
+        SchedulerKind::RoundRobin
+    }
+
+    fn wfq(weights: &[(u16, u16)]) -> SchedulerKind {
+        SchedulerKind::WeightedFairQueueing {
+            weights: weights
+                .iter()
+                .map(|&(s, w)| (s, NonZeroU16::new(w).unwrap()))
+                .collect(),
+        }
+    }
+
+    fn push(q: &mut PendingQueue, c: ChunkPayloadData) {
+        q.push_message(vec![c]);
+    }
+
+    fn pop_tsn(q: &mut PendingQueue) -> Option<u32> {
+        let c = q.peek()?;
+        let tsn = c.tsn;
+        let (begin, unordered) = (c.beginning_fragment, c.unordered);
+        assert_eq!(tsn, q.pop(begin, unordered)?.tsn);
+        Some(tsn)
+    }
+
+    #[test]
+    fn test_round_robin_pending_queue_policy() {
+        // pion: TestRoundRobinPendingQueuePolicy
+        // round robin across streams
+        let mut q = queue(rr());
+        push(&mut q, stream_chunk(1, 1, 10));
+        push(&mut q, stream_chunk(2, 2, 10));
+        push(&mut q, stream_chunk(3, 1, 10));
+        for want in [1, 2, 3] {
+            assert_eq!(Some(want), pop_tsn(&mut q));
+        }
+        assert!(q.peek().is_none());
+        assert!(q.is_empty());
+
+        // peek keeps the selected stream until pop
+        let mut q = queue(rr());
+        push(&mut q, stream_chunk(10, 1, 10));
+        push(&mut q, stream_chunk(20, 2, 10));
+        let first = q.peek().map(|c| (c.tsn, c.stream_identifier));
+        let second = q.peek().map(|c| (c.tsn, c.stream_identifier));
+        assert_eq!(first, second);
+        assert_eq!(
+            Some((10, 1)),
+            first,
+            "the first backlogged stream is selected"
+        );
+        assert_eq!(Some(10), pop_tsn(&mut q));
+        assert_eq!(Some(20), q.peek().map(|c| c.tsn));
+
+        // pion's "pop errors" subtests check a caller handing Pop the wrong chunk. Here the queue
+        // hands the chunk out itself (`pop` takes no chunk), so there is no way to name the wrong
+        // one; popping from an empty queue is the remaining misuse.
+        let mut q = queue(rr());
+        assert!(q.pop(true, false).is_none());
+    }
+
+    #[test]
+    fn test_weighted_fair_queueing_pending_queue_policy() {
+        // pion: TestWeightedFairQueueingPendingQueuePolicy
+        // selects lowest virtual finish time
+        let mut q = queue(wfq(&[]));
+        push(&mut q, stream_chunk(1, 1, 100));
+        push(&mut q, stream_chunk(2, 1, 100));
+        push(&mut q, stream_chunk(3, 2, 10));
+        for want in [3, 1, 2] {
+            assert_eq!(Some(want), pop_tsn(&mut q));
+        }
+        assert!(q.peek().is_none());
+
+        // applies stream weights
+        let mut q = queue(wfq(&[(1, 2)]));
+        push(&mut q, stream_chunk(1, 1, 100));
+        push(&mut q, stream_chunk(2, 2, 60));
+        assert_eq!(
+            Some(1),
+            pop_tsn(&mut q),
+            "100 bytes at weight 2 finish at 50, before 60"
+        );
+        assert_eq!(Some(2), pop_tsn(&mut q));
+
+        // pop errors: see the round robin test.
+        let mut q = queue(wfq(&[]));
+        assert!(q.pop(true, false).is_none());
+    }
+
+    #[test]
+    fn test_pending_queue_set_interleaving() {
+        // pion: TestPendingQueue "set interleaving ..." subtests
+        // rejects non-empty queue
+        let mut q = PendingQueue::new();
+        push(&mut q, stream_chunk(1, 1, 10));
+        assert!(q.set_interleaving(Some(rr())).is_err());
+        assert!(!q.is_interleaving());
+        assert_eq!(Some(1), q.peek().map(|c| c.tsn));
+
+        // swaps policy when empty, and is idempotent
+        let mut q = PendingQueue::new();
+        q.set_interleaving(Some(wfq(&[]))).unwrap();
+        assert!(q.is_interleaving());
+        q.set_interleaving(Some(wfq(&[]))).unwrap();
+        assert!(q.is_interleaving());
+        q.set_interleaving(None).unwrap();
+        assert!(!q.is_interleaving());
+        // and the plain policy is back: unordered wins over ordered
+        let mut ordered = stream_chunk(1, 1, 10);
+        ordered.unordered = false;
+        let mut unordered = stream_chunk(2, 1, 10);
+        unordered.unordered = true;
+        push(&mut q, ordered);
+        push(&mut q, unordered);
+        assert_eq!(Some(2), pop_tsn(&mut q));
+        assert_eq!(Some(1), pop_tsn(&mut q));
+
+        // uses the configured scheduler: RR alternates, WFQ with equal sizes does too
+        for kind in [rr(), wfq(&[])] {
+            let mut q = queue(kind);
+            for (tsn, si) in [(1, 1), (2, 1), (3, 2), (4, 2)] {
+                push(&mut q, stream_chunk(tsn, si, 10));
+            }
+            let order: Vec<u32> = std::iter::from_fn(|| pop_tsn(&mut q)).collect();
+            assert_eq!(vec![1, 3, 2, 4], order);
+        }
+        // pion also covers a caller-supplied scheduler (`lifoStreamScheduler`); schedulers are
+        // an enum here, so only the two built-in ones exist.
+    }
+
+    #[test]
+    fn a_reset_marker_waits_for_the_data_of_its_own_stream_only() {
+        let mut q = queue(rr());
+        push(&mut q, stream_chunk(1, 1, 10));
+        q.push_reset(ResetMarker {
+            stream_identifier: 1,
+        });
+        push(&mut q, stream_chunk(2, 2, 10));
+        // stream 1 goes first: its data, then (on its next turn) its reset marker
+        assert_eq!(Some(1), pop_tsn(&mut q));
+        // stream 2 is next in the round; the marker of stream 1 does not hold it up
+        assert_eq!(Some(2), pop_tsn(&mut q));
+        assert!(q.peek().is_none(), "the marker is control state, not data");
+        assert_eq!(1, q.pop_ready_reset().unwrap().stream_identifier);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn draining_an_unsent_tail_leaves_other_streams_alone() {
+        use crate::chunk::chunk_payload_data::MessageId;
+        let mut q = queue(rr());
+        let message = |id, si, n| {
+            (0..n)
+                .map(|i| ChunkPayloadData {
+                    message_id: MessageId::new(id),
+                    stream_identifier: si,
+                    beginning_fragment: i == 0,
+                    ending_fragment: i == n - 1,
+                    user_data: Bytes::from_static(b"data"),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+        };
+        q.push_message(message(0, 1, 3));
+        q.push_message(message(1, 2, 2));
+        assert_eq!(5, q.len());
+        assert_eq!(20, q.get_num_bytes());
+
+        let first = q.peek().unwrap().message_id.unwrap();
+        assert_eq!(MessageId::new(0), Some(first));
+        q.pop(true, false).unwrap();
+        // stream 2 has the turn now; its message is not the one asked for
+        assert!(q.drain_message(first).unwrap().is_empty());
+        q.pop(true, false).unwrap(); // stream 2, first fragment
+        // back to stream 1: drain its remaining two fragments
+        let tail = q.drain_message(first).unwrap();
+        assert_eq!(2, tail.len());
+        assert!(q.drain_message(first).unwrap().is_empty(), "drained once");
+        assert_eq!(1, q.len());
+        assert_eq!(4, q.get_num_bytes());
+        assert_eq!(
+            Some(MessageId::new(1).unwrap()),
+            q.peek().unwrap().message_id
+        );
+    }
+
+    /// Replays `tests/data/pion_sched_golden.jsonl`: random push/pop sequences through pion's
+    /// round-robin and weighted-fair-queueing schedulers (v1.12.0), which must hand out the same
+    /// chunks in the same order. `PION_SCHED_GOLDEN=<file>` replays another file.
+    #[test]
+    fn matches_pion_stream_schedulers() {
+        let path = std::env::var("PION_SCHED_GOLDEN").unwrap_or_else(|_| {
+            format!(
+                "{}/tests/data/pion_sched_golden.jsonl",
+                env!("CARGO_MANIFEST_DIR")
+            )
+        });
+        let data = std::fs::read_to_string(path).unwrap();
+        let mut total = 0;
+        for line in data.lines() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            let kind = match v["policy"].as_str().unwrap() {
+                "rr" => rr(),
+                _ => {
+                    let weights: Vec<(u16, u16)> = v["weights"]
+                        .as_object()
+                        .map(|m| {
+                            m.iter()
+                                .map(|(k, w)| (k.parse().unwrap(), w.as_u64().unwrap() as u16))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    wfq(&weights)
+                }
+            };
+            let mut q = queue(kind);
+            let mut got = vec![];
+            for op in v["ops"].as_array().unwrap() {
+                let field = |k: &str| op[k].as_u64().unwrap_or(0);
+                match op["k"].as_str().unwrap() {
+                    "push" => push(
+                        &mut q,
+                        stream_chunk(field("t") as u32, field("s") as u16, field("n") as usize),
+                    ),
+                    _ => got.push(pop_tsn(&mut q).map_or(-1, i64::from)),
+                }
+            }
+            let want: Vec<i64> = v["out"]
+                .as_array()
+                .map(|a| a.iter().map(|x| x.as_i64().unwrap()).collect())
+                .unwrap_or_default();
+            assert_eq!(want, got, "diverges from pion: {line}");
+            total += 1;
+        }
+        eprintln!("{total} scheduler sequences agree with pion");
+    }
+}

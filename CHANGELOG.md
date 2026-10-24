@@ -148,6 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fragment sharing a stream sequence number (the SSN wrapped, or the peer misbehaves) were glued
   into one delivered message; a fragment now only joins a fragmented set of its SSN. A duplicate
   fragment of an ordered message could also be counted twice in the queued byte total.
+- `rtc-sctp`: RACK's minimum round-trip time is a true 30 s windowed minimum (as pion's `windowedMin`),
+  so when the smallest sample ages out the next smallest recent one takes over instead of the
+  latest sample replacing it. DATA is ignored outside the states that can deliver it (before the
+  handshake completes and after SHUTDOWN / SHUTDOWN ACK), as in pion.
 - `rtc-sctp`: TSN, stream-reset sequence number and reassembly arithmetic wraps instead of
   overflowing at `u32::MAX` (a panic in debug builds).
 - `rtc-interceptor`: the pacer could report a release deadline equal to the instant it was computed

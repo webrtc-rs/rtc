@@ -71,6 +71,7 @@ pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
 pub(crate) mod timer;
+pub(crate) mod windowed_min;
 
 #[cfg(test)]
 mod association_test;

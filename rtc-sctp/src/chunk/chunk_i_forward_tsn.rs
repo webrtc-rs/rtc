@@ -210,3 +210,208 @@ impl Chunk for ChunkIForwardTsn {
         self
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use shared::error::Error;
+
+    fn entry(identifier: u16, unordered: bool, message_identifier: u32) -> ChunkIForwardTsnStream {
+        ChunkIForwardTsnStream {
+            identifier,
+            unordered,
+            message_identifier,
+        }
+    }
+
+    fn distinct_streams(count: usize) -> Vec<ChunkIForwardTsnStream> {
+        (0..count)
+            .map(|i| entry(i as u16, false, i as u32))
+            .collect()
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_success() -> Result<()> {
+        // pion: TestChunkIForwardTSN_Success
+        let tests: Vec<Vec<u8>> = vec![
+            vec![0xc2, 0x0, 0x0, 0x8, 0x0, 0x0, 0x0, 0x3],
+            vec![
+                0xc2, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x3, 0x0, 0x4, 0x0, 0x1, 0x0, 0x0, 0x0, 0x5,
+            ],
+            vec![
+                0xc2, 0x0, 0x0, 0x40, 0x0, 0x0, 0x0, 0x3, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5,
+                0x0, 0x6, 0x0, 0x1, 0x0, 0x0, 0x0, 0x7, 0x0, 0x8, 0x0, 0x1, 0x0, 0x0, 0x0, 0x9,
+                0x0, 0xa, 0x0, 0x1, 0x0, 0x0, 0x0, 0xb, 0x0, 0xc, 0x0, 0x1, 0x0, 0x0, 0x0, 0xd,
+                0x0, 0xe, 0x0, 0x1, 0x0, 0x0, 0x0, 0xf, 0x0, 0x10, 0x0, 0x1, 0x0, 0x0, 0x0, 0x11,
+            ],
+        ];
+        for (i, binary) in tests.into_iter().enumerate() {
+            let binary = Bytes::from(binary);
+            let actual = ChunkIForwardTsn::unmarshal(&binary)?;
+            let b = actual.marshal()?;
+            assert_eq!(binary, b, "test {i} not equal");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_unmarshal_normalizes_duplicate_streams() -> Result<()> {
+        // pion: TestChunkIForwardTSNUnmarshal_NormalizesDuplicateStreams
+        let raw = Bytes::from_static(&[
+            0xc2, 0x0, 0x0, 0x18, 0x0, 0x0, 0x0, 0x3, 0x0, 0x4, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0,
+            0x4, 0x0, 0x1, 0x0, 0x0, 0x0, 0x5,
+        ]);
+        let actual = ChunkIForwardTsn::unmarshal(&raw)?;
+        assert_eq!(vec![entry(4, true, 5)], actual.streams);
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_unmarshal_failure() {
+        // pion: TestChunkIForwardTSNUnmarshal_Failure
+        let tests: Vec<(&str, Vec<u8>)> = vec![
+            ("chunk header to short", vec![0xc2]),
+            ("missing New Cumulative TSN", vec![0xc2, 0x0, 0x0, 0x4]),
+            (
+                "missing stream info",
+                vec![0xc2, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x3, 0x0, 0x4, 0x0, 0x1],
+            ),
+        ];
+        for (name, binary) in tests {
+            let result = ChunkIForwardTsn::unmarshal(&Bytes::from(binary));
+            assert!(result.is_err(), "expected unmarshal '{name}' to fail");
+        }
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_unmarshal_failure_does_not_keep_partial_streams() {
+        // pion: TestChunkIForwardTSNUnmarshal_FailureDoesNotKeepPartialStreams. Unmarshal here
+        // returns a new chunk or an error, so no partially filled chunk can be observed; the
+        // test pins the error (a stream list that is not a whole number of entries).
+        let raw = Bytes::from_static(&[
+            0xc2, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0, 0x3, 0x0, 0x4, 0x0, 0x1, 0x0, 0x0, 0x0, 0x5, 0x0,
+            0x6,
+        ]);
+        assert_eq!(
+            Err(Error::ErrIForwardTsnChunkInvalidLength),
+            ChunkIForwardTsn::unmarshal(&raw)
+        );
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_check() {
+        // pion: TestChunkIForwardTSNCheck
+        struct Case {
+            name: &'static str,
+            chunk: ChunkIForwardTsn,
+            want_err: Option<Error>,
+            want: Option<Vec<ChunkIForwardTsnStream>>,
+        }
+        let cases = vec![
+            Case {
+                name: "valid with ordered and unordered forwards for same stream",
+                chunk: ChunkIForwardTsn {
+                    new_cumulative_tsn: 1,
+                    streams: vec![entry(1, false, 2), entry(1, true, 3)],
+                },
+                want_err: None,
+                want: None,
+            },
+            Case {
+                name: "zero new cumulative tsn",
+                chunk: ChunkIForwardTsn {
+                    new_cumulative_tsn: 0,
+                    streams: vec![entry(1, false, 2)],
+                },
+                want_err: None,
+                want: None,
+            },
+            Case {
+                name: "too many streams",
+                chunk: ChunkIForwardTsn {
+                    new_cumulative_tsn: 1,
+                    streams: distinct_streams(MAX_I_FORWARD_TSN_STREAMS + 1),
+                },
+                want_err: Some(Error::ErrIForwardTsnTooManyStreams),
+                want: None,
+            },
+            Case {
+                name: "duplicate ordered stream forward keeps largest mid",
+                chunk: ChunkIForwardTsn {
+                    new_cumulative_tsn: 1,
+                    streams: vec![entry(1, false, 2), entry(1, false, 3)],
+                },
+                want_err: None,
+                want: Some(vec![entry(1, false, 3)]),
+            },
+            Case {
+                name: "duplicate unordered stream forward keeps largest mid",
+                chunk: ChunkIForwardTsn {
+                    new_cumulative_tsn: 1,
+                    streams: vec![entry(1, true, 2), entry(1, true, 3)],
+                },
+                want_err: None,
+                want: Some(vec![entry(1, true, 3)]),
+            },
+        ];
+        for c in cases {
+            assert_eq!(c.want_err, c.chunk.check().err(), "{}", c.name);
+            if let Some(want) = c.want {
+                assert_eq!(
+                    want,
+                    normalize_i_forward_tsn_streams(&c.chunk.streams).into_owned(),
+                    "{}",
+                    c.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_marshal_normalizes_duplicate_streams() -> Result<()> {
+        // pion: TestChunkIForwardTSNMarshal_NormalizesDuplicateStreams
+        let b = ChunkIForwardTsn {
+            new_cumulative_tsn: 1,
+            streams: vec![entry(1, false, 2), entry(1, false, 3)],
+        }
+        .marshal()?;
+        assert_eq!(
+            &[
+                0xc2u8, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x1, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3
+            ][..],
+            &b[..]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunk_i_forward_tsn_marshal_zero_cumulative_tsn() {
+        // pion: TestChunkIForwardTSNMarshal_ZeroCumulativeTSN
+        assert!(
+            ChunkIForwardTsn {
+                new_cumulative_tsn: 0,
+                streams: vec![entry(1, false, 2)],
+            }
+            .marshal()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_largest_chunk_round_trips_and_one_more_stream_is_refused() -> Result<()> {
+        let chunk = ChunkIForwardTsn {
+            new_cumulative_tsn: 7,
+            streams: distinct_streams(MAX_I_FORWARD_TSN_STREAMS),
+        };
+        let raw = chunk.marshal()?;
+        assert!(raw.len() <= u16::MAX as usize);
+        assert_eq!(chunk, ChunkIForwardTsn::unmarshal(&raw)?);
+
+        let too_many = ChunkIForwardTsn {
+            new_cumulative_tsn: 7,
+            streams: distinct_streams(MAX_I_FORWARD_TSN_STREAMS + 1),
+        };
+        assert_eq!(Err(Error::ErrIForwardTsnTooManyStreams), too_many.marshal());
+        Ok(())
+    }
+}

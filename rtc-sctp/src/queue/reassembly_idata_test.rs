@@ -583,3 +583,111 @@ fn unordered_idata_counts_complete_queued_mids_against_the_descriptor_limit() {
         "zero-byte messages must not hide descriptor growth"
     );
 }
+
+/// Replays `tests/data/pion_reassembly_golden.jsonl`: random sequences of pushed fragments (DATA
+/// and I-DATA, ordered and unordered, dropped, duplicated and shuffled), reads and forwards
+/// through pion's reassembly queue (v1.12.0). Every step must agree on completeness, the error,
+/// the message read, whether the queue is readable and how many bytes it holds.
+/// `PION_REASSEMBLY_GOLDEN=<file>` replays another file.
+#[test]
+fn matches_pion_reassembly_queue() {
+    let path = std::env::var("PION_REASSEMBLY_GOLDEN").unwrap_or_else(|_| {
+        format!(
+            "{}/tests/data/pion_reassembly_golden.jsonl",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    });
+    let data = std::fs::read_to_string(path).unwrap();
+    let mut total = 0;
+    let mut diverged = vec![];
+    for line in data.lines() {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        let limit = v["limit"].as_u64().unwrap_or(0) as u32;
+        let mut rq = ReassemblyQueue::new(0).with_max_entries(limit);
+        let ops = v["ops"].as_array().unwrap();
+        let want = v["out"].as_array().unwrap();
+        for (step, (op, want)) in ops.iter().zip(want).enumerate() {
+            let u = |k: &str| op[k].as_u64().unwrap_or(0);
+            let b = |k: &str| op[k].as_bool().unwrap_or(false);
+            let mut complete = false;
+            let mut err = String::new();
+            let mut read = None;
+            match op["k"].as_str().unwrap() {
+                "push" => {
+                    let tsn = u("t") as u32;
+                    let n = u("n") as usize;
+                    let idata = b("i");
+                    let chunk = ChunkPayloadData {
+                        idata,
+                        unordered: b("u"),
+                        beginning_fragment: b("b"),
+                        ending_fragment: b("e"),
+                        tsn,
+                        stream_sequence_number: u("ssn") as u16,
+                        message_identifier: u("mid") as u32,
+                        fragment_sequence_number: u("fsn") as u32,
+                        payload_type: PayloadProtocolIdentifier(u("ppi") as u32),
+                        user_data: Bytes::from(
+                            (0..n)
+                                .map(|i| (tsn as u8).wrapping_add(i as u8))
+                                .collect::<Vec<u8>>(),
+                        ),
+                        ..Default::default()
+                    };
+                    match rq.push_checked(chunk) {
+                        Ok(c) => complete = c,
+                        Err(e) => err = e.to_string(),
+                    }
+                }
+                "read" => match rq.read() {
+                    Some(chunks) => {
+                        let mut buf = vec![0u8; 1 << 16];
+                        let n = chunks.read(&mut buf).unwrap();
+                        read = Some((hex(&buf[..n]), chunks.ppi.0));
+                    }
+                    None => err = "try again".into(),
+                },
+                "fo" => rq.forward_tsn_for_ordered(u("v") as u16),
+                "fu" => rq.forward_tsn_for_unordered(u("v") as u32),
+                "fom" => rq.forward_tsn_for_ordered_mid(u("v") as u32),
+                "fum" => rq.forward_tsn_for_unordered_mid(u("v") as u32),
+                other => panic!("unknown op {other}"),
+            }
+            let got = (
+                complete,
+                err.clone(),
+                read.clone().map(|(d, _)| d).unwrap_or_default(),
+                read.map(|(_, p)| p).unwrap_or(0),
+                rq.is_readable(),
+                rq.get_num_bytes() as u64,
+            );
+            let exp = (
+                want["c"].as_bool().unwrap_or(false),
+                want["err"].as_str().unwrap_or("").to_string(),
+                want["d"].as_str().unwrap_or("").to_string(),
+                want["ppi"].as_u64().unwrap_or(0) as u32,
+                want["r"].as_bool().unwrap(),
+                want["nb"].as_u64().unwrap(),
+            );
+            if got != exp {
+                diverged.push(format!(
+                    "step {step} of {line}\n  pion {exp:?}\n  here {got:?}"
+                ));
+                break;
+            }
+        }
+        total += 1;
+    }
+    eprintln!(
+        "{total} reassembly sequences, {} diverge from pion",
+        diverged.len()
+    );
+    for d in diverged.iter().take(3) {
+        eprintln!("{}", &d[..d.len().min(3000)]);
+    }
+    assert!(diverged.is_empty());
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}

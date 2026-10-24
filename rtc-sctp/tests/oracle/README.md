@@ -19,3 +19,17 @@ I-DATA and I-FORWARD-TSN (RFC 8260) rows were added from a generator that builds
 those types (random flags, TSNs, identifiers, payload lengths, odd lengths, duplicate stream entries),
 wraps them, optionally mutates and re-checksums them, and runs them through the same oracle. About
 180,000 such inputs were compared and agree; 2,500 of them are in the corpus.
+
+Four more golden files come from the same pion/sctp v1.12.0 copy, each with a small exporter added to
+the package (like `oracle_export.go.txt`), a generator of random cases and a replay test here:
+`pion_sched_golden.jsonl` (round-robin / weighted-fair stream schedulers: push/pop sequences, pop
+order must match; 100,000 more sequences were compared offline, `PION_SCHED_GOLDEN=<file>`),
+`pion_wmin_golden.jsonl` (`windowedMin`; 200,000 offline, `PION_WMIN_GOLDEN`) and
+`pion_reassembly_golden.jsonl` (reassembly queue, DATA and I-DATA, ordered and unordered, with
+dropped, duplicated and shuffled fragments, reads, forwards and the descriptor limit; every step
+compares completeness, error, message read, readability and byte count; 300,000 offline,
+`PION_REASSEMBLY_GOLDEN`). The exporters are not kept in the tree.
+
+Unordered DATA with a duplicated TSN is left out of the reassembly corpus: pion sorts fragments with
+an unstable sort, so its result for equal TSNs is arbitrary (the association drops duplicate TSNs
+before the reassembly queue sees them).

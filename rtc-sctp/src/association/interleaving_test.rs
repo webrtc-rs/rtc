@@ -2,11 +2,17 @@
 //! unit tests for negotiation, the I-FORWARD-TSN chunk handling, protocol violations and the
 //! per-stream message identifiers.
 
+// Like the neighbouring tests, these set a few fields on a default association.
+#![allow(clippy::field_reassign_with_default)]
+
 use super::stream::{RecvSendState, ReliabilityType, StreamState};
 use super::*;
 use crate::chunk::chunk_i_forward_tsn::MAX_I_FORWARD_TSN_STREAMS;
+use crate::chunk::chunk_type::CT_IDATA;
 use crate::config::INITIAL_MTU;
 use crate::param::param_state_cookie::ParamStateCookie;
+use crate::queue::interleaved_queue::SchedulerKind;
+use std::num::NonZeroU16;
 
 fn association_with_mtu(config: TransportConfig, mtu: u32) -> Association {
     Association::new(
@@ -893,5 +899,65 @@ fn test_stream_handle_forward_tsn_for_mid() {
         assert_eq!(b"keep", &buf[..n]);
         assert_eq!(5, a.streams[&0].get_num_bytes_in_reassembly_queue());
         assert!(!a.streams[&0].reassembly_queue.is_readable());
+    }
+}
+
+#[test]
+fn test_association_options_interleaving() {
+    // pion: TestAssociationOptions_Interleaving. pion turns interleaving on by default and
+    // `WithEnableInterleaving(false)` turns it off; here it is off by default (browsers do not
+    // speak I-DATA) and `with_enable_interleaving(true)` turns it on. What is checked is the
+    // same thing: the option decides what the INIT offers.
+    let offers = |config: TransportConfig| -> bool {
+        let a = association_with_mtu(config, INITIAL_MTU);
+        let init = a.stored_init.as_ref().expect("a client stores its INIT");
+        init.params.iter().any(|p| {
+            p.as_any()
+                .downcast_ref::<crate::param::param_supported_extensions::ParamSupportedExtensions>(
+                )
+                .is_some_and(|e| e.chunk_types.contains(&CT_IDATA))
+        })
+    };
+    assert!(!TransportConfig::default().enable_interleaving());
+    assert!(!offers(TransportConfig::default()), "off by default");
+    assert!(offers(interleaving()));
+    assert!(!offers(
+        TransportConfig::default().with_enable_interleaving(false)
+    ));
+}
+
+#[test]
+fn test_interleaving_settings_weighted_fair_queueing_factory_snapshots_weights() {
+    // pion: TestInterleavingSettingsWeightedFairQueueingFactorySnapshotsWeights. The scheduler an
+    // association builds keeps the weights it was configured with, whatever happens to the
+    // configuration afterwards.
+    let weight = |w| NonZeroU16::new(w).unwrap();
+    let config = TransportConfig::default().with_stream_scheduler_weight(1, weight(2));
+    let a = association_with_mtu(config.clone(), INITIAL_MTU);
+    let _changed = config.with_stream_scheduler_weight(1, weight(5));
+    match &a.stream_scheduler {
+        SchedulerKind::WeightedFairQueueing { weights } => {
+            assert_eq!(1, weights.len());
+            assert_eq!(Some(&weight(2)), weights.get(&1));
+        }
+        other => panic!("a weight selects weighted fair queueing, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_clone_interleaving_settings_weighted_fair_queueing_factory_uses_cloned_weights() {
+    // pion: TestCloneInterleavingSettingsWeightedFairQueueingFactoryUsesClonedWeights
+    let weight = |w| NonZeroU16::new(w).unwrap();
+    let mut config = TransportConfig::default().with_stream_scheduler_weight(1, weight(2));
+    let clone = config.clone();
+    config = config.with_stream_scheduler_weight(1, weight(5));
+    assert_eq!(Some(weight(5)), config.stream_scheduler_weight(1));
+    assert_eq!(Some(weight(2)), clone.stream_scheduler_weight(1));
+    let a = association_with_mtu(clone, INITIAL_MTU);
+    match &a.stream_scheduler {
+        SchedulerKind::WeightedFairQueueing { weights } => {
+            assert_eq!(Some(&weight(2)), weights.get(&1));
+        }
+        other => panic!("expected weighted fair queueing, got {other:?}"),
     }
 }
