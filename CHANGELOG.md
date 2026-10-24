@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-dtls`: pion's config callbacks and options (pion/dtls v3.1.15 issue #24):
+  `ConfigBuilder::with_verify_connection` (run by both roles once the peer's `Finished` is
+  verified; an error sends a fatal `bad_certificate` alert), `with_get_certificate`
+  (server certificate selection from a `ClientHelloInfo`: SNI, cipher suites, signature
+  schemes, curves and the hello's random bytes; a server may hold no certificate of its
+  own when the callback answers), `with_get_client_certificate` (client certificate
+  selection from a `CertificateRequestInfo`), `with_insecure_skip_verify_hello` (answer a
+  cookie-less ClientHello directly), `with_certificate_signature_schemes` (the
+  `signature_algorithms_cert` extension, type 50, ported with pion's hybrid full-u16
+  PSS encoding and its pion tests), `with_elliptic_curves` (restrict the curves offered),
+  `with_hello_random_bytes_generator`, and the `client_hello_message_hook`,
+  `server_hello_message_hook` and `certificate_request_message_hook` message hooks, with
+  public accessors on the message types they hand out.
+- `rtc-dtls`: DTLS 1.3 / TLS 1.3 building blocks, types and tests only, nothing wired into
+  the 1.2 handshake (pion/dtls v3.1.15 issue #26): the `key_share`, `supported_versions`,
+  `pre_shared_key`, `psk_key_exchange_modes`, `early_data`, `post_handshake_auth`,
+  `certificate_authorities`, `oid_filters`, `cookie` and `connection_id` extensions; the
+  TLS 1.3 `certificate` and `certificate_request` handshake messages; the RFC 8446/9147
+  key schedule (`crypto::keyschedule`: HKDF-Expand-Label, Derive-Secret) on HKDF
+  extract/expand added to the `rtc-crypto` provider abstraction for both backends; and
+  `algorithms_13()`, the DTLS 1.3 signature-scheme list.
 - `rtc-ice`: ICE renomination (draft-thatcher-ice-renomination-01), as in pion: the controlling
   agent can move a live call to another pair with `Agent::renominate_candidate`, optionally by
   itself (`AgentConfig::automatic_renomination`: a direct path replacing a relayed one, an RTT
@@ -27,6 +48,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `telephone-event/8000` no longer matches `telephone-event/48000`.
 
 ### Changed
+- `rtc-dtls`, fixes found by porting pion's tests (issues #24/#25): the client's
+  CertificateVerify scheme selection ignored the server's CertificateRequest and signed
+  with its own first scheme; it now honors local policy while retaining the peer's
+  preference order, so a server requesting only schemes outside the client's policy fails
+  the handshake. The default curve offer now matches pion's `defaultCurves`
+  (`X25519, P256, P384`). `CertificateRequest` now parses and re-emits the distinguished
+  names of acceptable CAs (previously dropped), skips unrecognized certificate types and
+  signature schemes as pion does, and `supported_signature_algorithms` uses pion's hybrid
+  encoding (full-u16 PSS code points beside byte-split pairs). Handshake signature
+  verification binds the scheme to the certificate's key kind and hash (an Ed25519
+  signature labeled SHA-256, or an ECDSA signature over an empty digest, is now rejected),
+  the peer's RSA key size is enforced (>= 2048 bits unless `insecure_verification`), and
+  RSA-PSS certificates must carry the OID their scheme names. Hello messages gained the
+  `session_id` field pion carries.
+- `rtc-sctp`, fixes found by porting pion's unit tests (issue #27): FORWARD-TSN now clears
+  the gaps it covers (a reassembled chunk set behind the new cumulative TSN is dropped
+  instead of lingering), same-SSN chunk-set corruption and duplicate-TSN byte accounting
+  in the reassembly queue are fixed, and the pending queue clamps a pop to the bytes
+  actually available.
 - `rtc`, fixes found by porting pion's tests: an answer takes the complement of an explicit
   `a=setup:active` / `passive` in the offer (RFC 5763 section 5; before, two `active` peers could
   both wait for a ClientHello) and keeps the negotiated role on renegotiation (RFC 8842
