@@ -79,16 +79,32 @@ impl HashAlgorithm {
 }
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-16
+// https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-signaturescheme
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The signature algorithms this crate can verify and produce.
 #[non_exhaustive]
 pub enum SignatureAlgorithm {
+    /// `ANONYMOUS` (`0`).
+    Anonymous = 0,
     /// `RSA` (`1`).
     Rsa = 1,
     /// `ECDSA` (`3`).
     Ecdsa = 3,
     /// `ED25519` (`7`).
     Ed25519 = 7,
+    /// `RSA_PSS_RSAE_SHA256` (`0x0804`): a TLS 1.3 signature scheme whose full `u16` value is
+    /// carried in the signature half of the pair.
+    RsaPssRsaeSha256 = 0x0804,
+    /// `RSA_PSS_RSAE_SHA384` (`0x0805`).
+    RsaPssRsaeSha384 = 0x0805,
+    /// `RSA_PSS_RSAE_SHA512` (`0x0806`).
+    RsaPssRsaeSha512 = 0x0806,
+    /// `RSA_PSS_PSS_SHA256` (`0x0809`).
+    RsaPssPssSha256 = 0x0809,
+    /// `RSA_PSS_PSS_SHA384` (`0x080a`).
+    RsaPssPssSha384 = 0x080a,
+    /// `RSA_PSS_PSS_SHA512` (`0x080b`).
+    RsaPssPssSha512 = 0x080b,
     /// An algorithm this crate does not implement.
     Unsupported,
 }
@@ -96,11 +112,68 @@ pub enum SignatureAlgorithm {
 impl From<u8> for SignatureAlgorithm {
     fn from(val: u8) -> Self {
         match val {
+            0 => SignatureAlgorithm::Anonymous,
             1 => SignatureAlgorithm::Rsa,
             3 => SignatureAlgorithm::Ecdsa,
             7 => SignatureAlgorithm::Ed25519,
             _ => SignatureAlgorithm::Unsupported,
         }
+    }
+}
+
+impl SignatureAlgorithm {
+    /// Returns `true` if the algorithm is an RSA-PSS signature scheme.
+    ///
+    /// The check is by specific value rather than the `0x0804`-`0x080b` range, because `0x0807`
+    /// (Ed25519) and `0x0808` (Ed448) fall inside that range but are not PSS schemes.
+    #[must_use]
+    pub const fn is_pss(self) -> bool {
+        matches!(
+            self,
+            Self::RsaPssRsaeSha256
+                | Self::RsaPssRsaeSha384
+                | Self::RsaPssRsaeSha512
+                | Self::RsaPssPssSha256
+                | Self::RsaPssPssSha384
+                | Self::RsaPssPssSha512
+        )
+    }
+
+    /// Returns `true` if the algorithm is a signature scheme this crate parses for wire-format
+    /// interoperability but never negotiates: the `RSA_PSS_PSS` family, which needs certificates
+    /// with the `id-RSASSA-PSS` OID that are effectively unused on the public Web PKI.
+    #[must_use]
+    pub const fn is_unsupported(self) -> bool {
+        matches!(
+            self,
+            Self::RsaPssPssSha256 | Self::RsaPssPssSha384 | Self::RsaPssPssSha512
+        )
+    }
+
+    /// The hash algorithm associated with an RSA-PSS signature scheme, or
+    /// [`HashAlgorithm::Md2`] (this crate's `0` code point, pion's `hash.None`) when the
+    /// algorithm is not an RSA-PSS scheme.
+    #[must_use]
+    pub const fn get_pss_hash(self) -> HashAlgorithm {
+        match self {
+            Self::RsaPssRsaeSha256 | Self::RsaPssPssSha256 => HashAlgorithm::Sha256,
+            Self::RsaPssRsaeSha384 | Self::RsaPssPssSha384 => HashAlgorithm::Sha384,
+            Self::RsaPssRsaeSha512 | Self::RsaPssPssSha512 => HashAlgorithm::Sha512,
+            _ => HashAlgorithm::Md2,
+        }
+    }
+}
+
+/// Extracts the hash algorithm from an RSA-PSS signature-scheme value, handling the TLS 1.3 PSS
+/// schemes. Returns [`HashAlgorithm::Md2`] (this crate's `0` code point, pion's `hash.None`) if
+/// the scheme is not a recognized PSS scheme.
+#[must_use]
+pub const fn extract_hash_from_pss(pss_scheme: u16) -> HashAlgorithm {
+    match pss_scheme {
+        0x0804 | 0x0809 => HashAlgorithm::Sha256,
+        0x0805 | 0x080a => HashAlgorithm::Sha384,
+        0x0806 | 0x080b => HashAlgorithm::Sha512,
+        _ => HashAlgorithm::Md2,
     }
 }
 
@@ -114,6 +187,61 @@ pub struct SignatureHashAlgorithm {
 }
 
 impl SignatureHashAlgorithm {
+    /// Decodes one signature-scheme code point ([RFC 8446] §4.2.3) into a pair, as pion's
+    /// `signaturehash.Algorithm.Unmarshal` does. TLS 1.3 PSS schemes carry the full `u16` value in
+    /// the signature half; every other scheme splits into a hash byte and a signature byte.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ErrInvalidSignatureAlgorithm`] or [`Error::ErrInvalidHashAlgorithm`] when the
+    /// code point is not a recognized pair.
+    pub(crate) fn from_scheme(scheme: u16) -> Result<Self> {
+        let signature = match scheme {
+            0x0804 => SignatureAlgorithm::RsaPssRsaeSha256,
+            0x0805 => SignatureAlgorithm::RsaPssRsaeSha384,
+            0x0806 => SignatureAlgorithm::RsaPssRsaeSha512,
+            0x0809 => SignatureAlgorithm::RsaPssPssSha256,
+            0x080a => SignatureAlgorithm::RsaPssPssSha384,
+            0x080b => SignatureAlgorithm::RsaPssPssSha512,
+            _ => {
+                // TLS 1.2 style: hash (high byte) + signature (low byte).
+                let signature: SignatureAlgorithm = ((scheme & 0xFF) as u8).into();
+                if signature == SignatureAlgorithm::Unsupported {
+                    return Err(Error::ErrInvalidSignatureAlgorithm);
+                }
+                let hash: HashAlgorithm = ((scheme >> 8) as u8).into();
+                if hash == HashAlgorithm::Unsupported || hash.invalid() {
+                    return Err(Error::ErrInvalidHashAlgorithm);
+                }
+                return Ok(Self { hash, signature });
+            }
+        };
+
+        Ok(Self {
+            hash: extract_hash_from_pss(scheme),
+            signature,
+        })
+    }
+
+    /// Encodes this pair the way pion's `signaturehash.Algorithm.Marshal` does: a TLS 1.3 PSS
+    /// scheme writes the full signature-scheme `u16`; every other pair the hash byte then the
+    /// signature byte.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ErrInvalidSignHashAlgorithm`] when either half cannot be encoded.
+    pub(crate) fn scheme_bytes(&self) -> Result<[u8; 2]> {
+        if self.signature.is_pss() {
+            return Ok((self.signature as u16).to_be_bytes());
+        }
+        match (self.hash, self.signature) {
+            (HashAlgorithm::Unsupported, _) | (_, SignatureAlgorithm::Unsupported) => {
+                Err(Error::ErrInvalidSignHashAlgorithm)
+            }
+            (hash, signature) => Ok([hash as u8, signature as u8]),
+        }
+    }
+
     pub(crate) fn crypto_scheme(&self) -> Result<crypto::SignatureScheme> {
         match (self.signature, self.hash) {
             (SignatureAlgorithm::Ed25519, _) => Ok(crypto::SignatureScheme::Ed25519),
@@ -246,21 +374,13 @@ pub(crate) fn parse_signature_schemes(
 
     let mut out = vec![];
     for ss in sigs {
-        let sig: SignatureAlgorithm = ((*ss & 0xFF) as u8).into();
-        if sig == SignatureAlgorithm::Unsupported {
-            return Err(Error::ErrInvalidSignatureAlgorithm);
-        }
-        let h: HashAlgorithm = (((*ss >> 8) & 0xFF) as u8).into();
-        if h == HashAlgorithm::Unsupported || h.invalid() {
-            return Err(Error::ErrInvalidHashAlgorithm);
-        }
-        if h.insecure() && !insecure_hashes {
+        // Handles both TLS 1.2 byte-split encoding and TLS 1.3 PSS full-u16 schemes, as pion
+        // does.
+        let alg = SignatureHashAlgorithm::from_scheme(*ss)?;
+        if alg.hash.insecure() && !insecure_hashes {
             continue;
         }
-        out.push(SignatureHashAlgorithm {
-            hash: h,
-            signature: sig,
-        })
+        out.push(alg);
     }
 
     if out.is_empty() {

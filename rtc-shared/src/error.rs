@@ -1126,6 +1126,9 @@ pub enum Error {
     /// Invalid signature algorithm.
     #[error("invalid signature algorithm")]
     ErrInvalidSignatureAlgorithm,
+    /// Invalid or unencodable signature-hash algorithm pair.
+    #[error("invalid signature hash algorithm")]
+    ErrInvalidSignHashAlgorithm,
     /// Expected and actual key signature do not match.
     #[error("expected and actual key signature do not match")]
     ErrKeySignatureMismatch,

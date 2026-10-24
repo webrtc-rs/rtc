@@ -294,7 +294,16 @@ fn verify_signature(
         SignatureAlgorithm::Ed25519 => PublicKeyEncoding::Ed25519Raw,
         SignatureAlgorithm::Ecdsa => PublicKeyEncoding::EcUncompressedPoint,
         SignatureAlgorithm::Rsa => PublicKeyEncoding::RsaPkcs1Der,
-        SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
+        // The PSS schemes are parsed on the wire but no provider signs or verifies them yet,
+        // and anonymous pairs have no key to verify against.
+        SignatureAlgorithm::RsaPssRsaeSha256
+        | SignatureAlgorithm::RsaPssRsaeSha384
+        | SignatureAlgorithm::RsaPssRsaeSha512
+        | SignatureAlgorithm::RsaPssPssSha256
+        | SignatureAlgorithm::RsaPssPssSha384
+        | SignatureAlgorithm::RsaPssPssSha512
+        | SignatureAlgorithm::Anonymous
+        | SignatureAlgorithm::Unsupported => return Err(Error::ErrKeySignatureVerifyUnimplemented),
     };
     if hash_algorithm.signature == SignatureAlgorithm::Rsa
         && remote_key_signature.len() < 256
