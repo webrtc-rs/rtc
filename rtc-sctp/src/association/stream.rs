@@ -286,19 +286,24 @@ impl Stream<'_> {
     /// `now` is the instant the caller is acting at: resetting the stream queues an outgoing
     /// chunk, so it is on the same write path as [`write_sctp`](Self::write_sctp).
     pub fn stop(&mut self, now: Instant) -> Result<()> {
-        let mut reset = false;
-        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
-            if s.state == RecvSendState::Readable || s.state == RecvSendState::ReadWritable {
-                reset = true;
-            }
-            s.state = ((s.state as u8) & 0x2).into();
-        }
-
+        let reset = self
+            .association
+            .streams
+            .get(&self.stream_identifier)
+            .is_some_and(|s| {
+                matches!(
+                    s.state,
+                    RecvSendState::Readable | RecvSendState::ReadWritable
+                )
+            });
         if reset {
             // Reset the outgoing stream
             // https://tools.ietf.org/html/rfc6525
             self.association
                 .send_reset_request(now, self.stream_identifier)?;
+        }
+        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
+            s.state = ((s.state as u8) & 0x2).into();
         }
 
         Ok(())
@@ -320,8 +325,8 @@ impl Stream<'_> {
     ///
     /// Resets the stream when both halves of this stream are shutdown.
     pub fn close(&mut self, now: Instant) -> Result<()> {
-        self.finish()?;
-        self.stop(now)
+        self.stop(now)?;
+        self.finish()
     }
 
     /// stream_identifier returns the Stream identifier associated to the stream.
@@ -454,7 +459,6 @@ pub struct StreamState {
     pub(crate) generation: u64,
     pub(crate) default_payload_type: PayloadProtocolIdentifier,
     pub(crate) reassembly_queue: ReassemblyQueue,
-    pub(crate) sequence_number: u16,
     pub(crate) state: RecvSendState,
     pub(crate) unordered: bool,
     pub(crate) reliability_type: ReliabilityType,
@@ -477,7 +481,6 @@ impl StreamState {
             max_payload_size,
             default_payload_type,
             reassembly_queue: ReassemblyQueue::new(stream_identifier),
-            sequence_number: 0,
             state: RecvSendState::ReadWritable,
             unordered: false,
             reliability_type: ReliabilityType::Reliable,
@@ -562,7 +565,6 @@ impl StreamState {
                 ending_fragment: remaining - fragment_size == 0,
                 immediate_sack: false,
                 payload_type: ppi,
-                stream_sequence_number: self.sequence_number,
                 ..Default::default()
             };
 
@@ -570,14 +572,6 @@ impl StreamState {
 
             remaining -= fragment_size;
             i += fragment_size;
-        }
-
-        // RFC 4960 Sec 6.6
-        // Note: When transmitting ordered and unordered data, an endpoint does
-        // not increment its Stream Sequence Number when transmitting a DATA
-        // chunk with U flag set to 1.
-        if !unordered {
-            self.sequence_number = self.sequence_number.wrapping_add(1);
         }
 
         let old_amount = self.buffered_amount;

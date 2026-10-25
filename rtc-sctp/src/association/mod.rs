@@ -22,7 +22,7 @@ use crate::chunk::{
     chunk_shutdown::ChunkShutdown,
     chunk_shutdown_ack::ChunkShutdownAck,
     chunk_shutdown_complete::ChunkShutdownComplete,
-    chunk_type::CT_FORWARD_TSN,
+    chunk_type::{CT_FORWARD_TSN, CT_RECONFIG},
 };
 use crate::config::{COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, TransportConfig};
 use crate::packet::{CommonHeader, Packet};
@@ -59,10 +59,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+mod reset;
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
 pub(crate) mod timer;
+mod transmit;
 
 #[cfg(test)]
 mod association_test;
@@ -182,8 +184,11 @@ pub struct Association {
 
     // Reconfig
     my_next_rsn: u32,
-    reconfigs: HashMap<u32, ChunkReconfig>,
-    reconfig_requests: HashMap<u32, ParamOutgoingResetRequest>,
+    peer_supports_reconfig: bool,
+    peer_last_rsn: u32,
+    outgoing_reset: Option<reset::OutgoingReset>,
+    reconfig_requests: HashMap<u32, reset::IncomingReset>,
+    completed_resets: VecDeque<reset::CompletedReset>,
 
     // Non-RFC internal data
     remote_addr: SocketAddr,
@@ -218,6 +223,8 @@ pub struct Association {
     /// ignores the per-stream list for them (it advances by `new_cumulative_tsn`
     /// alone), so reporting them was pure waste.
     fwd_tsn_stream_map: FxHashMap<u16, u16>,
+    confirmed_reset_tsns: FxHashMap<u16, u32>,
+    reset_tsn_ack_queue: VecDeque<(u32, Vec<u16>)>,
 
     pub(crate) rto_mgr: RtoManager,
     timers: TimerTable,
@@ -239,6 +246,7 @@ pub struct Association {
     stored_cookie_echo: Option<ChunkCookieEcho>,
     next_stream_generation: u64,
     next_message_id: u64,
+    transmit_streams: FxHashMap<StreamId, transmit::TransmitStream>,
     /// Per-chunk lookups on the receive path; SIDs are bounded by the
     /// negotiated stream count, so the faster non-SipHash hasher is safe.
     pub(crate) streams: FxHashMap<StreamId, StreamState>,
@@ -286,8 +294,11 @@ impl Default for Association {
 
             // Reconfig
             my_next_rsn: 0,
-            reconfigs: HashMap::default(),
+            peer_supports_reconfig: false,
+            peer_last_rsn: 0,
+            outgoing_reset: None,
             reconfig_requests: HashMap::default(),
+            completed_resets: VecDeque::new(),
 
             // Non-RFC internal data
             remote_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
@@ -313,6 +324,8 @@ impl Default for Association {
             advanced_peer_tsn_ack_point: 0,
             use_forward_tsn: false,
             fwd_tsn_stream_map: FxHashMap::default(),
+            confirmed_reset_tsns: FxHashMap::default(),
+            reset_tsn_ack_queue: VecDeque::default(),
 
             rto_mgr: RtoManager::default(),
             timers: TimerTable::default(),
@@ -334,6 +347,7 @@ impl Default for Association {
             stored_cookie_echo: None,
             next_stream_generation: 0,
             next_message_id: 0,
+            transmit_streams: FxHashMap::default(),
             streams: FxHashMap::default(),
 
             events: VecDeque::default(),
@@ -477,7 +491,11 @@ impl Association {
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_timeout(&self) -> Option<Instant> {
-        self.timers.next_timeout()
+        self.timers
+            .next_timeout()
+            .into_iter()
+            .chain(self.next_reconfig_result_retry())
+            .min()
     }
 
     /// Returns packets to transmit
@@ -521,6 +539,7 @@ impl Association {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
+        self.resume_reset_query(now);
         for &timer in &Timer::VALUES {
             let (expired, failure, n_rtos) = self.timers.is_expired(timer, now);
             if !expired {
@@ -733,6 +752,8 @@ impl Association {
             debug!("[{}] closing association..", self.side);
 
             self.close_all_timers();
+            self.outgoing_reset = None;
+            self.will_retransmit_reconfig = false;
 
             for si in self.streams.keys().cloned().collect::<Vec<u16>>() {
                 self.unregister_stream(si, reason.clone());
@@ -851,23 +872,24 @@ impl Association {
     /// Called when that stream drains.
     ///
     /// The reply is queued like any other control packet; a request naming
-    /// several streams is retried as a whole and simply defers again if another
-    /// of its streams is still readable.
+    /// several streams retains only its unfinished selection, so retries cannot
+    /// reset a completed SID that the application has already reused.
     pub(crate) fn retry_deferred_resets(&mut self, stream_identifier: StreamId) {
-        let pending: Vec<ParamOutgoingResetRequest> = self
+        let pending: Vec<u32> = self
             .reconfig_requests
-            .values()
-            .filter(|p| p.stream_identifiers.contains(&stream_identifier))
-            .cloned()
+            .iter()
+            .filter(|(_, p)| p.remaining.contains(&stream_identifier))
+            .map(|(&sequence, _)| sequence)
             .collect();
         if pending.is_empty() {
             return;
         }
 
         let mut reply = vec![];
-        for p in pending {
-            if let Err(err) = self.reset_streams_if_any(&p, true, &mut reply) {
-                debug!("[{}] retry of deferred reset failed: {:?}", self.side, err);
+        for sequence in pending {
+            if let Err(err) = self.reset_streams_if_any(sequence, true, &mut reply) {
+                self.fail_message_queue(err);
+                return;
             }
         }
         for packet in reply {
@@ -1021,7 +1043,7 @@ impl Association {
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkSelectiveAck>() {
             self.handle_sack(c, now)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkReconfig>() {
-            self.handle_reconfig(c)?
+            self.handle_reconfig(now, c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkForwardTsn>() {
             self.handle_forward_tsn(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkShutdown>() {
@@ -1081,6 +1103,13 @@ impl Association {
         } else {
             i.initial_tsn - 1
         };
+        self.peer_last_rsn = i.initial_tsn.wrapping_sub(1);
+        self.peer_supports_reconfig = i.params.iter().any(|param| {
+            param
+                .as_any()
+                .downcast_ref::<ParamSupportedExtensions>()
+                .is_some_and(|extensions| extensions.chunk_types.contains(&CT_RECONFIG))
+        });
 
         // Adopt the peer's advertised receive window and seed ssthresh from it,
         // mirroring handle_init_ack (and Pion's shared init path). RFC 4960
@@ -1168,6 +1197,13 @@ impl Association {
         } else {
             i.initial_tsn - 1
         };
+        self.peer_last_rsn = i.initial_tsn.wrapping_sub(1);
+        self.peer_supports_reconfig = i.params.iter().any(|param| {
+            param
+                .as_any()
+                .downcast_ref::<ParamSupportedExtensions>()
+                .is_some_and(|extensions| extensions.chunk_types.contains(&CT_RECONFIG))
+        });
         if self.source_port != p.common_header.destination_port
             || self.destination_port != p.common_header.source_port
         {
@@ -1466,6 +1502,19 @@ impl Association {
             );
 
             self.cumulative_tsn_ack_point = d.cumulative_tsn_ack;
+            while self
+                .reset_tsn_ack_queue
+                .front()
+                .is_some_and(|(tsn, _)| sna32lte(*tsn, d.cumulative_tsn_ack))
+            {
+                if let Some((tsn, streams)) = self.reset_tsn_ack_queue.pop_front() {
+                    for si in streams {
+                        if self.confirmed_reset_tsns.get(&si) == Some(&tsn) {
+                            self.confirmed_reset_tsns.remove(&si);
+                        }
+                    }
+                }
+            }
             cum_tsn_ack_point_advanced = true;
             self.on_cumulative_tsn_ack_point_advanced(total_bytes_acked, now);
         }
@@ -1510,17 +1559,17 @@ impl Association {
         Ok(vec![])
     }
 
-    fn handle_reconfig(&mut self, c: &ChunkReconfig) -> Result<Vec<Packet>> {
+    fn handle_reconfig(&mut self, now: Instant, c: &ChunkReconfig) -> Result<Vec<Packet>> {
         trace!("[{}] handle_reconfig", self.side);
 
         let mut pp = vec![];
 
         if let Some(param_a) = &c.param_a {
-            self.handle_reconfig_param(param_a, &mut pp)?;
+            self.handle_reconfig_param(now, param_a, &mut pp)?;
         }
 
         if let Some(param_b) = &c.param_b {
-            self.handle_reconfig_param(param_b, &mut pp)?;
+            self.handle_reconfig_param(now, param_b, &mut pp)?;
         }
 
         Ok(pp)
@@ -1679,10 +1728,9 @@ impl Association {
             self.peer_last_tsn += 1;
             //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
 
-            let rst_reqs: Vec<ParamOutgoingResetRequest> =
-                self.reconfig_requests.values().cloned().collect();
-            for rst_req in rst_reqs {
-                self.reset_streams_if_any(&rst_req, false, &mut reply)?;
+            let sequences: Vec<u32> = self.reconfig_requests.keys().copied().collect();
+            for sequence in sequences {
+                self.reset_streams_if_any(sequence, false, &mut reply)?;
             }
         }
 
@@ -1717,20 +1765,32 @@ impl Association {
     #[allow(clippy::borrowed_box)]
     fn handle_reconfig_param(
         &mut self,
+        now: Instant,
         raw: &Box<dyn Param>,
         reply: &mut Vec<Packet>,
     ) -> Result<()> {
         if let Some(p) = raw.as_any().downcast_ref::<ParamOutgoingResetRequest>() {
-            self.reconfig_requests
-                .insert(p.reconfig_request_sequence_number, p.clone());
-            self.reset_streams_if_any(p, true, reply)?;
+            let action = self.accept_incoming_reset(p);
+            // Invalid/reused RSNs must not acknowledge another procedure.
+            if !matches!(
+                action,
+                reset::ReceiveResetAction::Reply(ReconfigResult::ErrorBadSequenceNumber)
+            ) {
+                self.acknowledge_reconfig(p.reconfig_response_sequence_number, now);
+            }
+            let sequence = p.reconfig_request_sequence_number;
+            match action {
+                reset::ReceiveResetAction::Reply(result) => {
+                    reply.push(self.reconfig_response_packet(sequence, result));
+                }
+                reset::ReceiveResetAction::Apply => {
+                    self.reset_streams_if_any(sequence, true, reply)?;
+                }
+            }
+            self.immediate_ack_triggered = true;
             Ok(())
         } else if let Some(p) = raw.as_any().downcast_ref::<ParamReconfigResponse>() {
-            self.reconfigs.remove(&p.reconfig_response_sequence_number);
-            if self.reconfigs.is_empty() {
-                self.timers.stop(Timer::Reconfig);
-            }
-            Ok(())
+            self.handle_reset_response(now, p)
         } else {
             Err(Error::ErrParameterType)
         }
@@ -2054,8 +2114,8 @@ impl Association {
     /// Only *readable* data counts: an incomplete fragment set can never be
     /// completed once the peer has reset, so it is discardable and must not
     /// hold the reset open forever.
-    fn streams_awaiting_drain(&self, p: &ParamOutgoingResetRequest) -> Vec<StreamId> {
-        p.stream_identifiers
+    fn streams_awaiting_drain(&self, streams: &[StreamId]) -> Vec<StreamId> {
+        streams
             .iter()
             .copied()
             .filter(|id| {
@@ -2068,80 +2128,78 @@ impl Association {
 
     fn reset_streams_if_any(
         &mut self,
-        p: &ParamOutgoingResetRequest,
+        sequence: u32,
         respond: bool,
         reply: &mut Vec<Packet>,
     ) -> Result<()> {
+        let Some(reset) = self.reconfig_requests.get(&sequence) else {
+            return Ok(());
+        };
+        let sender_last_tsn = reset.original.sender_last_tsn;
+        let streams = reset.remaining.clone();
         let mut result = ReconfigResult::SuccessPerformed;
-        let mut sis_to_reset = vec![];
 
-        if sna32lte(p.sender_last_tsn, self.peer_last_tsn) {
+        if sna32lte(sender_last_tsn, self.peer_last_tsn) {
             debug!(
                 "[{}] resetStream(): senderLastTSN={} <= peer_last_tsn={}",
-                self.side, p.sender_last_tsn, self.peer_last_tsn
+                self.side, sender_last_tsn, self.peer_last_tsn
             );
 
-            let draining = self.streams_awaiting_drain(p);
+            let draining = self.streams_awaiting_drain(&streams);
+            // Queueing a reciprocal boundary can fail. Validate the whole
+            // group before unregistering any API stream or changing a gate.
+            let reset_count = if respond && self.peer_supports_reconfig {
+                streams
+                    .iter()
+                    .filter(|id| {
+                        !draining.contains(id)
+                            && self.streams.contains_key(id)
+                            && !self.pending_queue.is_resetting(**id)
+                    })
+                    .count() as u64
+            } else {
+                0
+            };
+            self.pending_queue.check_reset_capacity(reset_count)?;
 
-            for id in &p.stream_identifiers {
+            for id in &streams {
                 if draining.contains(id) {
                     continue;
                 }
                 if self.streams.contains_key(id) {
-                    if respond {
-                        sis_to_reset.push(*id);
+                    if respond
+                        && self.peer_supports_reconfig
+                        && !self.pending_queue.is_resetting(*id)
+                    {
+                        self.pending_queue.push_reset(ResetMarker {
+                            stream_identifier: *id,
+                        })?;
                     }
                     self.unregister_stream(*id, AssociationError::Reset);
                 }
             }
 
             if draining.is_empty() {
-                self.reconfig_requests
-                    .remove(&p.reconfig_request_sequence_number);
+                self.complete_incoming_reset(sequence);
             } else {
                 debug!(
                     "[{}] resetStream(): deferring reset of {:?}, application has not drained",
                     self.side, draining
                 );
+                if let Some(reset) = self.reconfig_requests.get_mut(&sequence) {
+                    reset.remaining = draining;
+                }
                 result = ReconfigResult::InProgress;
             }
         } else {
             debug!(
                 "[{}] resetStream(): senderLastTSN={} > peer_last_tsn={}",
-                self.side, p.sender_last_tsn, self.peer_last_tsn
+                self.side, sender_last_tsn, self.peer_last_tsn
             );
             result = ReconfigResult::InProgress;
         }
 
-        // Answer incoming reset requests with the same reset request, but with
-        // reconfig_response_sequence_number.
-        if !sis_to_reset.is_empty() {
-            let rsn = self.generate_next_rsn();
-            let tsn = self.my_next_tsn - 1;
-
-            let c = ChunkReconfig {
-                param_a: Some(Box::new(ParamOutgoingResetRequest {
-                    reconfig_request_sequence_number: rsn,
-                    reconfig_response_sequence_number: p.reconfig_request_sequence_number,
-                    sender_last_tsn: tsn,
-                    stream_identifiers: sis_to_reset,
-                })),
-                ..Default::default()
-            };
-
-            self.reconfigs.insert(rsn, c.clone()); // store in the map for retransmission
-
-            let p = self.create_packet(vec![Box::new(c)]);
-            reply.push(p);
-        }
-
-        let packet = self.create_packet(vec![Box::new(ChunkReconfig {
-            param_a: Some(Box::new(ParamReconfigResponse {
-                reconfig_response_sequence_number: p.reconfig_request_sequence_number,
-                result,
-            })),
-            param_b: None,
-        })]);
+        let packet = self.reconfig_response_packet(sequence, result);
 
         debug!("[{}] RESET RESPONSE: {}", self.side, packet);
 
@@ -2294,6 +2352,13 @@ impl Association {
                 if self.state() == AssociationState::Closed {
                     return (vec![], false);
                 }
+                // An unresolved reset can hold FORWARD-TSN at its boundary.
+                // Keep its existing recovery procedure live while draining.
+                self.resume_reset_query(now);
+                if let Err(err) = self.emit_reconfig(now, &mut raw_packets) {
+                    self.fail_message_queue(err);
+                    return (vec![], false);
+                }
                 raw_packets = self.gather_outbound_fast_retransmission_packets(raw_packets, now);
                 if self.state() == AssociationState::Closed {
                     return (vec![], false);
@@ -2330,6 +2395,7 @@ impl Association {
         mut raw_packets: Vec<Bytes>,
         now: Instant,
     ) -> Vec<Bytes> {
+        self.resume_reset_query(now);
         // Pop unsent data chunks from the pending queue to send as much as
         // cwnd and rwnd allow.
         let (chunks, sis_to_reset) = self.pop_pending_data_chunks_to_send(now);
@@ -2345,64 +2411,16 @@ impl Association {
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
 
-        if !sis_to_reset.is_empty() || self.will_retransmit_reconfig {
-            if self.will_retransmit_reconfig {
-                self.will_retransmit_reconfig = false;
-                debug!(
-                    "[{}] retransmit {} RECONFIG chunk(s)",
-                    self.side,
-                    self.reconfigs.len()
-                );
-                for c in self.reconfigs.values() {
-                    let p = self.create_packet(vec![Box::new(c.clone())]);
-                    if let Ok(raw) = p.marshal() {
-                        raw_packets.push(raw);
-                    } else {
-                        warn!(
-                            "[{}] failed to serialize a RECONFIG packet to be retransmitted",
-                            self.side,
-                        );
-                    }
-                }
+        let result = self.emit_reconfig(now, &mut raw_packets).and_then(|()| {
+            if sis_to_reset.is_empty() {
+                Ok(())
+            } else {
+                self.start_reconfig(now, sis_to_reset, &mut raw_packets)
             }
-
-            if !sis_to_reset.is_empty() {
-                let rsn = self.generate_next_rsn();
-                let tsn = self.my_next_tsn - 1;
-                debug!(
-                    "[{}] sending RECONFIG: rsn={} tsn={} streams={:?}",
-                    self.side,
-                    rsn,
-                    self.my_next_tsn - 1,
-                    sis_to_reset
-                );
-
-                let c = ChunkReconfig {
-                    param_a: Some(Box::new(ParamOutgoingResetRequest {
-                        reconfig_request_sequence_number: rsn,
-                        sender_last_tsn: tsn,
-                        stream_identifiers: sis_to_reset,
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                };
-                self.reconfigs.insert(rsn, c.clone()); // store in the map for retransmission
-
-                let p = self.create_packet(vec![Box::new(c)]);
-                if let Ok(raw) = p.marshal() {
-                    raw_packets.push(raw);
-                } else {
-                    warn!(
-                        "[{}] failed to serialize a RECONFIG packet to be transmitted",
-                        self.side
-                    );
-                }
-            }
-
-            if !self.reconfigs.is_empty() {
-                self.timers
-                    .start(Timer::Reconfig, now, self.rto_mgr.get_rto());
-            }
+        });
+        if let Err(err) = result {
+            self.fail_message_queue(err);
+            raw_packets.clear();
         }
 
         raw_packets
@@ -2708,12 +2726,27 @@ impl Association {
     fn advance_peer_ack_point(&mut self) {
         let mut tsn = self.advanced_peer_tsn_ack_point.wrapping_add(1);
         while let Some(c) = self.inflight_queue.get(tsn) {
+            // Keep an unresolved reset's old SSN information at its original
+            // TSN boundary while unrelated streams continue transmitting.
+            if self
+                .outgoing_reset
+                .as_ref()
+                .is_some_and(|reset| sna32gt(tsn, reset.request.sender_last_tsn))
+            {
+                break;
+            }
             if !c.abandoned() {
                 break;
             }
             let (unordered, si, ssn) = (c.unordered, c.stream_identifier, c.stream_sequence_number);
             self.advanced_peer_tsn_ack_point = tsn;
-            self.note_abandoned_for_forward_tsn(unordered, si, ssn);
+            if self
+                .confirmed_reset_tsns
+                .get(&si)
+                .is_none_or(|last_reset_tsn| sna32gt(tsn, *last_reset_tsn))
+            {
+                self.note_abandoned_for_forward_tsn(unordered, si, ssn);
+            }
             tsn = tsn.wrapping_add(1);
         }
         if sna32gt(
@@ -2826,13 +2859,29 @@ impl Association {
         );
         let mut released_per_stream = FxHashMap::default();
         let mut changed = false;
+        // Prepare TX state before retiring a pending tail. Even when its sent
+        // prefix was cumulatively ACKed, it still belongs to the active SSN.
+        let tail_state = if let Some(c) = self.pending_queue.peek()
+            && c.message_id == Some(message.id)
+            && !c.beginning_fragment
+        {
+            let mut tx = self
+                .transmit_streams
+                .get(&c.stream_identifier)
+                .copied()
+                .ok_or_else(|| Error::OtherSctpErr("missing transmit stream".into()))?;
+            let ssn = tx.abandon_tail(message.id)?;
+            Some((c.stream_identifier, tx, ssn))
+        } else {
+            None
+        };
         let tail = self.pending_queue.drain_message(message.id)?;
-        let assign_tsns = !inflight.is_empty()
-            || tail
-                .first()
-                .is_some_and(|c| !c.beginning_fragment || !c.unordered);
+        if let Some((si, tx, _)) = tail_state {
+            self.transmit_streams.insert(si, tx);
+        }
         for mut c in tail {
-            if assign_tsns {
+            if let Some((_, _, ssn)) = tail_state {
+                c.stream_sequence_number = ssn;
                 c.tsn = self.generate_next_tsn();
                 inflight.push(c.tsn);
                 self.inflight_queue.push_no_check(c);
@@ -2900,13 +2949,11 @@ impl Association {
         Ok(())
     }
 
-    /// An unsent unordered message can be dropped without assigning TSNs.
+    /// An unstarted message can be dropped without assigning SSNs or TSNs.
     /// A selected fragment tail instead needs the whole-message abandonment path.
     /// Timed(0) permits first transmissions until an actual retry is considered.
     fn pending_message_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
-        (!c.beginning_fragment || c.unordered)
-            && c.reliability.deadline() != c.created_at
-            && self.timed_data_expired(c, now)
+        c.reliability.deadline() != c.created_at && self.timed_data_expired(c, now)
     }
 
     fn pending_message_to_abandon(&self) -> Result<MessageToAbandon> {
@@ -2931,6 +2978,16 @@ impl Association {
         let mut chunks = vec![];
         let mut sis_to_reset = vec![]; // stream identifiers to reset
         if !self.pending_queue.is_empty() {
+            // Evaluate the procedure gate once per drain. Leave excess reset
+            // markers queued so the padded RE-CONFIG stays within the MTU.
+            let can_start_reconfig = self.can_start_reconfig();
+            let max_reset_streams = (self
+                .mtu
+                .min(COMMON_HEADER_SIZE + u16::MAX as u32)
+                .saturating_sub(COMMON_HEADER_SIZE + 20)
+                / 4
+                * 2)
+            .max(1) as usize;
             // RFC 4960 sec 6.1.  Transmission of DATA Chunks
             //   A) At any given time, the data sender MUST NOT transmit new data to
             //      any destination transport address if its peer's rwnd indicates
@@ -2940,11 +2997,19 @@ impl Association {
             //      the receiver if allowed by cwnd (see rule B, below).
 
             loop {
-                let Some(c) = self.pending_queue.peek() else {
-                    if let Some(reset) = self.pending_queue.pop_ready_reset() {
+                if can_start_reconfig {
+                    while sis_to_reset.len() < max_reset_streams {
+                        let Some(reset) = self.pending_queue.pop_ready_reset() else {
+                            break;
+                        };
                         sis_to_reset.push(reset.stream_identifier);
-                        continue;
                     }
+                }
+                // Freeze the wire boundary before sending later DATA.
+                if !sis_to_reset.is_empty() {
+                    break;
+                }
+                let Some(c) = self.pending_queue.peek() else {
                     break;
                 };
                 let (beginning_fragment, unordered, data_len) =
@@ -3001,7 +3066,7 @@ impl Association {
             }
 
             // the data sender can always have one DATA chunk in flight to the receiver
-            if chunks.is_empty() && self.inflight_queue.is_empty() {
+            if chunks.is_empty() && sis_to_reset.is_empty() && self.inflight_queue.is_empty() {
                 // Send zero window probe
                 if let Some(c) = self.pending_queue.peek() {
                     let (beginning_fragment, unordered) = (c.beginning_fragment, c.unordered);
@@ -3115,7 +3180,7 @@ impl Association {
     /// generate_next_rsn returns the my_next_rsn and increases it. The caller should hold the lock.
     fn generate_next_rsn(&mut self) -> u32 {
         let rsn = self.my_next_rsn;
-        self.my_next_rsn += 1;
+        self.my_next_rsn = self.my_next_rsn.wrapping_add(1);
         rsn
     }
 
@@ -3163,6 +3228,11 @@ impl Association {
         self.fwd_tsn_stream_map.is_empty()
     }
 
+    #[cfg(test)]
+    pub(crate) fn expected_reset_sequence(&self) -> u32 {
+        self.peer_last_rsn.wrapping_add(1)
+    }
+
     /// create_forward_tsn generates ForwardTSN chunk.
     /// This method will be be called if use_forward_tsn is set to false.
     fn create_forward_tsn(&self) -> ChunkForwardTsn {
@@ -3202,8 +3272,18 @@ impl Association {
         unordered: bool,
         now: Instant,
     ) -> Option<ChunkPayloadData> {
+        let first = self.pending_queue.peek()?;
+        let si = first.stream_identifier;
+        let slot = self.transmit_streams.get_mut(&si);
+        let mut tx = slot.as_deref().copied().unwrap_or_default();
+        let ssn = tx.assign_ssn(first).ok()?;
         if let Some(mut c) = self.pending_queue.pop(beginning_fragment, unordered) {
-            // Assign TSN
+            if let Some(slot) = slot {
+                *slot = tx;
+            } else {
+                self.transmit_streams.insert(si, tx);
+            }
+            c.stream_sequence_number = ssn;
             c.tsn = self.generate_next_tsn();
 
             // RTT baseline only; maxPacketLifeTime measures from `created_at`.
@@ -3242,9 +3322,14 @@ impl Association {
         if state != AssociationState::Established {
             return Err(Error::ErrResetPacketInStateNotExist);
         }
+        if !self.peer_supports_reconfig {
+            return Err(Error::OtherSctpErr(
+                "peer does not support SCTP stream reconfiguration".into(),
+            ));
+        }
 
         self.pending_queue
-            .push_reset(ResetMarker { stream_identifier });
+            .push_reset(ResetMarker { stream_identifier })?;
         self.awake_write_loop();
 
         Ok(())
@@ -3427,6 +3512,15 @@ impl Association {
                 //  * ICE would fail if the connectivity is lost
                 //  * WebRTC spec is not clear how this incident should be reported to ULP
                 error!("[{}] retransmission failure: T3-rtx (DATA)", self.side);
+            }
+
+            Timer::Reconfig => {
+                if let Err(err) = self.close(AssociationError::TimedOut) {
+                    error!(
+                        "[{}] failed to close association after reset timeout: {err}",
+                        self.side
+                    );
+                }
             }
 
             _ => {}
