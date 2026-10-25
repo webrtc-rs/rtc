@@ -28,6 +28,7 @@ use crate::config::{COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, Tr
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
     Param,
+    param_forward_tsn_supported::ParamForwardTsnSupported,
     param_heartbeat_info::ParamHeartbeatInfo,
     param_outgoing_reset_request::ParamOutgoingResetRequest,
     param_reconfig_response::{ParamReconfigResponse, ReconfigResult},
@@ -1197,6 +1198,12 @@ impl Association {
                         self.use_forward_tsn = true;
                     }
                 }
+            } else if param
+                .as_any()
+                .downcast_ref::<ParamForwardTsnSupported>()
+                .is_some()
+            {
+                self.use_forward_tsn = true;
             }
         }
         if !self.use_forward_tsn {
