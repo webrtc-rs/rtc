@@ -10,7 +10,8 @@ use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
     Association, AssociationError, AssociationEvent, AssociationHandle, ClientConfig,
-    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
+    DatagramEvent, EndpointEvent, Event, Payload, PayloadProtocolIdentifier, Stream, StreamEvent,
+    StreamId,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -49,6 +50,17 @@ pub(crate) struct SctpHandlerContext {
     /// level-triggered re-arm that closes that hole.
     pending_readable: HashSet<(AssociationHandle, StreamId)>,
 
+    /// Streams the peer created whose first message has not been drained yet.
+    ///
+    /// RFC 8832 §5.1: the Channel Type and Reliability Parameter of a `DATA_CHANNEL_OPEN`
+    /// describe the data channel, and both of its directions are sent with them. The opener
+    /// configures its stream from its own OPEN in `handle_write`; the accepting side has to
+    /// configure its outgoing direction from the OPEN it receives, which is the first message
+    /// on a stream the peer created. A stream enters this set on `StreamEvent::Opened` and
+    /// leaves it when its first message is drained, so only that message can configure it,
+    /// and a stream this side opened itself is never reconfigured by the peer.
+    peer_opened_streams: HashSet<(AssociationHandle, StreamId)>,
+
     /// Transport context of the most recent inbound datagram, **per association**.
     ///
     /// A resumed drain has no triggering packet to copy this from. A single `last_transport`
@@ -82,6 +94,7 @@ impl SctpHandlerContext {
             flush_dirty: false,
             abort_requested: false,
             pending_readable: HashSet::new(),
+            peer_opened_streams: HashSet::new(),
             association_transport: HashMap::new(),
             now,
         }
@@ -145,8 +158,14 @@ impl<'a> SctpHandler<'a> {
     /// Returns the messages read. The budget is checked **before** each `read_sctp()` because
     /// that call consumes a message: testing afterwards would mean having already taken the
     /// thing there was no room for.
+    ///
+    /// Both the immediate drain in `handle_read` and the resumed one in `resume_pending_reads`
+    /// come through here, so the first message of a peer-opened stream configures the stream
+    /// (see [`Self::apply_peer_reliability`]) whichever of the two delivers it.
+    #[allow(clippy::too_many_arguments)]
     fn drain_stream(
         ctx_pending: &mut HashSet<(AssociationHandle, StreamId)>,
+        peer_opened: &mut HashSet<(AssociationHandle, StreamId)>,
         conn: &mut Association,
         ch: AssociationHandle,
         id: StreamId,
@@ -181,6 +200,13 @@ impl<'a> SctpHandler<'a> {
             // scratch-buffer round-trip (`max_len` preserves the max-message-size bound
             // `read()` enforced via `ErrShortBuffer`).
             let payload = chunks.to_payload(max_len)?;
+            // An in-band channel is opened by a DATA_CHANNEL_OPEN on its stream (RFC 8832 §6),
+            // so only the first message of a stream the peer created can be the OPEN that
+            // describes it. A first message that is not DCEP belongs to an out-of-band
+            // negotiated channel, which this side configured itself.
+            if peer_opened.remove(&(ch, id)) && chunks.ppi == PayloadProtocolIdentifier::Dcep {
+                Self::apply_peer_reliability(&mut stream, &payload)?;
+            }
             messages.push(SctpMessage::Inbound(DataChannelMessage {
                 association_handle: ch.0,
                 stream_id: id,
@@ -190,6 +216,39 @@ impl<'a> SctpHandler<'a> {
             }));
             *budget -= 1;
         }
+    }
+
+    /// Configures this side's outgoing direction of a peer-opened stream from the peer's
+    /// `DATA_CHANNEL_OPEN`.
+    ///
+    /// RFC 8832 §5.1 defines the Channel Type and Reliability Parameter for the data channel
+    /// as a whole, not for the opener's direction alone. Without this the accepting side
+    /// sends every message ordered and fully reliable whatever the peer asked for: no U bit
+    /// on an unordered channel, and no abandonment on a partially reliable one. This is the
+    /// accept-side counterpart of the `set_reliability_params` call `handle_write` makes for
+    /// an OPEN sent from this side, and uses the same Channel Type mapping.
+    ///
+    /// A payload that is not a well-formed OPEN is left alone: the data channel handler
+    /// rejects it when it tries to accept the channel.
+    fn apply_peer_reliability(stream: &mut Stream<'_>, payload: &[u8]) -> Result<()> {
+        let mut buf = payload;
+        if let Ok(Message::DataChannelOpen(data_channel_open)) = Message::unmarshal(&mut buf) {
+            debug!(
+                "sctp data channel open from peer {:?} for stream id {}",
+                data_channel_open,
+                stream.stream_identifier()
+            );
+            let (unordered, reliability_type) =
+                ::datachannel::data_channel::DataChannel::get_reliability_params(
+                    data_channel_open.channel_type,
+                );
+            stream.set_reliability_params(
+                unordered,
+                reliability_type,
+                data_channel_open.reliability_parameter,
+            )?;
+        }
+        Ok(())
     }
 
     /// Retry streams parked by a full pipeline. The level-triggered half of the drain.
@@ -232,6 +291,7 @@ impl<'a> SctpHandler<'a> {
             let mut messages = vec![];
             Self::drain_stream(
                 &mut self.ctx.pending_readable,
+                &mut self.ctx.peer_opened_streams,
                 conn,
                 ch,
                 id,
@@ -284,6 +344,7 @@ impl<'a> SctpHandler<'a> {
             while association.poll().is_some() {}
         }
         self.ctx.pending_readable.clear();
+        self.ctx.peer_opened_streams.clear();
         self.flush_transmits(self.ctx.now);
     }
 
@@ -417,11 +478,17 @@ impl<'a>
                                     event: RTCEventInternal::SCTPStreamClosed(ch.0, id),
                                 });
                             }
+                            Event::Stream(StreamEvent::Opened { id }) => {
+                                // The peer's DATA created this stream. Its first message
+                                // may be the OPEN this side's sends must follow.
+                                self.ctx.peer_opened_streams.insert((*ch, id));
+                            }
                             Event::Stream(StreamEvent::Readable { id }) => {
                                 // Bounded: what is not read stays in the reassembly queue,
                                 // which is what lowers `a_rwnd` and throttles the peer.
                                 Self::drain_stream(
                                     &mut self.ctx.pending_readable,
+                                    &mut self.ctx.peer_opened_streams,
                                     conn,
                                     *ch,
                                     id,
@@ -493,6 +560,7 @@ impl<'a>
                     // accumulates entries for associations that no longer exist.
                     self.ctx.association_transport.remove(&ch);
                     self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
+                    self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
                 }
             }
 
@@ -603,6 +671,13 @@ impl<'a>
                                 reliability_type,
                                 data_channel_open.reliability_parameter,
                             )?;
+                            // This side owns the stream's parameters now. A record left by an
+                            // earlier, peer-created use of the same stream id must not let a
+                            // later OPEN from the peer override them.
+                            self.ctx.peer_opened_streams.remove(&(
+                                AssociationHandle(message.association_handle),
+                                message.stream_id,
+                            ));
 
                             // Out-of-band negotiated channels (W3C WebRTC
                             // `RTCDataChannelInit.negotiated`) only open the SCTP
@@ -743,6 +818,7 @@ impl<'a>
                 }
             }
             self.ctx.pending_readable.clear();
+            self.ctx.peer_opened_streams.clear();
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -796,6 +872,7 @@ impl<'a>
             sctp_associations.remove(&ch);
             self.ctx.association_transport.remove(&ch);
             self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
+            self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
         }
 
         for transmit in transmits {
@@ -875,11 +952,14 @@ mod tests {
     use crate::peer_connection::transport::{RTCTransportId, TransportKind};
     use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
+    use datachannel::message::message_channel_ack::DataChannelAck;
     use datachannel::message::message_channel_open::{
         CHANNEL_PRIORITY_NORMAL, ChannelType, DataChannelOpen,
     };
     use sansio::Protocol;
-    use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
+    use sctp::{
+        Association, Endpoint, EndpointConfig, ReliabilityType, ServerConfig, TransportConfig,
+    };
     use shared::{TransportProtocol, marshal::Marshal};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
@@ -1015,6 +1095,15 @@ mod tests {
     /// that can occur when a peer opens a DataChannel in the same flight as the final SCTP
     /// handshake packet.
     fn client_with_data_before_cookie_ack() -> (SctpHandlerContext, Vec<Bytes>, Vec<Bytes>) {
+        client_with_open_before_cookie_ack(ChannelType::Reliable, 0)
+    }
+
+    /// [`client_with_data_before_cookie_ack`] with the early `DATA_CHANNEL_OPEN` carrying the
+    /// given channel type and reliability parameter.
+    fn client_with_open_before_cookie_ack(
+        channel_type: ChannelType,
+        reliability_parameter: u32,
+    ) -> (SctpHandlerContext, Vec<Bytes>, Vec<Bytes>) {
         let now = Instant::now();
 
         let mut client_ep = Endpoint::new(
@@ -1079,9 +1168,9 @@ mod tests {
 
         // Send a DCEP OPEN before the client receives COOKIE-ACK.
         let dcep_open = Message::DataChannelOpen(DataChannelOpen {
-            channel_type: ChannelType::Reliable,
+            channel_type,
             priority: CHANNEL_PRIORITY_NORMAL,
-            reliability_parameter: 0,
+            reliability_parameter,
             label: b"early-channel".to_vec(),
             protocol: Vec::new(),
         })
@@ -2027,6 +2116,982 @@ mod tests {
             "batching must emit fewer datagrams than it ingested ({} in, {} out)",
             dgrams.len(),
             flushed.len()
+        );
+    }
+
+    // Accept-side DCEP reliability. RFC 8832 §5.1 defines the Channel Type and Reliability
+    // Parameter of a DATA_CHANNEL_OPEN for the data channel, so the side that *accepts* the
+    // channel must send with them too. These tests let the server play the peer that opens the
+    // channel and assert on what the client handler then puts on the wire.
+
+    /// The stream the server (the peer) opens its data channel on.
+    const PEER_STREAM: StreamId = 1;
+
+    // RFC 9260 §3.3.1 DATA chunk flags, and the RFC 3758 §3.2 FORWARD TSN chunk type.
+    const DATA_FLAG_UNORDERED: u8 = 0x04;
+    const DATA_FLAG_BEGINNING: u8 = 0x02;
+    const DATA_FLAG_ENDING: u8 = 0x01;
+    const CT_FORWARD_TSN: u8 = 192;
+
+    // RFC 8831 §8 payload protocol identifiers, as they appear on the wire.
+    const PPID_DCEP: u32 = 50;
+    const PPID_BINARY: u32 = 53;
+
+    /// RFC 8832 §5.2 message type of a DATA_CHANNEL_ACK.
+    const DCEP_ACK: u8 = 0x02;
+
+    /// How far the timer-driven tests advance the clock. Long enough for T3-rtx to fire three
+    /// times (RTO 1 s, then 2 s and 4 s of backoff), short of the 30 s heartbeat.
+    const TIMER_HORIZON: Duration = Duration::from_secs(10);
+
+    /// One chunk of an SCTP packet: type, flags and the value after the 4-byte chunk header.
+    struct WireChunk {
+        kind: u8,
+        flags: u8,
+        value: Vec<u8>,
+    }
+
+    /// Every chunk of an SCTP packet, not only the first: the association bundles SACKs and
+    /// FORWARD TSNs with DATA.
+    fn wire_chunks(packet: &[u8]) -> Vec<WireChunk> {
+        let mut chunks = vec![];
+        let mut at = 12;
+        while at + 4 <= packet.len() {
+            let len = u16::from_be_bytes([packet[at + 2], packet[at + 3]]) as usize;
+            if len < 4 || at + len > packet.len() {
+                break;
+            }
+            chunks.push(WireChunk {
+                kind: packet[at],
+                flags: packet[at + 1],
+                value: packet[at + 4..at + len].to_vec(),
+            });
+            at += len.next_multiple_of(4);
+        }
+        chunks
+    }
+
+    /// The fields of a DATA chunk these tests assert on (RFC 9260 §3.3.1).
+    #[derive(Debug, Clone, Copy)]
+    struct WireData {
+        tsn: u32,
+        stream_id: StreamId,
+        ppid: u32,
+        flags: u8,
+        first_byte: Option<u8>,
+    }
+
+    impl WireData {
+        fn unordered(&self) -> bool {
+            self.flags & DATA_FLAG_UNORDERED != 0
+        }
+    }
+
+    fn wire_data(packet: &[u8]) -> Vec<WireData> {
+        wire_chunks(packet)
+            .into_iter()
+            .filter(|c| c.kind == CT_PAYLOAD_DATA && c.value.len() >= 12)
+            .map(|c| WireData {
+                tsn: u32::from_be_bytes([c.value[0], c.value[1], c.value[2], c.value[3]]),
+                stream_id: u16::from_be_bytes([c.value[4], c.value[5]]),
+                ppid: u32::from_be_bytes([c.value[8], c.value[9], c.value[10], c.value[11]]),
+                flags: c.flags,
+                first_byte: c.value.get(12).copied(),
+            })
+            .collect()
+    }
+
+    /// The New Cumulative TSN of every FORWARD TSN chunk in the packet (RFC 3758 §3.2).
+    fn wire_forward_tsns(packet: &[u8]) -> Vec<u32> {
+        wire_chunks(packet)
+            .into_iter()
+            .filter(|c| c.kind == CT_FORWARD_TSN && c.value.len() >= 4)
+            .map(|c| u32::from_be_bytes([c.value[0], c.value[1], c.value[2], c.value[3]]))
+            .collect()
+    }
+
+    /// The `a_rwnd` of the last SACK among `packets` (RFC 9260 §3.3.4).
+    fn last_sack_a_rwnd(packets: &[Bytes]) -> Option<u32> {
+        packets
+            .iter()
+            .flat_map(|p| wire_chunks(p))
+            .filter(|c| c.kind == CT_SACK && c.value.len() >= 8)
+            .map(|c| u32::from_be_bytes([c.value[4], c.value[5], c.value[6], c.value[7]]))
+            .last()
+    }
+
+    fn dcep_open(channel_type: ChannelType, reliability_parameter: u32) -> Bytes {
+        Bytes::from(
+            Message::DataChannelOpen(DataChannelOpen {
+                channel_type,
+                priority: CHANNEL_PRIORITY_NORMAL,
+                reliability_parameter,
+                label: b"accepted".to_vec(),
+                protocol: Vec::new(),
+            })
+            .marshal()
+            .expect("DCEP OPEN"),
+        )
+    }
+
+    /// A well-formed DCEP message that is not a `DATA_CHANNEL_OPEN`.
+    fn dcep_ack() -> Bytes {
+        Bytes::from(
+            Message::DataChannelAck(DataChannelAck)
+                .marshal()
+                .expect("DCEP ACK"),
+        )
+    }
+
+    /// Queue `messages` on the server's `stream_id`, creating the stream on its first use, and
+    /// return the datagrams the server sends for them.
+    fn server_send(
+        server_conn: &mut Association,
+        stream_id: StreamId,
+        messages: &[(PayloadProtocolIdentifier, Bytes)],
+        now: Instant,
+    ) -> Vec<Bytes> {
+        // Fails when the stream already exists; either way it exists afterwards.
+        let _ = server_conn.open_stream(stream_id, PayloadProtocolIdentifier::Dcep);
+        {
+            let mut stream = server_conn.stream(stream_id).expect("server stream");
+            for (ppi, payload) in messages {
+                stream.write_sctp(now, payload, *ppi).expect("server write");
+            }
+        }
+        while server_conn.poll().is_some() {}
+        drain_transmits(server_conn, now)
+    }
+
+    fn deliver_to_server(
+        server_ep: &mut Endpoint,
+        server_conn: &mut Association,
+        dgrams: Vec<Bytes>,
+        now: Instant,
+    ) {
+        for dgram in dgrams {
+            if let Some((_, DatagramEvent::AssociationEvent(event))) =
+                server_ep.handle(now, client_addr(), None, dgram)
+            {
+                server_conn.handle_event(event);
+            }
+        }
+        while server_conn.poll().is_some() {}
+    }
+
+    fn client_read(ctx: &mut SctpHandlerContext, backlog: usize, dgrams: Vec<Bytes>, now: Instant) {
+        let mut handler = SctpHandler::new(ctx, backlog);
+        for dgram in dgrams {
+            handler
+                .handle_read(raw_read(now, dgram))
+                .expect("client read");
+        }
+    }
+
+    fn client_write(
+        ctx: &mut SctpHandlerContext,
+        now: Instant,
+        ch: AssociationHandle,
+        stream_id: StreamId,
+        ppi: PayloadProtocolIdentifier,
+        payload: &[u8],
+    ) {
+        SctpHandler::new(ctx, 0)
+            .handle_write(TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                    association_handle: ch.0,
+                    stream_id,
+                    ppi,
+                    payload: BytesMut::from(payload),
+                    negotiated: false,
+                })),
+            })
+            .expect("client write");
+    }
+
+    /// Run the deferred flush and return the datagrams the client handler sends.
+    fn flush(ctx: &mut SctpHandlerContext) -> Vec<Bytes> {
+        let mut handler = SctpHandler::new(ctx, 0);
+        let mut out = vec![];
+        while let Some(msg) = handler.poll_write() {
+            if let RTCMessageInternal::Dtls(DTLSMessage::Raw(raw)) = msg.message {
+                out.push(raw.freeze());
+            }
+        }
+        out
+    }
+
+    /// The only association of a single-association context.
+    fn only_association(ctx: &SctpHandlerContext) -> AssociationHandle {
+        let mut handles = ctx.sctp_transport.sctp_associations.keys();
+        let ch = *handles.next().expect("one association");
+        assert!(handles.next().is_none(), "exactly one association");
+        ch
+    }
+
+    /// A client handler that has received the peer's DATA_CHANNEL_OPEN on `PEER_STREAM`, with
+    /// the server end of the association kept for further peer traffic.
+    struct Accepted {
+        now: Instant,
+        ctx: SctpHandlerContext,
+        ch: AssociationHandle,
+        server_ep: Endpoint,
+        server_conn: Association,
+    }
+
+    fn accept_peer_open(channel_type: ChannelType, reliability_parameter: u32) -> Accepted {
+        let now = Instant::now();
+        let e = establish();
+        let (server_ep, mut server_conn) = (e.server_ep, e.server_conn);
+        let open = server_send(
+            &mut server_conn,
+            PEER_STREAM,
+            &[(
+                PayloadProtocolIdentifier::Dcep,
+                dcep_open(channel_type, reliability_parameter),
+            )],
+            now,
+        );
+        let ch = e.client_ch;
+        let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+        client_read(&mut ctx, 0, open, now);
+        assert!(
+            matches!(
+                ctx.read_outs.front().map(|m| &m.message),
+                Some(RTCMessageInternal::Dtls(DTLSMessage::Sctp(m)))
+                    if m.ppi == PayloadProtocolIdentifier::Dcep && m.stream_id == PEER_STREAM
+            ),
+            "precondition: the peer's OPEN is delivered"
+        );
+        Accepted {
+            now,
+            ctx,
+            ch,
+            server_ep,
+            server_conn,
+        }
+    }
+
+    /// Write one Binary message on `stream_id` and return the DATA chunk that carries it.
+    fn send_probe(
+        ctx: &mut SctpHandlerContext,
+        ch: AssociationHandle,
+        stream_id: StreamId,
+        now: Instant,
+    ) -> WireData {
+        client_write(
+            ctx,
+            now,
+            ch,
+            stream_id,
+            PayloadProtocolIdentifier::Binary,
+            b"probe",
+        );
+        let data: Vec<WireData> = flush(ctx)
+            .iter()
+            .flat_map(|p| wire_data(p))
+            .filter(|d| d.stream_id == stream_id && d.ppid == PPID_BINARY)
+            .collect();
+        assert_eq!(data.len(), 1, "one DATA chunk carries the probe: {data:?}");
+        data[0]
+    }
+
+    /// What the client sends once the probe is lost: its timers run up to `TIMER_HORIZON` and
+    /// nothing it sends reaches the peer, so nothing is ever acknowledged.
+    struct AfterLoss {
+        /// Instants at which the probe's TSN was sent again.
+        retransmits: Vec<Instant>,
+        /// Instant and New Cumulative TSN of every FORWARD TSN sent.
+        forward_tsns: Vec<(Instant, u32)>,
+    }
+
+    fn lose_probe(ctx: &mut SctpHandlerContext, probe: WireData, from: Instant) -> AfterLoss {
+        let mut after = AfterLoss {
+            retransmits: vec![],
+            forward_tsns: vec![],
+        };
+        // Bounded twice: by the horizon on the virtual clock and by an iteration count.
+        for _ in 0..64 {
+            let mut handler = SctpHandler::new(ctx, 0);
+            let Some(at) = handler.poll_timeout() else {
+                break;
+            };
+            if at > from + TIMER_HORIZON {
+                break;
+            }
+            handler.handle_timeout(at).expect("handle_timeout");
+            while let Some(msg) = handler.poll_write() {
+                let RTCMessageInternal::Dtls(DTLSMessage::Raw(raw)) = msg.message else {
+                    continue;
+                };
+                if wire_data(&raw).iter().any(|d| d.tsn == probe.tsn) {
+                    after.retransmits.push(at);
+                }
+                for new_cumulative_tsn in wire_forward_tsns(&raw) {
+                    after.forward_tsns.push((at, new_cumulative_tsn));
+                }
+            }
+        }
+        after
+    }
+
+    /// How a lost message on the channel must be recovered.
+    enum Recovery {
+        /// Fully reliable: retransmitted, never skipped.
+        Retransmit,
+        /// `maxRetransmits` 0: skipped with a FORWARD TSN at the first retry, never resent.
+        AbandonAtFirstRetry,
+        /// `maxPacketLifeTime`: resent while the lifetime lasts, skipped after it.
+        AbandonAfter(Duration),
+    }
+
+    fn assert_recovery(after: &AfterLoss, probe: WireData, sent_at: Instant, recovery: Recovery) {
+        match recovery {
+            Recovery::Retransmit => {
+                assert!(
+                    !after.retransmits.is_empty(),
+                    "a reliable channel must retransmit a lost message"
+                );
+                assert!(
+                    after.forward_tsns.is_empty(),
+                    "a reliable channel must never skip a message: {:?}",
+                    after.forward_tsns
+                );
+            }
+            Recovery::AbandonAtFirstRetry => {
+                assert!(
+                    after.retransmits.is_empty(),
+                    "maxRetransmits 0 forbids any retransmission, sent again at {:?}",
+                    after.retransmits
+                );
+                let (_, new_cumulative_tsn) = *after.forward_tsns.first().expect(
+                    "maxRetransmits 0: the lost message must be abandoned with a FORWARD TSN",
+                );
+                assert_eq!(
+                    new_cumulative_tsn, probe.tsn,
+                    "the FORWARD TSN must skip exactly the abandoned message"
+                );
+            }
+            Recovery::AbandonAfter(lifetime) => {
+                let deadline = sent_at + lifetime;
+                assert!(
+                    after.retransmits.iter().any(|at| *at < deadline),
+                    "within its lifetime a lost message is still retransmitted"
+                );
+                assert!(
+                    after.retransmits.iter().all(|at| *at < deadline),
+                    "past its lifetime a message must not be retransmitted"
+                );
+                let (at, new_cumulative_tsn) = *after
+                    .forward_tsns
+                    .first()
+                    .expect("past its lifetime the message must be abandoned with a FORWARD TSN");
+                assert!(
+                    at >= deadline,
+                    "a message must not be abandoned before its lifetime ends"
+                );
+                assert_eq!(
+                    new_cumulative_tsn, probe.tsn,
+                    "the FORWARD TSN must skip exactly the abandoned message"
+                );
+            }
+        }
+    }
+
+    /// The peer opens a channel of `channel_type`; the client then sends on it and loses the
+    /// message. Both the U bit and the recovery must follow the peer's OPEN.
+    fn assert_accepted_channel_follows_peer_open(
+        channel_type: ChannelType,
+        reliability_parameter: u32,
+        unordered: bool,
+        recovery: Recovery,
+    ) {
+        let mut a = accept_peer_open(channel_type, reliability_parameter);
+        let probe = send_probe(&mut a.ctx, a.ch, PEER_STREAM, a.now);
+        assert_eq!(
+            probe.unordered(),
+            unordered,
+            "{channel_type:?}: the U bit of this side's DATA must follow the peer's OPEN"
+        );
+        let after = lose_probe(&mut a.ctx, probe, a.now);
+        assert_recovery(&after, probe, a.now, recovery);
+    }
+
+    #[test]
+    fn accepted_reliable_channel_sends_ordered_and_retransmits() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::Reliable,
+            0,
+            false,
+            Recovery::Retransmit,
+        );
+    }
+
+    #[test]
+    fn accepted_reliable_unordered_channel_sends_unordered_and_retransmits() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::ReliableUnordered,
+            0,
+            true,
+            Recovery::Retransmit,
+        );
+    }
+
+    #[test]
+    fn accepted_rexmit_channel_abandons_instead_of_retransmitting() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::PartialReliableRexmit,
+            0,
+            false,
+            Recovery::AbandonAtFirstRetry,
+        );
+    }
+
+    #[test]
+    fn accepted_rexmit_unordered_channel_sends_unordered_and_abandons() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::PartialReliableRexmitUnordered,
+            0,
+            true,
+            Recovery::AbandonAtFirstRetry,
+        );
+    }
+
+    /// The lifetime outlasts the first RTO (1 s) and ends before the second retry (3 s), so a
+    /// single run shows both halves: retransmitted within it, abandoned after it.
+    const TIMED_LIFETIME: Duration = Duration::from_millis(2500);
+
+    #[test]
+    fn accepted_timed_channel_abandons_after_its_lifetime() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::PartialReliableTimed,
+            TIMED_LIFETIME.as_millis() as u32,
+            false,
+            Recovery::AbandonAfter(TIMED_LIFETIME),
+        );
+    }
+
+    #[test]
+    fn accepted_timed_unordered_channel_sends_unordered_and_abandons_after_its_lifetime() {
+        assert_accepted_channel_follows_peer_open(
+            ChannelType::PartialReliableTimedUnordered,
+            TIMED_LIFETIME.as_millis() as u32,
+            true,
+            Recovery::AbandonAfter(TIMED_LIFETIME),
+        );
+    }
+
+    /// A stream configured as `PartialReliableRexmitUnordered` with 0 retransmits: sends carry
+    /// the U bit, and a lost one is skipped rather than resent.
+    fn assert_sends_unordered_without_retransmits(
+        ctx: &mut SctpHandlerContext,
+        ch: AssociationHandle,
+        now: Instant,
+    ) {
+        let probe = send_probe(ctx, ch, PEER_STREAM, now);
+        assert!(
+            probe.unordered(),
+            "the peer's unordered channel type must reach this side's DATA"
+        );
+        let after = lose_probe(ctx, probe, now);
+        assert_recovery(&after, probe, now, Recovery::AbandonAtFirstRetry);
+    }
+
+    /// The OPEN arrives in the same flight as the end of the handshake, before COOKIE-ACK. It is
+    /// held in the reassembly queue and drained by the resume after the association connects,
+    /// not by the `Readable` that announced it, and must still configure the stream.
+    #[test]
+    fn an_open_received_before_cookie_ack_still_configures_the_stream() {
+        let now = Instant::now();
+        let (mut ctx, cookie_ack, early_data) =
+            client_with_open_before_cookie_ack(ChannelType::PartialReliableRexmitUnordered, 0);
+        let ch = only_association(&ctx);
+
+        client_read(&mut ctx, 0, early_data, now);
+        assert!(
+            ctx.read_outs.is_empty(),
+            "precondition: held until COOKIE-ACK"
+        );
+        assert!(
+            ctx.peer_opened_streams.contains(&(ch, PEER_STREAM)),
+            "the stream the peer created is recorded although its OPEN is not drained yet"
+        );
+
+        client_read(&mut ctx, 0, cookie_ack, now);
+        assert_eq!(
+            ctx.read_outs.len(),
+            1,
+            "precondition: the OPEN is delivered"
+        );
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "draining the first message ends the record"
+        );
+
+        assert_sends_unordered_without_retransmits(&mut ctx, ch, now);
+    }
+
+    /// The OPEN arrives while the pipeline is at its bound, so the stream is parked and the OPEN
+    /// is only drained later, from `poll_read`. That drain must configure the stream too.
+    #[test]
+    fn an_open_parked_by_backpressure_still_configures_the_stream() {
+        let (now, mut ctx, ch) = parked_peer_open();
+
+        let resumed = SctpHandler::new(&mut ctx, 0).poll_read();
+        assert!(
+            matches!(
+                resumed.as_ref().map(|m| &m.message),
+                Some(RTCMessageInternal::Dtls(DTLSMessage::Sctp(m)))
+                    if m.ppi == PayloadProtocolIdentifier::Dcep
+            ),
+            "precondition: the parked OPEN is delivered on resume"
+        );
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "draining the first message ends the record"
+        );
+
+        assert_sends_unordered_without_retransmits(&mut ctx, ch, now);
+    }
+
+    /// The peer's `PartialReliableRexmitUnordered` OPEN, parked behind a full pipeline: the
+    /// stream is recorded as peer-opened and its first message is still undrained.
+    fn parked_peer_open() -> (Instant, SctpHandlerContext, AssociationHandle) {
+        let now = Instant::now();
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let open = server_send(
+            &mut server_conn,
+            PEER_STREAM,
+            &[(
+                PayloadProtocolIdentifier::Dcep,
+                dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+            )],
+            now,
+        );
+        let ch = e.client_ch;
+        let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+        client_read(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT, open, now);
+        assert!(ctx.read_outs.is_empty(), "precondition: the OPEN is parked");
+        assert!(
+            ctx.peer_opened_streams.contains(&(ch, PEER_STREAM)),
+            "precondition: the stream is recorded as peer-opened"
+        );
+        (now, ctx, ch)
+    }
+
+    /// The accepting side answers with a DATA_CHANNEL_ACK on the channel's own stream. DCEP
+    /// messages are always sent ordered and reliable (RFC 8832 §6), so configuring that stream
+    /// as unordered must not leak into the ACK.
+    #[test]
+    fn the_dcep_ack_stays_ordered_on_an_accepted_unordered_channel() {
+        let mut a = accept_peer_open(ChannelType::PartialReliableRexmitUnordered, 0);
+        let inbound = a.ctx.read_outs.pop_front().expect("the OPEN");
+
+        let mut data_channel_ctx = DataChannelHandlerContext::new(a.now);
+        let mut data_channels = DataChannelRegistry::new();
+        let mut stats = RTCStatsAccumulator::new();
+        let mut replies = vec![];
+        {
+            let mut handler = DataChannelHandler::new(
+                &mut data_channel_ctx,
+                &mut data_channels,
+                &mut stats,
+                None,
+                RTCDtlsRole::Client,
+                None,
+            );
+            handler.handle_read(inbound).expect("accept the channel");
+            while let Some(msg) = handler.poll_write() {
+                replies.push(msg);
+            }
+        }
+        assert!(!replies.is_empty(), "accepting must queue the ACK");
+        {
+            let mut handler = SctpHandler::new(&mut a.ctx, 0);
+            for reply in replies {
+                handler.handle_write(reply).expect("send the ACK");
+            }
+        }
+
+        let dcep: Vec<WireData> = flush(&mut a.ctx)
+            .iter()
+            .flat_map(|p| wire_data(p))
+            .filter(|d| d.stream_id == PEER_STREAM && d.ppid == PPID_DCEP)
+            .collect();
+        assert_eq!(dcep.len(), 1, "one DCEP message is sent: {dcep:?}");
+        assert_eq!(dcep[0].first_byte, Some(DCEP_ACK), "it is the ACK");
+        assert!(
+            !dcep[0].unordered(),
+            "DCEP messages must be sent ordered (RFC 8832 §6)"
+        );
+
+        // Control: the stream itself is unordered, so the ACK's ordering is not the default.
+        let probe = send_probe(&mut a.ctx, a.ch, PEER_STREAM, a.now);
+        assert!(
+            probe.unordered(),
+            "precondition: user data on the channel is unordered"
+        );
+    }
+
+    /// This side opened the stream itself, so the peer's DATA arrives on an existing stream and
+    /// is not a peer-created one. A DATA_CHANNEL_OPEN the peer sends there must not reconfigure
+    /// it.
+    #[test]
+    fn a_peer_open_on_a_stream_this_side_opened_does_not_reconfigure_it() {
+        let now = Instant::now();
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let ch = e.client_ch;
+        let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+
+        client_write(
+            &mut ctx,
+            now,
+            ch,
+            PEER_STREAM,
+            PayloadProtocolIdentifier::Dcep,
+            &dcep_open(ChannelType::Reliable, 0),
+        );
+        let _ = flush(&mut ctx);
+
+        let open = server_send(
+            &mut server_conn,
+            PEER_STREAM,
+            &[(
+                PayloadProtocolIdentifier::Dcep,
+                dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+            )],
+            now,
+        );
+        client_read(&mut ctx, 0, open, now);
+        assert_eq!(
+            ctx.read_outs.len(),
+            1,
+            "precondition: the peer's OPEN is read"
+        );
+
+        let probe = send_probe(&mut ctx, ch, PEER_STREAM, now);
+        assert!(
+            !probe.unordered(),
+            "this side's ordered stream stays ordered"
+        );
+        let after = lose_probe(&mut ctx, probe, now);
+        assert_recovery(&after, probe, now, Recovery::Retransmit);
+    }
+
+    /// `handle_write` drops the peer-opened record of a stream this side opens, so a stale
+    /// record from an earlier, peer-created use of the same stream id cannot let a later peer
+    /// OPEN override this side's parameters.
+    ///
+    /// The record is seeded directly: leaving one behind through the wire takes a full stream
+    /// reset round trip with the first message never drained. The contract under test is the
+    /// one stated where `handle_write` removes it.
+    #[test]
+    fn opening_a_stream_locally_drops_a_stale_peer_opened_record() {
+        let now = Instant::now();
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let ch = e.client_ch;
+        let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+        ctx.peer_opened_streams.insert((ch, PEER_STREAM));
+
+        client_write(
+            &mut ctx,
+            now,
+            ch,
+            PEER_STREAM,
+            PayloadProtocolIdentifier::Dcep,
+            &dcep_open(ChannelType::Reliable, 0),
+        );
+        let _ = flush(&mut ctx);
+        assert!(
+            !ctx.peer_opened_streams.contains(&(ch, PEER_STREAM)),
+            "a stream this side opens is no longer peer-opened"
+        );
+
+        let open = server_send(
+            &mut server_conn,
+            PEER_STREAM,
+            &[(
+                PayloadProtocolIdentifier::Dcep,
+                dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+            )],
+            now,
+        );
+        client_read(&mut ctx, 0, open, now);
+        assert_eq!(
+            ctx.read_outs.len(),
+            1,
+            "precondition: the peer's OPEN is read"
+        );
+
+        let probe = send_probe(&mut ctx, ch, PEER_STREAM, now);
+        assert!(
+            !probe.unordered(),
+            "this side's ordered stream stays ordered"
+        );
+        let after = lose_probe(&mut ctx, probe, now);
+        assert_recovery(&after, probe, now, Recovery::Retransmit);
+    }
+
+    /// A peer-created stream whose first message is not DCEP belongs to an out-of-band
+    /// negotiated channel. Only the first message can be the OPEN that describes a channel, so a
+    /// DATA_CHANNEL_OPEN arriving after it must not reconfigure the stream.
+    #[test]
+    fn a_peer_stream_whose_first_message_is_not_dcep_is_not_reconfigured() {
+        let now = Instant::now();
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let messages = server_send(
+            &mut server_conn,
+            PEER_STREAM,
+            &[
+                (
+                    PayloadProtocolIdentifier::Binary,
+                    Bytes::from_static(b"negotiated"),
+                ),
+                (
+                    PayloadProtocolIdentifier::Dcep,
+                    dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+                ),
+            ],
+            now,
+        );
+        let ch = e.client_ch;
+        let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+        client_read(&mut ctx, 0, messages, now);
+        assert_eq!(
+            ctx.read_outs.len(),
+            2,
+            "precondition: both messages are read"
+        );
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "the first message ends the record whatever it is"
+        );
+
+        let probe = send_probe(&mut ctx, ch, PEER_STREAM, now);
+        assert!(!probe.unordered(), "the stream keeps its ordered default");
+        let after = lose_probe(&mut ctx, probe, now);
+        assert_recovery(&after, probe, now, Recovery::Retransmit);
+    }
+
+    /// The first message of a peer-created stream can carry the DCEP PPI without being a
+    /// `DATA_CHANNEL_OPEN`: a `DATA_CHANNEL_ACK`, or bytes that do not parse. The stream keeps
+    /// the ordered, fully reliable default, the message is still delivered, and the record ends,
+    /// so a later OPEN cannot configure it either.
+    #[test]
+    fn a_dcep_first_message_that_is_not_an_open_leaves_the_stream_unchanged() {
+        for (label, first) in [
+            ("ACK", dcep_ack()),
+            ("unparsed", Bytes::from_static(&[0xff])),
+        ] {
+            let now = Instant::now();
+            let e = establish();
+            let mut server_conn = e.server_conn;
+            let messages = server_send(
+                &mut server_conn,
+                PEER_STREAM,
+                &[
+                    (PayloadProtocolIdentifier::Dcep, first),
+                    (
+                        PayloadProtocolIdentifier::Dcep,
+                        dcep_open(ChannelType::PartialReliableRexmitUnordered, 0),
+                    ),
+                ],
+                now,
+            );
+            let ch = e.client_ch;
+            let mut ctx = client_ctx(now, e.client_ep, ch, e.client_conn);
+            client_read(&mut ctx, 0, messages, now);
+            assert_eq!(
+                ctx.read_outs.len(),
+                2,
+                "{label}: both messages are delivered"
+            );
+            assert!(
+                matches!(
+                    ctx.read_outs.front().map(|m| &m.message),
+                    Some(RTCMessageInternal::Dtls(DTLSMessage::Sctp(m)))
+                        if m.ppi == PayloadProtocolIdentifier::Dcep && m.stream_id == PEER_STREAM
+                ),
+                "{label}: the non-OPEN DCEP message is still delivered"
+            );
+            assert!(
+                ctx.peer_opened_streams.is_empty(),
+                "{label}: the first message ends the record"
+            );
+
+            let probe = send_probe(&mut ctx, ch, PEER_STREAM, now);
+            assert!(
+                !probe.unordered(),
+                "{label}: the stream keeps its ordered default"
+            );
+            let after = lose_probe(&mut ctx, probe, now);
+            assert_recovery(&after, probe, now, Recovery::Retransmit);
+        }
+    }
+
+    #[test]
+    fn a_peer_opened_stream_is_forgotten_once_its_first_message_is_drained() {
+        // Drained at once by the `Readable` that announced it.
+        let a = accept_peer_open(ChannelType::Reliable, 0);
+        assert!(
+            a.ctx.peer_opened_streams.is_empty(),
+            "the record must end with the immediate drain of the first message"
+        );
+
+        // Parked first, drained later by the resume.
+        let (_, mut ctx, ch) = parked_peer_open();
+        assert!(ctx.peer_opened_streams.contains(&(ch, PEER_STREAM)));
+        while SctpHandler::new(&mut ctx, 0).poll_read().is_some() {}
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "the record must end with the resumed drain of the first message"
+        );
+    }
+
+    #[test]
+    fn removing_an_association_forgets_its_peer_opened_streams() {
+        let (now, mut ctx, ch) = parked_peer_open();
+        ctx.sctp_transport
+            .sctp_associations
+            .get_mut(&ch)
+            .expect("association")
+            .shutdown()
+            .expect("shutdown");
+
+        SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT)
+            .handle_timeout(now)
+            .expect("handle_timeout");
+
+        assert!(
+            !ctx.sctp_transport.sctp_associations.contains_key(&ch),
+            "precondition: the drained association is removed"
+        );
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "a removed association's streams must not stay recorded"
+        );
+    }
+
+    #[test]
+    fn aborting_forgets_peer_opened_streams() {
+        let (_, mut ctx, _) = parked_peer_open();
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            handler.request_abort();
+            while handler.poll_write().is_some() {}
+        }
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "an aborted association's streams must not stay recorded"
+        );
+    }
+
+    #[test]
+    fn dtls_closed_forgets_peer_opened_streams() {
+        let (now, mut ctx, _) = parked_peer_open();
+        SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT)
+            .handle_event(TaggedRTCEventInternal {
+                now,
+                event: RTCEventInternal::DTLSClosed,
+            })
+            .expect("handle_event");
+        assert!(
+            ctx.peer_opened_streams.is_empty(),
+            "closed associations' streams must not stay recorded"
+        );
+    }
+
+    /// An accepted unordered channel must also *receive* as one: when the peer abandons a
+    /// fragmented message and sends FORWARD TSN, the fragments already here are dropped, or they
+    /// hold receive window for good. The association drops unordered fragments on FORWARD TSN
+    /// only for a stream marked unordered, which is the accept-side configuration.
+    #[test]
+    fn an_accepted_unordered_stream_drops_abandoned_fragments_on_forward_tsn() {
+        let mut a = accept_peer_open(ChannelType::PartialReliableRexmitUnordered, 0);
+        a.ctx.read_outs.clear();
+        // The opener configures its own stream from the OPEN it sent, as `handle_write` does.
+        a.server_conn
+            .stream(PEER_STREAM)
+            .and_then(|mut s| s.set_reliability_params(true, ReliabilityType::Rexmit, 0))
+            .expect("configure the peer's stream");
+
+        let t0 = a.now + Duration::from_millis(500);
+        SctpHandler::new(&mut a.ctx, 0)
+            .handle_timeout(t0)
+            .expect("delayed-ack timer");
+        let acks = flush(&mut a.ctx);
+        let empty_window = last_sack_a_rwnd(&acks).expect("the OPEN is acknowledged");
+        deliver_to_server(&mut a.server_ep, &mut a.server_conn, acks, t0);
+
+        // One message in three fragments; the middle one is lost.
+        let message = Bytes::from(vec![0xab; 3000]);
+        let (lost, kept): (Vec<Bytes>, Vec<Bytes>) = server_send(
+            &mut a.server_conn,
+            PEER_STREAM,
+            &[(PayloadProtocolIdentifier::Binary, message)],
+            t0,
+        )
+        .into_iter()
+        .partition(|p| {
+            wire_data(p)
+                .iter()
+                .any(|d| d.flags & (DATA_FLAG_BEGINNING | DATA_FLAG_ENDING) == 0)
+        });
+        assert_eq!(lost.len(), 1, "precondition: one middle fragment");
+        let kept_fragments: Vec<WireData> = kept.iter().flat_map(|p| wire_data(p)).collect();
+        assert_eq!(
+            kept_fragments.len(),
+            2,
+            "precondition: first and last fragment: {kept_fragments:?}"
+        );
+        assert!(
+            kept_fragments.iter().all(WireData::unordered),
+            "precondition: the peer sends the message unordered"
+        );
+
+        client_read(&mut a.ctx, 0, kept, t0);
+        assert!(a.ctx.read_outs.is_empty(), "an incomplete message is held");
+        let t1 = t0 + Duration::from_millis(500);
+        SctpHandler::new(&mut a.ctx, 0)
+            .handle_timeout(t1)
+            .expect("delayed-ack timer");
+        let gap_acks = flush(&mut a.ctx);
+        let held_window = last_sack_a_rwnd(&gap_acks).expect("the fragments are acknowledged");
+        assert!(
+            held_window < empty_window,
+            "precondition: the held fragments occupy receive window ({held_window} vs {empty_window})"
+        );
+        deliver_to_server(&mut a.server_ep, &mut a.server_conn, gap_acks, t1);
+
+        // The peer may not retransmit, so its T3-rtx abandons the message with a FORWARD TSN.
+        let mut forward = None;
+        for _ in 0..16 {
+            let Some(at) = a.server_conn.poll_timeout() else {
+                break;
+            };
+            a.server_conn.handle_timeout(at);
+            let out = drain_transmits(&mut a.server_conn, at);
+            if out.iter().any(|p| !wire_forward_tsns(p).is_empty()) {
+                forward = Some((at, out));
+                break;
+            }
+        }
+        let (at, forward) = forward.expect("the peer abandons the message with a FORWARD TSN");
+
+        client_read(&mut a.ctx, 0, forward, at);
+        SctpHandler::new(&mut a.ctx, 0)
+            .handle_timeout(at + Duration::from_millis(500))
+            .expect("delayed-ack timer");
+        let after = last_sack_a_rwnd(&flush(&mut a.ctx)).expect("the FORWARD TSN is acknowledged");
+        assert_eq!(
+            after, empty_window,
+            "the abandoned fragments must be dropped and their window given back"
         );
     }
 }
