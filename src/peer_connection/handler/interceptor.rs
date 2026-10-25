@@ -898,6 +898,13 @@ impl<'a>
                     .on_fec_packet_received_if_fec(ssrc, payload_bytes);
             }
 
+            // What the peer says about the streams we send (reports, retransmission and keyframe
+            // requests) is counted here, before the chain: a responder in it consumes a NACK, and
+            // a request it answered is still a request.
+            if let Packet::Rtcp(rtcp_packets) = &packet {
+                self.process_read_rtcp_for_stats(rtcp_packets, msg.now);
+            }
+
             self.interceptor.handle_read(TaggedPacket {
                 now: msg.now,
                 transport: msg.transport,
@@ -1200,6 +1207,51 @@ mod boundary_tests {
             0.0, stats.outbound_rtp_streams[&7].target_bitrate,
             "only the estimate writes this field"
         );
+    }
+
+    /// Feedback from the peer about a stream we send is counted, though the chain answers it.
+    #[test]
+    fn feedback_about_a_stream_we_send_is_counted() {
+        use crate::peer_connection::message::internal::RTPMessage;
+        let mut ctx = connected();
+        let mut chain = FakeChain::default();
+        let mut stats = RTCStatsAccumulator::default();
+        stats.outbound_rtp_streams.insert(
+            7,
+            OutboundRtpStreamAccumulator {
+                ssrc: 7,
+                ..Default::default()
+            },
+        );
+        let mut transceivers = vec![];
+        let media_engine = MediaEngine::default();
+        let mut handler = InterceptorHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut chain,
+            &mut stats,
+        );
+        let packets: Vec<Box<dyn rtcp::Packet>> = vec![
+            Box::new(TransportLayerNack {
+                sender_ssrc: 1,
+                media_ssrc: 7,
+                nacks: vec![],
+            }),
+            Box::new(PictureLossIndication {
+                sender_ssrc: 1,
+                media_ssrc: 7,
+            }),
+        ];
+        handler
+            .handle_read(TaggedRTCMessageInternal {
+                now: Instant::now(),
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(packets))),
+            })
+            .expect("read");
+        assert_eq!(1, stats.outbound_rtp_streams[&7].nack_count);
+        assert_eq!(1, stats.outbound_rtp_streams[&7].pli_count);
     }
 
     /// A real RTCP packet still reaches the application when it asked for one — the carrier drop
