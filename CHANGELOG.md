@@ -112,6 +112,12 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- A message that reaches a peer in the same read sweep as the COOKIE-ACK (or COOKIE-ECHO) that
+  completes its SCTP handshake is no longer dropped. The data now waits for
+  `SCTPHandshakeComplete`, on which negotiated data channels open; it used to reach the data
+  channel handler first and be discarded with `ErrDataChannelNotExisted`, after SCTP had already
+  acknowledged it, so the first message the peer sent on a negotiated channel could be lost.
+
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
 
