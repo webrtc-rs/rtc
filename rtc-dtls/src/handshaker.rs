@@ -211,6 +211,7 @@ impl DTLSConn {
                         self.notify(alert.alert_level, alert.alert_description);
                     }
                     if let Some(err) = err {
+                        self.current_retransmit_timer = None;
                         return Err(err);
                     }
                 }

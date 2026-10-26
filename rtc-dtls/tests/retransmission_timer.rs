@@ -1,10 +1,10 @@
 use crypto::default_provider;
 use rtc_dtls::{
-    config::{ClientAuthType, ConfigBuilder},
+    config::{ClientAuthType, ConfigBuilder, VerifyPeerCertificateFn},
     crypto::Certificate,
     endpoint::{Endpoint, EndpointEvent},
 };
-use shared::TransportProtocol;
+use shared::{TransportProtocol, error::Error};
 use std::{
     net::SocketAddr,
     sync::Arc,
@@ -24,6 +24,12 @@ struct Association {
 impl Association {
     /// Starts a mutually authenticated handshake; the ClientHello is queued.
     fn connect() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::connect_with_server_verifier(None)
+    }
+
+    fn connect_with_server_verifier(
+        verifier: Option<VerifyPeerCertificateFn>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let provider = default_provider()?;
         let certificate =
             Certificate::generate_self_signed(vec!["localhost".into()], provider.crypto())?;
@@ -39,7 +45,12 @@ impl Association {
         let server = Endpoint::new(
             server_addr,
             TransportProtocol::UDP,
-            Some(Arc::new(configuration.clone().build(false, None)?)),
+            Some(Arc::new(
+                configuration
+                    .clone()
+                    .with_verify_peer_certificate(verifier)
+                    .build(false, None)?,
+            )),
         );
         let start = Instant::now();
 
@@ -86,6 +97,52 @@ fn lost_server_flight_recovers_after_repeated_client_hello() -> TestResult {
 #[test]
 fn lost_client_certificate_flight_recovers_after_repeated_server_flight() -> TestResult {
     recover_lost_flight(LostFlight::ClientCertificate)
+}
+
+#[test]
+fn rejected_client_certificate_cancels_retransmission() -> TestResult {
+    let Association {
+        mut client,
+        mut server,
+        client_addr,
+        server_addr,
+        start,
+    } = Association::connect_with_server_verifier(Some(Arc::new(|_, _| {
+        Err(Error::ErrInvalidCertificate)
+    })))?;
+
+    // ClientHello -> HelloVerifyRequest -> ClientHello -> server flight.
+    transfer(&mut client, &mut server, client_addr, start)?;
+    transfer(&mut server, &mut client, server_addr, start)?;
+    transfer(&mut client, &mut server, client_addr, start)?;
+    transfer(&mut server, &mut client, server_addr, start)?;
+
+    let deadline = server
+        .poll_timeout(&client_addr)
+        .expect("the server is waiting for the client certificate flight");
+    let error = transfer(&mut client, &mut server, client_addr, start)
+        .expect_err("the server verifier must reject the client certificate");
+    assert!(matches!(
+        error.downcast_ref::<Error>(),
+        Some(Error::ErrInvalidCertificate)
+    ));
+
+    // Drain the fatal alert before checking for any later handshake output.
+    assert!(server.poll_transmit().is_some(), "a fatal alert is queued");
+    while server.poll_transmit().is_some() {}
+
+    assert_eq!(
+        server.poll_timeout(&client_addr),
+        None,
+        "a fatal handshake error must cancel the retransmission deadline"
+    );
+    server.handle_timeout(client_addr, deadline + Duration::from_secs(1))?;
+    assert!(
+        server.poll_transmit().is_none(),
+        "the rejected handshake must not retransmit its previous flight"
+    );
+    assert_eq!(server.poll_timeout(&client_addr), None);
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
