@@ -105,7 +105,8 @@ pub struct DTLSConn {
     pub(crate) handshake_config: Arc<HandshakeConfig>,
     pub(crate) retransmit: bool,
     pub(crate) handshake_rx: Option<()>,
-    /// Whether the datagram most recently passed to [`Self::read`] carried a handshake record.
+    /// Whether the datagram most recently passed to [`Self::read`] carried an accepted handshake
+    /// record. After completion, only an authenticated repeat of the peer's Finished is accepted.
     /// Reset on every `read`, unlike the sticky `handshake_rx`, so a completed association can tell
     /// an RFC 6347 §4.2.4 last-flight repeat from ordinary post-handshake application data.
     pub(crate) received_handshake_in_last_datagram: bool,
@@ -706,6 +707,22 @@ impl DTLSConn {
                     }
                 };
             }
+        }
+
+        // Once complete, neither plaintext handshake records nor a new transcript
+        // may spend the last-flight retry budget. Authenticate a repeat and match it
+        // against the Finished already received before signaling the endpoint.
+        if self.is_handshake_completed() && h.content_type == ContentType::Handshake {
+            let repeats_finished = h.epoch != 0
+                && self.cache.matches_received_finished(
+                    &pkt[RECORD_LAYER_HEADER_SIZE..],
+                    h.epoch,
+                    !self.is_client,
+                );
+            if repeats_finished {
+                self.replay_detector[h.epoch as usize].accept();
+            }
+            return (repeats_finished, None, None);
         }
 
         let is_handshake = match self.fragment_buffer.push(&pkt) {
