@@ -46,6 +46,10 @@ use super::allocation::FiveTuple;
 /// [RFC 6062 §5.2, §5.3]: https://www.rfc-editor.org/rfc/rfc6062#section-5.2
 pub const CONNECTION_BIND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The most peer connections one TCP allocation may have at once, being opened or open. A client
+/// holds state on the server for each, so an allocation cannot be allowed an unbounded number.
+pub const MAX_PEER_CONNECTIONS_PER_ALLOCATION: usize = 256;
+
 /// Identifies one peer connection the server has asked the application to open, or told it about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PeerConnId(pub u64);
@@ -130,6 +134,9 @@ impl Server {
             return None;
         }
         let user_id = allocation.user_id.clone();
+        if self.peer_connections_of(&five) >= MAX_PEER_CONNECTIONS_PER_ALLOCATION {
+            return None;
+        }
 
         let id = PeerConnId(self.next_peer_id);
         self.next_peer_id += 1;
@@ -189,9 +196,19 @@ impl Server {
         self.tcp_peers.contains_key(&id)
     }
 
+    /// The ids of the peer connections the server knows of.
+    pub fn peer_connection_ids(&self) -> impl Iterator<Item = PeerConnId> + '_ {
+        self.tcp_peers.keys().copied()
+    }
+
     /// How many peer connections the server knows of.
     pub fn peer_connection_count(&self) -> usize {
         self.tcp_peers.len()
+    }
+
+    /// How many peer connections the allocation `five` has.
+    pub(super) fn peer_connections_of(&self, five: &FiveTuple) -> usize {
+        self.tcp_peers.values().filter(|c| c.five == *five).count()
     }
 
     fn new_connection_id(&mut self) -> u32 {

@@ -1002,6 +1002,17 @@ impl Server {
             );
             return;
         }
+        if self.peer_connections_of(&five) >= super::tcp::MAX_PEER_CONNECTIONS_PER_ALLOCATION {
+            self.reply_error(
+                now,
+                ctx,
+                m,
+                CODE_ALLOC_QUOTA_REACHED,
+                Vec::new(),
+                Some(&auth.key),
+            );
+            return;
+        }
         // Connecting to a peer is itself the permission to hear from it.
         let permitted_until = now + self.permission_lifetime;
         self.install_permission(&five, peer.ip(), permitted_until);

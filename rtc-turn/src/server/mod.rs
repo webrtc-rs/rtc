@@ -73,7 +73,7 @@ pub use relay::{
     RelayAddressGenerator, RelayAddressGeneratorNone, RelayAddressGeneratorPortRange,
     RelayAddressGeneratorStatic, RelayFamily, RelayPlan,
 };
-pub use tcp::{CONNECTION_BIND_TIMEOUT, PeerConnId};
+pub use tcp::{CONNECTION_BIND_TIMEOUT, MAX_PEER_CONNECTIONS_PER_ALLOCATION, PeerConnId};
 
 /// How long a permission lasts without a refresh ([RFC 8656 §9]).
 ///

@@ -786,3 +786,51 @@ fn a_tcp_allocation_does_not_take_udp_port_options() {
     );
     assert_eq!(net.server.allocation_count(), 0);
 }
+
+#[test]
+fn an_allocation_holds_a_bounded_number_of_peer_connections() {
+    use super::MAX_PEER_CONNECTIONS_PER_ALLOCATION as MAX;
+    let mut net = Net::new();
+    net.allocate_tcp(0);
+    // Peers connecting in count too: permit a peer, then fill the allocation with its connections.
+    net.clients[0]
+        .relay(relay_addr_advertised())
+        .unwrap()
+        .create_permission(net.now, peer())
+        .unwrap();
+    net.pump();
+    for _ in 0..MAX {
+        assert!(
+            net.server
+                .peer_accepted(relay_addr(), peer(), net.now)
+                .is_some()
+        );
+    }
+    assert_eq!(net.server.peer_connection_count(), MAX);
+    assert!(
+        net.server
+            .peer_accepted(relay_addr(), peer(), net.now)
+            .is_none(),
+        "one connection too many is refused"
+    );
+
+    // So is a Connect.
+    net.clients[0]
+        .relay(relay_addr_advertised())
+        .unwrap()
+        .connect(net.now, "203.0.113.20:6000".parse().unwrap())
+        .unwrap();
+    net.pump();
+    let error = net.client_error(0).expect("the connect is refused");
+    assert!(error.contains("486"), "allocation quota reached: {error}");
+    assert!(net.pending_connect().is_none());
+
+    // Closing one makes room.
+    let any = net.server.peer_connection_ids().next().unwrap();
+    net.server.peer_closed(any);
+    assert!(
+        net.server
+            .peer_accepted(relay_addr(), peer(), net.now)
+            .is_some()
+    );
+}
