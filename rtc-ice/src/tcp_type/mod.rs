@@ -25,11 +25,16 @@ pub enum TcpType {
 // from creates a new TCPType from string.
 impl From<&str> for TcpType {
     fn from(raw: &str) -> Self {
-        match raw {
-            "active" => Self::Active,
-            "passive" => Self::Passive,
-            "so" => Self::SimultaneousOpen,
-            _ => Self::Unspecified,
+        // Case-insensitive, as pion's `NewTCPType` is: RFC 6544 writes the values in lower case but
+        // implementations in the wild send `ACTIVE`.
+        if raw.eq_ignore_ascii_case("active") {
+            Self::Active
+        } else if raw.eq_ignore_ascii_case("passive") {
+            Self::Passive
+        } else if raw.eq_ignore_ascii_case("so") {
+            Self::SimultaneousOpen
+        } else {
+            Self::Unspecified
         }
     }
 }

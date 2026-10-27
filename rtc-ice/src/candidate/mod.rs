@@ -391,9 +391,12 @@ impl Candidate {
         // candidates for a particular component for a particular data stream
         // that have the same type, the local preference MUST be unique for each
         // one.
+        //
+        // `256 - component` wraps in 16 bits, as in pion: a component above 256 (the field is
+        // remote-supplied) must not overflow.
         (1 << 24) * u32::from(self.type_preference())
             + (1 << 8) * u32::from(self.local_preference())
-            + (256 - u32::from(self.component()))
+            + u32::from(256u16.wrapping_sub(self.component()))
     }
 
     /// The type preference a candidate of `candidate_type` has on this candidate's transport:

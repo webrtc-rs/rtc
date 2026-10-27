@@ -1697,3 +1697,40 @@ fn test_candidate_type_preference() {
         }
     }
 }
+
+#[test]
+fn test_tcp_type_in_a_candidate_line_is_case_insensitive() {
+    for text in ["ACTIVE", "Active", "active"] {
+        let line = format!("1052353102 1 tcp 1675624447 192.0.2.1 8080 typ host tcptype {text}");
+        let c = unmarshal_candidate(&line).unwrap();
+        assert_eq!(c.tcp_type(), crate::tcp_type::TcpType::Active, "{text}");
+    }
+    assert_eq!(
+        crate::tcp_type::TcpType::from("PASSIVE"),
+        crate::tcp_type::TcpType::Passive
+    );
+    assert_eq!(
+        crate::tcp_type::TcpType::from("So"),
+        crate::tcp_type::TcpType::SimultaneousOpen
+    );
+    assert_eq!(
+        crate::tcp_type::TcpType::from("nonsense"),
+        crate::tcp_type::TcpType::Unspecified
+    );
+}
+
+// The component is remote-supplied: a value above 256 must not overflow the priority arithmetic
+// (a panic in debug builds), and wraps in 16 bits as pion's does.
+#[test]
+fn test_priority_with_an_extreme_component_does_not_overflow() {
+    let c = unmarshal_candidate("1052353102 65535 udp 0 192.0.2.2 1 typ host").unwrap();
+    assert_eq!(c.component(), 65535);
+    assert_eq!(
+        c.priority(),
+        2130706433,
+        "pion computes the same for this line"
+    );
+    let at_256 = unmarshal_candidate("1052353102 256 udp 0 192.0.2.2 1 typ host").unwrap();
+    let at_1 = unmarshal_candidate("1052353102 1 udp 0 192.0.2.2 1 typ host").unwrap();
+    assert_eq!(at_1.priority() - at_256.priority(), 255);
+}
