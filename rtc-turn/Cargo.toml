@@ -55,6 +55,11 @@ path = "examples/turn_server_udp.rs"
 bench = false
 
 [[example]]
+name = "turn_server_tcp"
+path = "examples/turn_server_tcp.rs"
+bench = false
+
+[[example]]
 name = "turn_echo_check"
 path = "examples/turn_echo_check.rs"
 bench = false
