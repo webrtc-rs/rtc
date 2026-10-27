@@ -27,6 +27,8 @@ rtc-rtcp = { path = "../../rtc-rtcp" }
 rtc-srtp = { path = "../../rtc-srtp" }
 rtc-stun = { path = "../../rtc-stun" }
 rtc-sdp = { path = "../../rtc-sdp" }
+rtc-dtls = { path = "../../rtc-dtls" }
+rtc-sctp = { path = "../../rtc-sctp" }
 crypto = { package = "rtc-crypto", path = "../../rtc-crypto", features = ["crypto-ring"] }
 shared = { package = "rtc-shared", path = "../../rtc-shared", features = ["marshal"] }
 bytes = "1"

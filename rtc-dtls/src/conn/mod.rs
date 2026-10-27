@@ -35,7 +35,6 @@ use shared::{error::*, replay_detector::*};
 use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
-use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -294,7 +293,7 @@ impl DTLSConn {
             if let Content::Handshake(h) = &p.record.content {
                 let mut handshake_raw = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(handshake_raw.as_mut());
+                    let mut writer = &mut handshake_raw;
                     p.record.marshal(&mut writer)?;
                 }
                 debug!(
@@ -404,7 +403,7 @@ impl DTLSConn {
 
             let mut record_layer_header_bytes = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(record_layer_header_bytes.as_mut());
+                let mut writer = &mut record_layer_header_bytes;
                 record_layer_header.marshal(&mut writer)?;
             }
 
@@ -428,7 +427,7 @@ impl DTLSConn {
     fn fragment_handshake(maximum_transmission_unit: usize, h: &Handshake) -> Result<Vec<Vec<u8>>> {
         let mut content = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(content.as_mut());
+            let mut writer = &mut content;
             h.handshake_message.marshal(&mut writer)?;
         }
 
@@ -456,7 +455,7 @@ impl DTLSConn {
             let mut handshake_header_fragment_raw = vec![];
             {
                 let mut writer =
-                    BufWriter::<&mut Vec<u8>>::new(handshake_header_fragment_raw.as_mut());
+                    &mut handshake_header_fragment_raw;
                 handshake_header_fragment.marshal(&mut writer)?;
             }
 

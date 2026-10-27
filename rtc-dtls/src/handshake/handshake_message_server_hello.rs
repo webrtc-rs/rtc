@@ -10,7 +10,6 @@ use crate::record_layer::record_layer_header::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::fmt;
-use std::io::BufWriter;
 
 /*
 The server will send this message in response to a ClientHello
@@ -135,7 +134,7 @@ impl HandshakeMessageServerHello {
 
         let mut extension_buffer = vec![];
         {
-            let mut extension_writer = BufWriter::<&mut Vec<u8>>::new(extension_buffer.as_mut());
+            let mut extension_writer = &mut extension_buffer;
             for extension in &self.extensions {
                 extension.marshal(&mut extension_writer)?;
             }

@@ -5,7 +5,6 @@ use crate::cipher_suite::*;
 use crate::handshake::*;
 
 use std::collections::HashMap;
-use std::io::BufReader;
 
 #[derive(Clone, Debug)]
 pub(crate) struct HandshakeCacheItem {
@@ -159,7 +158,7 @@ impl HandshakeCache {
         for r in rules {
             let t = r.typ;
             if let Some(i) = ci.get(&t) {
-                let mut reader = BufReader::new(i.data.as_slice());
+                let mut reader = i.data.as_slice();
                 let raw_handshake = Handshake::unmarshal(&mut reader)?;
                 if seq as u16 != raw_handshake.handshake_header.message_sequence {
                     // There is a gap. Some messages are not arrived.

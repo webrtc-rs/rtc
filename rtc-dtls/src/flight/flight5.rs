@@ -20,7 +20,6 @@ use shared::error::Error;
 
 use crate::config::HandshakeConfig;
 use std::fmt;
-use std::io::{BufReader, BufWriter};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flight5;
@@ -306,7 +305,7 @@ impl Flight for Flight5 {
                 return Err((alert, err));
             }
         } else {
-            let mut reader = BufReader::new(server_key_exchange_data.as_slice());
+            let mut reader = server_key_exchange_data.as_slice();
             let raw_handshake = match Handshake::unmarshal(&mut reader) {
                 Ok(h) => h,
                 Err(err) => {
@@ -355,7 +354,7 @@ impl Flight for Flight5 {
 
             let mut raw = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+                let mut writer = &mut raw;
                 if let Err(err) = h.marshal(&mut writer) {
                     return Err((
                         Some(Alert {
@@ -515,7 +514,7 @@ impl Flight for Flight5 {
 
             let mut raw = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+                let mut writer = &mut raw;
                 if let Err(err) = h.marshal(&mut writer) {
                     return Err((
                         Some(Alert {
@@ -666,12 +665,12 @@ fn initalize_cipher_suite(
 
     let mut client_random = vec![];
     {
-        let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+        let mut writer = &mut client_random;
         let _ = state.local_random.marshal(&mut writer);
     }
     let mut server_random = vec![];
     {
-        let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+        let mut writer = &mut server_random;
         let _ = state.remote_random.marshal(&mut writer);
     }
 

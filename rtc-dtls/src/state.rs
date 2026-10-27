@@ -11,7 +11,7 @@ use crypto::RTCCryptoProvider;
 use crypto::SecretVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use shared::error::*;
-use std::io::{BufWriter, Cursor};
+use std::io::Cursor;
 use std::sync::Arc;
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
@@ -135,12 +135,12 @@ impl State {
     fn serialize(&self) -> Result<SerializedState> {
         let mut local_rand = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(local_rand.as_mut());
+            let mut writer = &mut local_rand;
             self.local_random.marshal(&mut writer)?;
         }
         let mut remote_rand = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(remote_rand.as_mut());
+            let mut writer = &mut remote_rand;
             self.remote_random.marshal(&mut writer)?;
         }
 
@@ -228,12 +228,12 @@ impl State {
 
             let mut local_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(local_random.as_mut());
+                let mut writer = &mut local_random;
                 self.local_random.marshal(&mut writer)?;
             }
             let mut remote_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(remote_random.as_mut());
+                let mut writer = &mut remote_random;
                 self.remote_random.marshal(&mut writer)?;
             }
 
@@ -351,12 +351,12 @@ impl State {
 
         let mut local_random = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(local_random.as_mut());
+            let mut writer = &mut local_random;
             self.local_random.marshal(&mut writer)?;
         }
         let mut remote_random = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(remote_random.as_mut());
+            let mut writer = &mut remote_random;
             self.remote_random.marshal(&mut writer)?;
         }
 

@@ -378,7 +378,7 @@ pub(crate) fn unmarshal_extensions(buffer: &[u8]) -> Result<Vec<Extension>> {
                 buffer[offset + 1]
             );
         } else {
-            let mut reader = std::io::BufReader::new(&buffer[offset..offset + 4 + len]);
+            let mut reader = &buffer[offset..offset + 4 + len];
             extensions.push(Extension::unmarshal(&mut reader)?);
         }
         offset += 4 + len;
@@ -399,7 +399,7 @@ pub(crate) fn marshal_extensions_block<W: Write>(
 ) -> Result<()> {
     let mut buffer = vec![];
     {
-        let mut extension_writer = std::io::BufWriter::<&mut Vec<u8>>::new(buffer.as_mut());
+        let mut extension_writer = &mut buffer;
         for extension in extensions {
             extension.marshal(&mut extension_writer)?;
         }

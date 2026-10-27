@@ -8,7 +8,7 @@ use crate::record_layer::record_layer_header::*;
 use shared::error::*;
 
 use std::collections::HashMap;
-use std::io::{BufWriter, Cursor};
+use std::io::Cursor;
 
 // 2 mb max buffer size
 const FRAGMENT_BUFFER_MAX_SIZE: usize = 2_000_000;
@@ -243,7 +243,7 @@ impl FragmentBuffer {
 
         let mut content = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(content.as_mut());
+            let mut writer = &mut content;
             if first_header.marshal(&mut writer).is_err() {
                 return Err(Error::ErrEmptyFragment);
             }

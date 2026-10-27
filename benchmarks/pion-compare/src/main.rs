@@ -1,3 +1,6 @@
+mod dtls;
+mod sctp;
+
 use bytes::{Bytes, BytesMut};
 use rtc_rtp::codec::h264::H264Payloader;
 use rtc_rtp::codec::vp8::Vp8Payloader;
@@ -262,4 +265,17 @@ fn main() {
     bench("h264 payload 30KB mtu1200", ab.len(), |_| {
         black_box(h264.payload(1200, &ab).unwrap());
     });
+
+    let dtls_cfg = dtls::Configs::new();
+    bench("dtls handshake ecdsa-p256 gcm", 0, |_| {
+        black_box(dtls::Pair::connect(&dtls_cfg));
+    });
+    let mut pair = dtls::Pair::connect(&dtls_cfg);
+    let record = vec![0x5au8; 1200];
+    bench("dtls app data 1200B", record.len(), |_| pair.send(&record));
+
+    let mut assoc = sctp::Association1::new(1200);
+    bench("sctp message 1200B", 1200, |_| assoc.transfer());
+    let mut assoc = sctp::Association1::new(100);
+    bench("sctp message 100B", 100, |_| assoc.transfer());
 }

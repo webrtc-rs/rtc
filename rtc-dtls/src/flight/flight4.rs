@@ -29,7 +29,6 @@ use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 
 use log::*;
 use std::fmt;
-use std::io::BufWriter;
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -280,12 +279,12 @@ impl Flight for Flight4 {
             {
                 let mut server_random = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+                    let mut writer = &mut server_random;
                     let _ = state.local_random.marshal(&mut writer);
                 }
                 let mut client_random = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+                    let mut writer = &mut client_random;
                     let _ = state.remote_random.marshal(&mut writer);
                 }
 
@@ -680,12 +679,12 @@ impl Flight for Flight4 {
 
             let mut server_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+                let mut writer = &mut server_random;
                 let _ = state.local_random.marshal(&mut writer);
             }
             let mut client_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+                let mut writer = &mut client_random;
                 let _ = state.remote_random.marshal(&mut writer);
             }
 

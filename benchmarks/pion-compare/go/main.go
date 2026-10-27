@@ -185,4 +185,7 @@ func main() {
 		}
 	})
 	_ = hex.EncodeToString
+
+	benchDTLS()
+	benchSCTP()
 }
