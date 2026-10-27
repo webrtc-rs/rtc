@@ -23,6 +23,12 @@ const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 // The Permission Lifetime MUST be 300 seconds (= 5 minutes).
 const PERM_LIFETIME: Duration = Duration::from_secs(300);
 const MAX_RETRY_ATTEMPTS: u16 = 3;
+/// How soon an allocation Refresh that timed out is tried again.
+///
+/// The refresh timer moves a full interval ahead when a Refresh is sent. At the default interval
+/// of half the lifetime, waiting that long after a timeout lands on the moment the allocation
+/// expires, so one lost exchange would lose the relay.
+const ALLOC_REFRESH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// Smallest step the allocation-refresh timer may advance by.
 ///
 /// The timer advances by a fixed cadence from its own previous value, which keeps the refresh
@@ -581,6 +587,29 @@ impl Relay<'_> {
             Ok(())
         } else {
             Err(Error::ErrConnClosed)
+        }
+    }
+
+    /// A ChannelBind that got no answer leaves its binding as it was before the request: a first
+    /// bind goes back to `Idle`, a refresh back to `Ready`. Either way the next send binds again,
+    /// with the same channel number, since the server may still hold it (RFC 8656 §12).
+    pub(super) fn handle_channel_bind_timeout(&mut self, bind_addr: SocketAddr) {
+        if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
+            match b.state() {
+                BindingState::Request => b.set_state(BindingState::Idle),
+                BindingState::Refresh => b.set_state(BindingState::Ready),
+                _ => {}
+            }
+        }
+    }
+
+    /// An allocation Refresh that got no answer is tried again soon rather than a full interval
+    /// later.
+    pub(super) fn handle_refresh_allocation_timeout(&mut self, now: Instant) {
+        if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+            relay.refresh_alloc_timer = relay
+                .refresh_alloc_timer
+                .min(now.add(ALLOC_REFRESH_RETRY_INTERVAL));
         }
     }
 
