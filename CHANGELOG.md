@@ -116,7 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from one of those (a `handle_write` emits toward the wire, not toward the application). The
   pipeline passes by the data channel, SCTP and DTLS handlers when they have nothing of their own
   waiting, reuses its message queue between passes, and the statistics maps on the packet path use
-  a faster hash. `DataChannel::has_pending_writes` is new.
+  a faster hash. `DataChannel::has_pending_writes` is new. The sender report no longer reads the wall
+  clock for every frame of every stream, but once a second; a report extrapolates from that baseline
+  on the monotonic clock, as it already did between frames, and `SystemInstant::captured_at` is new.
 - `rtc-sdp` (breaking): `MediaName::{media, protos, formats}`, `ConnectionInformation::{network_type,
   address_type}` and `Address::address` are `SmolStr` (inline up to 23 bytes), like `Attribute`
   already is; they compare equal to `&str` and `String`. Attribute and format lists are sized from
