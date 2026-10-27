@@ -75,7 +75,10 @@ impl Cidr {
         if prefix_len > max {
             return Err(Error::ErrInvalidNat1to1IpMapping);
         }
-        Ok(Self { network, prefix_len })
+        Ok(Self {
+            network,
+            prefix_len,
+        })
     }
 
     /// Whether `ip` is inside this network (and of the same family).
@@ -269,7 +272,11 @@ pub fn rewrite_candidate(
             .max_by_key(|r| r.specificity());
         let Some(rule) = best else { continue };
 
-        let port = if rule.new_port != 0 { rule.new_port } else { host.port() };
+        let port = if rule.new_port != 0 {
+            rule.new_port
+        } else {
+            host.port()
+        };
         let mode = rule.effective_mode();
         for external in rule.external.iter().filter(|e| e.is_ipv4() == ip.is_ipv4()) {
             let candidate = build(host, typ, *external, port)?;
@@ -283,7 +290,11 @@ pub fn rewrite_candidate(
         }
     }
 
-    let mut out = if keep_original { vec![host.clone()] } else { vec![] };
+    let mut out = if keep_original {
+        vec![host.clone()]
+    } else {
+        vec![]
+    };
     out.extend(replaced);
     out.extend(appended);
     Ok(out)
@@ -393,7 +404,8 @@ mod tests {
 
     #[test]
     fn a_local_address_pins_the_rule() {
-        let rules = [AddressRewriteRule::replace_host([ip("203.0.113.7")]).for_local(ip("10.0.0.5"))];
+        let rules =
+            [AddressRewriteRule::replace_host([ip("203.0.113.7")]).for_local(ip("10.0.0.5"))];
         let hit = rewrite_candidate(&rules, &host("10.0.0.5", 9000), None).unwrap();
         assert_eq!(hit[0].address(), "203.0.113.7");
         let miss = rewrite_candidate(&rules, &host("10.0.0.6", 9000), None).unwrap();
@@ -449,7 +461,11 @@ mod tests {
     fn a_family_mismatch_is_skipped() {
         let rules = [AddressRewriteRule::replace_host([ip("2001:db8::7")])];
         let out = rewrite_candidate(&rules, &host("10.0.0.5", 9000), None).unwrap();
-        assert_eq!(out[0].address(), "10.0.0.5", "an IPv6 external cannot stand for an IPv4 host");
+        assert_eq!(
+            out[0].address(),
+            "10.0.0.5",
+            "an IPv6 external cannot stand for an IPv4 host"
+        );
     }
 
     #[test]
@@ -490,14 +506,34 @@ mod tests {
 
     #[test]
     fn cidr_parsing_and_membership() {
-        assert!(Cidr::parse("10.0.0.0/8").unwrap().contains(ip("10.200.1.1")));
+        assert!(
+            Cidr::parse("10.0.0.0/8")
+                .unwrap()
+                .contains(ip("10.200.1.1"))
+        );
         assert!(!Cidr::parse("10.0.0.0/8").unwrap().contains(ip("11.0.0.1")));
         assert!(Cidr::parse("0.0.0.0/0").unwrap().contains(ip("1.2.3.4")));
-        assert!(Cidr::parse("192.168.1.7/32").unwrap().contains(ip("192.168.1.7")));
-        assert!(!Cidr::parse("192.168.1.7/32").unwrap().contains(ip("192.168.1.8")));
-        assert!(Cidr::parse("2001:db8::/32").unwrap().contains(ip("2001:db8:1::1")));
+        assert!(
+            Cidr::parse("192.168.1.7/32")
+                .unwrap()
+                .contains(ip("192.168.1.7"))
+        );
+        assert!(
+            !Cidr::parse("192.168.1.7/32")
+                .unwrap()
+                .contains(ip("192.168.1.8"))
+        );
+        assert!(
+            Cidr::parse("2001:db8::/32")
+                .unwrap()
+                .contains(ip("2001:db8:1::1"))
+        );
         // A v6 network never contains a v4 address and vice versa.
-        assert!(!Cidr::parse("2001:db8::/32").unwrap().contains(ip("10.0.0.1")));
+        assert!(
+            !Cidr::parse("2001:db8::/32")
+                .unwrap()
+                .contains(ip("10.0.0.1"))
+        );
         assert!(Cidr::parse("10.0.0.0/33").is_err());
         assert!(Cidr::parse("10.0.0.0").is_err());
         assert!(Cidr::parse("nonsense/8").is_err());

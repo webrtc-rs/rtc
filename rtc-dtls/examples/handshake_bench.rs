@@ -43,7 +43,12 @@ impl Pair {
                 bytes += t.message.len() as u64;
                 let events = self
                     .server
-                    .read(now, self.c_addr, t.transport.ecn, BytesMut::from(&t.message[..]))
+                    .read(
+                        now,
+                        self.c_addr,
+                        t.transport.ecn,
+                        BytesMut::from(&t.message[..]),
+                    )
                     .expect("server read");
                 for e in events {
                     match e {
@@ -59,7 +64,12 @@ impl Pair {
                 moved = true;
                 let events = self
                     .client
-                    .read(now, self.s_addr, t.transport.ecn, BytesMut::from(&t.message[..]))
+                    .read(
+                        now,
+                        self.s_addr,
+                        t.transport.ecn,
+                        BytesMut::from(&t.message[..]),
+                    )
                     .expect("client read");
                 for e in events {
                     if matches!(e, EndpointEvent::HandshakeComplete) {
@@ -106,8 +116,16 @@ fn main() {
     let provider = default_provider().expect("a crypto provider");
     let cert = Certificate::generate_self_signed(vec!["localhost".to_owned()], provider.crypto())
         .expect("certificate");
-    let cc = Arc::new(builder(&provider, &cert).build(true, None).expect("client cfg"));
-    let sc = Arc::new(builder(&provider, &cert).build(false, None).expect("server cfg"));
+    let cc = Arc::new(
+        builder(&provider, &cert)
+            .build(true, None)
+            .expect("client cfg"),
+    );
+    let sc = Arc::new(
+        builder(&provider, &cert)
+            .build(false, None)
+            .expect("server cfg"),
+    );
 
     // Warm up.
     for _ in 0..5 {

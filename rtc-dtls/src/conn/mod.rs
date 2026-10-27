@@ -454,8 +454,7 @@ impl DTLSConn {
 
             let mut handshake_header_fragment_raw = vec![];
             {
-                let mut writer =
-                    &mut handshake_header_fragment_raw;
+                let mut writer = &mut handshake_header_fragment_raw;
                 handshake_header_fragment.marshal(&mut writer)?;
             }
 

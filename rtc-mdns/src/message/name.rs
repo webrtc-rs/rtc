@@ -109,7 +109,9 @@ impl Name {
                         Ok(s) => name.push_str(s),
                         // The error type carries the offending bytes, so rebuild it from a copy;
                         // this is the failure path only.
-                        Err(_) => return Err(String::from_utf8(segment.to_vec()).unwrap_err().into()),
+                        Err(_) => {
+                            return Err(String::from_utf8(segment.to_vec()).unwrap_err().into());
+                        }
                     }
                     name.push('.');
                     curr_off = end_off;
@@ -197,7 +199,6 @@ impl Name {
     }
 }
 
-
 /// The suffixes of the names packed so far, for compression (RFC 1035 §4.1.4): where in the message
 /// each one starts. A suffix is looked up by comparing it with the bytes already written at that
 /// offset, so building the table copies no name text.
@@ -218,7 +219,9 @@ impl NameTable {
         suffix
             .as_bytes()
             .iter()
-            .fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
+            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+                (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+            })
     }
 
     /// The offset at which `suffix` was packed earlier into `msg`, whose message starts at `base`.
@@ -355,4 +358,3 @@ pub(crate) fn pack_name(
     msg.push(0);
     Ok(msg)
 }
-

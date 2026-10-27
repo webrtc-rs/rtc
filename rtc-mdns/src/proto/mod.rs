@@ -12,9 +12,9 @@ use log::{trace, warn};
 use shared::{TaggedBytesMut, TransportContext, TransportMessage, TransportProtocol};
 
 use crate::config::{DEFAULT_QUERY_INTERVAL, MAX_MESSAGE_RECORDS, MdnsConfig, RESPONSE_TTL};
+use crate::message::DnsType;
 use crate::message::parser::Parser;
 use crate::message::resource::a::AResource;
-use crate::message::DnsType;
 use shared::error::{Error, Result};
 
 /// `name` with a trailing dot, in one allocation of the right size.

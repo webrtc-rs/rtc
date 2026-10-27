@@ -723,12 +723,7 @@ impl RTCPeerConnection {
                             value: 0,
                             range: None,
                         },
-                        protos: vec![
-                            "UDP".into(),
-                            "TLS".into(),
-                            "RTP".into(),
-                            "SAVPF".into(),
-                        ],
+                        protos: vec!["UDP".into(), "TLS".into(), "RTP".into(), "SAVPF".into()],
                         formats: vec!["0".into()],
                     },
                     media_title: None,

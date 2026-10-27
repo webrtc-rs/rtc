@@ -7,8 +7,8 @@
 //!
 //! [`RangedPort`](crate::description::media::RangedPort) exists because a media section may claim consecutive ports (`<port>/<count>`),
 //! which RTP/RTCP without multiplexing needs.
-use std::collections::HashMap;
 use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::fmt;
 
 use url::Url;
@@ -185,7 +185,9 @@ impl MediaDescription {
         channels: u16,
         fmtp: String,
     ) -> Self {
-        self.media_name.formats.push(SmolStr::new(payload_type.to_string()));
+        self.media_name
+            .formats
+            .push(SmolStr::new(payload_type.to_string()));
         let rtpmap = if channels > 0 {
             format!("{payload_type} {name}/{clockrate}/{channels}")
         } else {

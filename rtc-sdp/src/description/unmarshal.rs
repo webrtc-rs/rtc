@@ -656,7 +656,8 @@ fn unmarshal_media_description(l: &mut Lexer<'_>) -> R<Option<State>> {
     let first = parts.next().unwrap_or("");
     md.media_name.port.value = parse_port(first)?;
     if let Some(range) = parts.next() {
-        md.media_name.port.range = Some(go_atoi(range).ok_or_else(|| Fail::Value(field.to_string()))?);
+        md.media_name.port.range =
+            Some(go_atoi(range).ok_or_else(|| Fail::Value(field.to_string()))?);
     }
 
     // RFC 8866 §5.14: <proto> is an extensible token, so unregistered protocols are accepted
@@ -674,7 +675,9 @@ fn unmarshal_media_description(l: &mut Lexer<'_>) -> R<Option<State>> {
     {
         let rest = &l.value[l.pos.min(l.value.len())..];
         let line = &rest[..memchr::memchr(b'\n', rest).unwrap_or(rest.len())];
-        md.media_name.formats.reserve_exact(line.split(|b| *b == b' ').filter(|t| !t.is_empty()).count());
+        md.media_name
+            .formats
+            .reserve_exact(line.split(|b| *b == b' ').filter(|t| !t.is_empty()).count());
     }
     loop {
         let field = l.read_field_small()?;

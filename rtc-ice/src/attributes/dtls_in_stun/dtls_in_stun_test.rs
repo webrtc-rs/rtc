@@ -34,7 +34,12 @@ fn dtls_in_stun_pads_unaligned_values() -> Result<()> {
 
 #[test]
 fn dtls_in_stun_ack_round_trips_zero_to_four_values() -> Result<()> {
-    for acks in [vec![], vec![7], vec![1, 2], vec![0xdead_beef, 0, u32::MAX, 42]] {
+    for acks in [
+        vec![],
+        vec![7],
+        vec![1, 2],
+        vec![0xdead_beef, 0, u32::MAX, 42],
+    ] {
         let mut m = Message::new();
         DtlsInStunAckAttr(acks.clone()).add_to(&mut m)?;
         m.write_header();
@@ -82,5 +87,8 @@ fn attribute_numbers_and_names_match_the_draft() {
     assert_eq!(ATTR_DTLS_IN_STUN.value(), 0xC070);
     assert_eq!(ATTR_DTLS_IN_STUN_ACK.value(), 0xC071);
     assert_eq!(ATTR_DTLS_IN_STUN.to_string(), "DTLS-IN-STUN");
-    assert_eq!(ATTR_DTLS_IN_STUN_ACK.to_string(), "DTLS-IN-STUN-ACKNOWLEDGEMENT");
+    assert_eq!(
+        ATTR_DTLS_IN_STUN_ACK.to_string(),
+        "DTLS-IN-STUN-ACKNOWLEDGEMENT"
+    );
 }

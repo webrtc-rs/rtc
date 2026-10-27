@@ -1335,7 +1335,11 @@ fn test_pack_a_question_matches_message_pack() -> Result<()> {
 
 #[test]
 fn test_pack_a_answer_matches_message_pack() -> Result<()> {
-    for name in ["a.", "myhost.local.", "7a1f6e3c-0b2d-4c5e-9f10-aabbccddeeff.local."] {
+    for name in [
+        "a.",
+        "myhost.local.",
+        "7a1f6e3c-0b2d-4c5e-9f10-aabbccddeeff.local.",
+    ] {
         let mut msg = Message {
             header: Header {
                 response: true,
@@ -1350,7 +1354,9 @@ fn test_pack_a_answer_matches_message_pack() -> Result<()> {
                     ttl: 120,
                     ..Default::default()
                 },
-                body: Some(Box::new(AResource { a: [192, 168, 1, 100] })),
+                body: Some(Box::new(AResource {
+                    a: [192, 168, 1, 100],
+                })),
             }],
             ..Default::default()
         };
@@ -1395,7 +1401,12 @@ fn test_name_table_compresses_shared_suffixes() -> Result<()> {
     // Everything unpacks to the names that went in.
     let mut name = Name::default();
     let mut off = 0;
-    for want in ["a.example.local.", "b.example.local.", "c.b.example.local.", "example.locax."] {
+    for want in [
+        "a.example.local.",
+        "b.example.local.",
+        "c.b.example.local.",
+        "example.locax.",
+    ] {
         off = name.unpack(&msg, off)?;
         assert_eq!(name.data, want);
     }

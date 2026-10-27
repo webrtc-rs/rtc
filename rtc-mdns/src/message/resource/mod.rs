@@ -9,8 +9,8 @@ pub(crate) mod soa;
 pub(crate) mod srv;
 pub(crate) mod txt;
 
-use std::any::Any;
 use crate::message::name::NameTable;
+use std::any::Any;
 use std::fmt;
 
 use a::*;
