@@ -1232,7 +1232,7 @@ fn test_nomination_attribute_precedes_integrity_and_fingerprint() {
     };
     m.decode().unwrap();
 
-    let index = |t: AttrType| m.attributes.0.iter().position(|a| a.typ == t).unwrap();
+    let index = |t: AttrType| m.iter_attributes().position(|a| a.typ == t).unwrap();
     assert!(index(DEFAULT_NOMINATION_ATTRIBUTE) < index(ATTR_MESSAGE_INTEGRITY));
     assert!(index(ATTR_MESSAGE_INTEGRITY) < index(ATTR_FINGERPRINT));
 }

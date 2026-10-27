@@ -26,6 +26,7 @@ Needs a Rust toolchain and Go (the pion half is `go/`, pinned in `go/go.mod`).
 | `srtp gcm-128 encrypt 1200B` | `encrypt_rtp_into` | `EncryptRTP(dst[:0], …)` |
 | `stun decode+getters+integrity` | `Message::decode` + getters + integrity + fingerprint, one reused message | same |
 | `stun build binding request` | `Message::build` on a reused message | `Message.Build` |
+| `stun add 3 attributes+reset` | `Message::add` of DATA (10 B), LIFETIME and CHANNEL-NUMBER (4 B), then `reset`; what every TURN message is built from | `Message.Add` ×3 + `Reset` |
 | `sdp unmarshal / marshal / codec map` | `SessionDescription` | `sdp.SessionDescription` |
 | `rtcp unmarshal SR+SDES+REMB` | `rtcp::packet::unmarshal` | `rtcp.Unmarshal` |
 | `vp8 / h264 payload 30KB mtu1200` | `Payloader::payload` | `Payloader.Payload` |

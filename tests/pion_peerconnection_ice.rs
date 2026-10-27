@@ -252,7 +252,7 @@ fn test_ice_binding_request_handler_sees_both_roles() {
     let recorder = seen.clone();
     let handler = BindingRequestHandler::new(move |message, _, _, _| {
         let mut seen = recorder.lock().unwrap();
-        for attribute in message.attributes.0.iter() {
+        for attribute in message.iter_attributes() {
             if attribute.typ == ATTR_ICE_CONTROLLED {
                 seen.0 = true;
             } else if attribute.typ == ATTR_ICE_CONTROLLING {

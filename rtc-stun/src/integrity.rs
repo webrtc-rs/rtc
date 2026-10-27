@@ -44,7 +44,7 @@ impl<'a> Setter for MessageIntegrity<'a> {
     //
     // CPU costly, see BenchmarkMessageIntegrity_AddTo.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        for a in &m.attributes.0 {
+        for a in m.iter_attributes() {
             // Message should not contain FINGERPRINT attribute
             // before MESSAGE-INTEGRITY.
             if a.typ == ATTR_FINGERPRINT {
@@ -140,8 +140,8 @@ impl<'a> MessageIntegrity<'a> {
         // length is the size of the attributes up to and including MESSAGE-INTEGRITY. Attributes
         // after it (FINGERPRINT, or ones decode dropped) are not part of it.
         let mut covered = 0;
-        for a in &m.attributes.0 {
-            covered += ATTRIBUTE_HEADER_SIZE + nearest_padded_value_length(a.length as usize);
+        for a in m.iter_attributes() {
+            covered += ATTRIBUTE_HEADER_SIZE + nearest_padded_value_length(a.value.len());
             if a.typ == ATTR_MESSAGE_INTEGRITY {
                 break;
             }

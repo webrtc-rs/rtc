@@ -109,25 +109,6 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 //
 //      Message, its fields, results of m.Get or any attribute a.GetFrom
 //      are valid only until Message.Raw is not modified.
-/// Attributes that [`Message::reset`] took off a message, kept with their value buffers so the next
-/// [`Message::add`] reuses one instead of allocating (pion's `Message.Add` slices its own buffer;
-/// here the attribute list owns a copy of each value). A clone starts empty.
-#[doc(hidden)]
-#[derive(Default)]
-pub struct SpareAttributes(Vec<RawAttribute>);
-
-impl Clone for SpareAttributes {
-    fn clone(&self) -> Self {
-        SpareAttributes::default()
-    }
-}
-
-impl fmt::Debug for SpareAttributes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SpareAttributes({})", self.0.len())
-    }
-}
-
 #[derive(Default, Debug, Clone)]
 /// A STUN message: type, transaction id, and attributes, plus the encoded bytes.
 pub struct Message {
@@ -141,10 +122,6 @@ pub struct Message {
     pub attributes: Attributes,
     /// The encoded message. Attributes whose value covers the message are computed over this.
     pub raw: Vec<u8>,
-    /// Internal: recycled attribute buffers. Build a `Message` with `Message::new()` or
-    /// `..Default::default()`.
-    #[doc(hidden)]
-    pub spare: SpareAttributes,
 }
 
 impl fmt::Display for Message {
@@ -174,10 +151,11 @@ impl PartialEq for Message {
         if self.length != other.length {
             return false;
         }
-        if self.attributes != other.attributes {
-            return false;
-        }
-        true
+        self.attributes.len() == other.attributes.len()
+            && self
+                .iter_attributes()
+                .zip(other.iter_attributes())
+                .all(|(a, b)| a == b)
     }
 }
 
@@ -234,9 +212,14 @@ impl Message {
 
     /// Reset resets Message, attributes and underlying buffer length.
     pub fn reset(&mut self) {
-        self.raw.clear();
+        // What stays is a zeroed header, so the next `add` appends right after it.
+        self.raw.truncate(MESSAGE_HEADER_SIZE);
+        if self.raw.len() < MESSAGE_HEADER_SIZE {
+            self.raw.resize(MESSAGE_HEADER_SIZE, 0);
+        }
+        self.raw[..MESSAGE_HEADER_SIZE].copy_from_slice(&[0; MESSAGE_HEADER_SIZE]);
         self.length = 0;
-        self.spare.0.append(&mut self.attributes.0);
+        self.attributes.0.clear();
     }
 
     // grow ensures that internal buffer has n length.
@@ -267,29 +250,34 @@ impl Message {
         // [first:last]                         <- same as previous
         // [0 1|2 3|4    4 + len(v)]            <- mapping for allocated buffer
         //   T   L        V
-        let padded_len = nearest_padded_value_length(v.len());
+        let len = v.len();
+        let pad = nearest_padded_value_length(len) - len;
         let first = MESSAGE_HEADER_SIZE + self.length as usize; // first byte number
-        let value_start = first + ATTRIBUTE_HEADER_SIZE;
-        let end = value_start + padded_len; // the TLV and its padding
-        // One resize covers the TLV and the padding; the padding bytes are zeroed below, so
-        // nothing left in the buffer from earlier data leaks into them.
-        self.raw.resize(end, 0);
-        self.length = (end - MESSAGE_HEADER_SIZE) as u32; // rendering length change
 
-        // Encoding attribute TLV to allocated buffer.
-        let buf = &mut self.raw[first..end];
-        buf[0..2].copy_from_slice(&t.value().to_be_bytes()); // T
-        buf[2..4].copy_from_slice(&(v.len() as u16).to_be_bytes()); // L
-        buf[ATTRIBUTE_HEADER_SIZE..ATTRIBUTE_HEADER_SIZE + v.len()].copy_from_slice(v); // V
-        buf[ATTRIBUTE_HEADER_SIZE + v.len()..].fill(0);
+        // The TLV is appended at `first`, replacing whatever `raw` held from there on. Right
+        // after a reset that is nothing, and the header's bytes before it are zeroed.
+        self.raw.resize(first, 0);
+        let [t0, t1] = t.value().to_be_bytes(); // T
+        let [l0, l1] = (len as u16).to_be_bytes(); // L
+        self.raw.extend_from_slice(&[t0, t1, l0, l1]);
+        // V. Most values are one of a few small sizes; a fixed size copies without a call.
+        if let Ok(v) = <&[u8; 4]>::try_from(v) {
+            self.raw.extend_from_slice(v);
+        } else if let Ok(v) = <&[u8; 8]>::try_from(v) {
+            self.raw.extend_from_slice(v);
+        } else {
+            self.raw.extend_from_slice(v);
+        }
+        if pad != 0 {
+            self.raw.extend_from_slice(&[0; PADDING][..pad]); // zeroed padding
+        }
 
-        // The attribute keeps its own copy of the value, in a buffer an earlier `reset` freed.
-        let mut attr = self.spare.0.pop().unwrap_or_default();
-        attr.typ = t; // T
-        attr.length = v.len() as u16; // L
-        attr.value.clear();
-        attr.value.extend_from_slice(v); // V
-        self.attributes.0.push(attr);
+        self.length += (ATTRIBUTE_HEADER_SIZE + len + pad) as u32; // rendering length change
+        self.attributes.0.push(Span {
+            typ: t,
+            start: (first + ATTRIBUTE_HEADER_SIZE) as u32,
+            len: len as u16,
+        });
         self.raw[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
     }
 
@@ -316,13 +304,32 @@ impl Message {
         // transaction ID
     }
 
-    /// WriteAttributes encodes all m.Attributes to m.
+    /// WriteAttributes lays the attributes out again in `raw`, one after another with their
+    /// padding, and sets the message length to match.
+    ///
+    /// Attributes only ever move towards the start of `raw` (decoding can leave gaps where it
+    /// dropped some), so each value is moved within the buffer.
     pub fn write_attributes(&mut self) {
-        let attributes: Vec<RawAttribute> = std::mem::take(&mut self.attributes.0);
-        for a in &attributes {
-            self.add(a.typ, &a.value);
+        let mut end = MESSAGE_HEADER_SIZE;
+        for span in &mut self.attributes.0 {
+            let (from, len) = (span.start as usize, span.len as usize);
+            let start = end + ATTRIBUTE_HEADER_SIZE;
+            let padded_end = start + nearest_padded_value_length(len);
+            if self.raw.len() < padded_end.max(from + len) {
+                self.raw.resize(padded_end.max(from + len), 0);
+            }
+            if from != start {
+                self.raw.copy_within(from..from + len, start);
+            }
+            self.raw[end..end + 2].copy_from_slice(&span.typ.value().to_be_bytes());
+            self.raw[end + 2..start].copy_from_slice(&span.len.to_be_bytes());
+            self.raw[start + len..padded_end].fill(0);
+            span.start = start as u32;
+            end = padded_end;
         }
-        self.attributes = Attributes(attributes);
+        self.raw.truncate(end);
+        self.length = (end - MESSAGE_HEADER_SIZE) as u32;
+        self.write_length();
     }
 
     /// WriteType writes m.Type to m.Raw.
@@ -339,14 +346,15 @@ impl Message {
 
     /// Encode re-encodes message into m.Raw.
     pub fn encode(&mut self) {
-        self.raw.clear();
         self.write_header();
-        self.length = 0;
         self.write_attributes();
     }
 
     /// Decode decodes m.Raw into m.
     pub fn decode(&mut self) -> Result<()> {
+        // The attributes point into `raw`, which has just been replaced.
+        self.attributes.0.clear();
+
         // decoding message header
         let buf = &self.raw;
         if buf.len() < MESSAGE_HEADER_SIZE {
@@ -378,9 +386,8 @@ impl Message {
             .0
             .copy_from_slice(&buf[8..MESSAGE_HEADER_SIZE]);
 
-        // Attribute slots (and the value buffers inside them) from a previous decode are reused,
-        // so decoding into one long-lived message allocates nothing in steady state.
-        let mut kept = 0;
+        // The attribute list keeps its capacity from the previous decode, so decoding into one
+        // long-lived message allocates nothing in steady state.
         let mut offset = 0;
         let mut b = &buf[MESSAGE_HEADER_SIZE..full_size];
         let (mut seen_mi, mut seen_mi256) = (false, false);
@@ -388,7 +395,6 @@ impl Message {
         while offset < size {
             // checking that we have enough bytes to read header
             if b.len() < ATTRIBUTE_HEADER_SIZE {
-                self.attributes.0.truncate(kept);
                 return Err(Error::Other(format!(
                     "buffer length {} is less than {} (expected header size)",
                     b.len(),
@@ -405,7 +411,6 @@ impl Message {
             offset += ATTRIBUTE_HEADER_SIZE;
             if b.len() < a_buff_l {
                 // checking size
-                self.attributes.0.truncate(kept);
                 return Err(Error::Other(format!(
                     "buffer length {} is less than {} (expected value size for {})",
                     b.len(),
@@ -413,7 +418,7 @@ impl Message {
                     typ
                 )));
             }
-            let value = &b[..a_l];
+            let value_start = MESSAGE_HEADER_SIZE + offset;
             offset += a_buff_l;
             b = &b[a_buff_l..];
 
@@ -431,18 +436,13 @@ impl Message {
             seen_mi |= is_mi;
             seen_mi256 |= is_mi256;
 
-            if kept == self.attributes.0.len() {
-                self.attributes.0.push(RawAttribute::default());
-            }
-            let slot = &mut self.attributes.0[kept];
-            slot.typ = typ;
-            slot.length = length;
-            slot.value.clear();
-            slot.value.extend_from_slice(value);
-            kept += 1;
+            self.attributes.0.push(Span {
+                typ,
+                start: value_start as u32,
+                len: length,
+            });
         }
 
-        self.attributes.0.truncate(kept);
         Ok(())
     }
 
@@ -483,26 +483,54 @@ impl Message {
         b.decode()
     }
 
+    /// The bytes of `span`'s value; empty if `raw` was cut short underneath it.
+    fn value_of(&self, span: &Span) -> &[u8] {
+        let start = span.start as usize;
+        self.raw
+            .get(start..start + span.len as usize)
+            .unwrap_or(&[])
+    }
+
+    /// The attributes, in order, with their values borrowed from the message.
+    pub fn iter_attributes(&self) -> impl ExactSizeIterator<Item = AttributeRef<'_>> + '_ {
+        self.attributes.0.iter().map(|span| AttributeRef {
+            typ: span.typ,
+            value: self.value_of(span),
+        })
+    }
+
+    /// The first attribute of type `t`, borrowed from the message.
+    pub fn find_attribute(&self, t: AttrType) -> Option<AttributeRef<'_>> {
+        self.attributes
+            .0
+            .iter()
+            .find(|span| span.typ == t)
+            .map(|span| AttributeRef {
+                typ: t,
+                value: self.value_of(span),
+            })
+    }
+
+    /// Removes the last attribute and its bytes, returning its type.
+    pub fn pop_attribute(&mut self) -> Option<AttrType> {
+        let span = self.attributes.0.pop()?;
+        let end = span.start as usize - ATTRIBUTE_HEADER_SIZE;
+        self.raw.truncate(end);
+        self.length = (end - MESSAGE_HEADER_SIZE) as u32;
+        self.write_length();
+        Some(span.typ)
+    }
+
     /// Contains return true if message contain t attribute.
     pub fn contains(&self, t: AttrType) -> bool {
-        for a in &self.attributes.0 {
-            if a.typ == t {
-                return true;
-            }
-        }
-        false
+        self.attributes.0.iter().any(|span| span.typ == t)
     }
 
     /// Get returns byte slice that represents attribute value,
     /// if there is no attribute with such type,
     /// ErrAttributeNotFound is returned.
     pub fn get(&self, t: AttrType) -> Result<Vec<u8>> {
-        let (v, ok) = self.attributes.get(t);
-        if ok {
-            Ok(v.value)
-        } else {
-            Err(Error::ErrAttributeNotFound)
-        }
+        self.get_value(t).map(<[u8]>::to_vec)
     }
 
     /// The value of the first attribute of type `t`, borrowed from the message.
@@ -510,9 +538,8 @@ impl Message {
     /// What the attribute getters use: [`get`](Self::get) returns an owned copy, which costs an
     /// allocation per lookup.
     pub fn get_value(&self, t: AttrType) -> Result<&[u8]> {
-        self.attributes
-            .find(t)
-            .map(|attribute| attribute.value.as_slice())
+        self.find_attribute(t)
+            .map(|attribute| attribute.value)
             .ok_or(Error::ErrAttributeNotFound)
     }
 

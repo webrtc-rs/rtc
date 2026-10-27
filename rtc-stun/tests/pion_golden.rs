@@ -40,10 +40,8 @@ fn analyze(raw: &[u8]) -> Result<serde_json::Value, String> {
     m.decode().map_err(|e| e.to_string())?;
 
     let attrs: Vec<[String; 2]> = m
-        .attributes
-        .0
-        .iter()
-        .map(|a| [format!("{:04x}", a.typ.0), hex(&a.value)])
+        .iter_attributes()
+        .map(|a| [format!("{:04x}", a.typ.0), hex(a.value)])
         .collect();
     let fp = ok_err(&FINGERPRINT.check(&m));
     let provider = crypto::default_provider().expect("crypto provider");
@@ -115,8 +113,8 @@ fn analyze(raw: &[u8]) -> Result<serde_json::Value, String> {
     m2.typ = m.typ;
     m2.transaction_id = m.transaction_id;
     m2.write_header();
-    for a in &m.attributes.0 {
-        m2.add(a.typ, &a.value);
+    for a in m.iter_attributes() {
+        m2.add(a.typ, a.value);
     }
 
     Ok(serde_json::json!({

@@ -135,6 +135,17 @@ func main() {
 		}
 	})
 
+	report("stun add 3 attributes+reset", 0, func(b *testing.B) {
+		mm := &stun.Message{}
+		data, four := make([]byte, 10), make([]byte, 4)
+		for i := 0; i < b.N; i++ {
+			mm.Add(stun.AttrData, data)
+			mm.Add(stun.AttrLifetime, four)
+			mm.Add(stun.AttrChannelNumber, four)
+			mm.Reset()
+		}
+	})
+
 	// SDP
 	sdpBytes, _ := os.ReadFile(os.Args[1])
 	sdpStr := string(sdpBytes)

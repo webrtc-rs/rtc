@@ -23,15 +23,13 @@ enum Value {
 }
 
 type Buf = Buffer<Key, Value>;
+type ReadOutcome = (Result<usize, Error>, Vec<u8>, Vec<Attribute<Key, Value>>);
 
 fn attr(key: Key, value: Value) -> Attribute<Key, Value> {
     Attribute { key, value }
 }
 
-fn read(
-    buffer: &mut Buf,
-    size: usize,
-) -> (Result<usize, Error>, Vec<u8>, Vec<Attribute<Key, Value>>) {
+fn read(buffer: &mut Buf, size: usize) -> ReadOutcome {
     let mut payload = vec![0u8; size];
     let mut attributes = Vec::new();
     let result = buffer.read(&mut payload, &mut attributes);

@@ -36,8 +36,8 @@ fn test_mapped_address() -> Result<()> {
             }
             //"Bad family"
             {
-                let (mut v, _) = m.attributes.get(ATTR_MAPPED_ADDRESS);
-                v.value[0] = 32;
+                let mut v = m.get(ATTR_MAPPED_ADDRESS)?;
+                v[0] = 32;
                 got.get_from(&m)?
             }
             //"Bad length"

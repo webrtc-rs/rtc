@@ -163,8 +163,7 @@ fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<(
         .iter_mut()
         .find(|attribute| attribute.typ == ATTR_MESSAGE_INTEGRITY)
         .expect("MESSAGE-INTEGRITY attribute");
-    attribute.value.pop();
-    attribute.length -= 1;
+    attribute.len -= 1;
     assert_eq!(
         MessageIntegrity::check(&mut message, integrity.key.as_ref(), provider.crypto()),
         Err(Error::ErrIntegrityMismatch)

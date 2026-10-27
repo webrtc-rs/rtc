@@ -21,10 +21,15 @@ fn test_software_get_from() -> Result<()> {
     let software = TextAttribute::get_from_as(&m, ATTR_SOFTWARE)?;
     assert_eq!(software.to_string(), v, "Expected {v}, got {software}.");
 
-    let (s_attr, ok) = m.attributes.get(ATTR_SOFTWARE);
-    assert!(ok, "sowfware attribute should be found");
+    let s_attr = m.find_attribute(ATTR_SOFTWARE);
+    assert!(s_attr.is_some(), "sowfware attribute should be found");
 
-    let s = s_attr.to_string();
+    let s = RawAttribute {
+        typ: ATTR_SOFTWARE,
+        length: 0,
+        value: s_attr.unwrap().value.to_vec(),
+    }
+    .to_string();
     assert!(s.starts_with("SOFTWARE:"), "bad string representation {s}");
 
     Ok(())
@@ -176,10 +181,15 @@ fn test_realm_get_from() -> Result<()> {
     let r = TextAttribute::get_from_as(&m, ATTR_REALM)?;
     assert_eq!(r.to_string(), v, "Expected {v}, got {r}.");
 
-    let (r_attr, ok) = m.attributes.get(ATTR_REALM);
-    assert!(ok, "realm attribute should be found");
+    let r_attr = m.find_attribute(ATTR_REALM);
+    assert!(r_attr.is_some(), "realm attribute should be found");
 
-    let s = r_attr.to_string();
+    let s = RawAttribute {
+        typ: ATTR_REALM,
+        length: 0,
+        value: r_attr.unwrap().value.to_vec(),
+    }
+    .to_string();
     assert!(s.starts_with("REALM:"), "bad string representation {s}");
 
     Ok(())
@@ -249,10 +259,15 @@ fn test_nonce_get_from() -> Result<()> {
     let r = TextAttribute::get_from_as(&m, ATTR_NONCE)?;
     assert_eq!(r.to_string(), v, "Expected {v}, got {r}.");
 
-    let (r_attr, ok) = m.attributes.get(ATTR_NONCE);
-    assert!(ok, "realm attribute should be found");
+    let r_attr = m.find_attribute(ATTR_NONCE);
+    assert!(r_attr.is_some(), "realm attribute should be found");
 
-    let s = r_attr.to_string();
+    let s = RawAttribute {
+        typ: ATTR_NONCE,
+        length: 0,
+        value: r_attr.unwrap().value.to_vec(),
+    }
+    .to_string();
     assert!(s.starts_with("NONCE:"), "bad string representation {s}");
 
     Ok(())

@@ -103,11 +103,9 @@ fn decode_xor_address(value: &[u8], transaction_id: &TransactionId) -> Option<So
 
 /// Every `XOR-PEER-ADDRESS` in the message, or `None` if one is malformed.
 fn peer_addresses(m: &Message) -> Option<Vec<SocketAddr>> {
-    m.attributes
-        .0
-        .iter()
+    m.iter_attributes()
         .filter(|a| a.typ == ATTR_XOR_PEER_ADDRESS)
-        .map(|a| decode_xor_address(&a.value, &m.transaction_id))
+        .map(|a| decode_xor_address(a.value, &m.transaction_id))
         .collect()
 }
 
@@ -270,9 +268,7 @@ impl Server {
         m: &Message,
     ) -> bool {
         let unknown: Vec<AttrType> = m
-            .attributes
-            .0
-            .iter()
+            .iter_attributes()
             .map(|a| a.typ)
             .filter(|t| t.value() < 0x8000 && !UNDERSTOOD.contains(t))
             .collect();

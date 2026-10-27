@@ -223,6 +223,16 @@ fn main() {
         black_box(&built);
     });
 
+    // TURN builds its messages out of these.
+    let (data, four) = ([0u8; 10], [0u8; 4]);
+    let mut added = Message::new();
+    bench("stun add 3 attributes+reset", 0, |_| {
+        added.add(ATTR_DATA, black_box(&data));
+        added.add(ATTR_LIFETIME, black_box(&four));
+        added.add(ATTR_CHANNEL_NUMBER, black_box(&four));
+        added.reset();
+    });
+
     // SDP
     let sdp = std::fs::read_to_string(&sdp_path).unwrap();
     bench("sdp unmarshal ~chrome offer", sdp.len(), |_| {

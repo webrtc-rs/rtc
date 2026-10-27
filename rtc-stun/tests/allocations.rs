@@ -106,19 +106,9 @@ fn test_allocations() {
             setter.add_to(&mut m).unwrap();
         }
         let allocs = (ALLOCS.load(Ordering::Relaxed) - before) / 10;
-        // pion's attribute table borrows the message buffer, so its count is
-        // zero; rtc-stun's RawAttribute owns a copy of the value, so every
-        // setter that adds an attribute performs exactly that one allocation
-        // (the header-only setters are allocation-free).
-        let bound = if matches!(*name, "BindingRequest" | "TransactionId") {
-            0
-        } else {
-            1
-        };
-        assert!(
-            allocs <= bound,
-            "[{i}] {name} allocated {allocs} per run (bound {bound})"
-        );
+        // Like pion's, the attribute table is positions in the message buffer, and both
+        // are recycled by `reset`: building a message allocates nothing.
+        assert_eq!(allocs, 0, "[{i}] {name} allocated {allocs} per run");
     }
 }
 
