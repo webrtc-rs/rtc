@@ -501,4 +501,41 @@ mod tests {
         assert_eq!(DataChannelOpen::unmarshal(&mut raw)?, open);
         Ok(())
     }
+
+    #[test]
+    fn test_unmarshal_is_the_same_whichever_way_the_buffer_is_split() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::PartialReliableTimed,
+            priority: 7,
+            reliability_parameter: 1234,
+            label: b"a label spanning chunks".to_vec(),
+            protocol: b"and a protocol".to_vec(),
+        };
+        let wire = open.marshal()?.freeze();
+        for split in 0..=wire.len() {
+            let mut chained = wire.slice(..split).chain(wire.slice(split..));
+            assert_eq!(
+                DataChannelOpen::unmarshal(&mut chained)?,
+                open,
+                "split at {split}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_label_and_protocol_allocate_nothing() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![],
+            protocol: vec![],
+        };
+        let wire = open.marshal()?.freeze();
+        let got = DataChannelOpen::unmarshal(&mut wire.clone())?;
+        assert_eq!(got, open);
+        assert_eq!((got.label.capacity(), got.protocol.capacity()), (0, 0));
+        Ok(())
+    }
 }

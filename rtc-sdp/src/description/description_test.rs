@@ -722,3 +722,105 @@ fn test_unmarshal_real_safari_offer() -> Result<()> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// `unmarshal_slice`, and the scan that sizes the attribute lists before they are filled.
+
+const TWO_SECTIONS: &str = "v=0\r\n\
+o=- 1 2 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0 1\r\n\
+a=ice-lite\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111 63\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=sendrecv\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96 97 98\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n\
+a=rtpmap:96 VP8/90000\r\n";
+
+#[test]
+fn test_unmarshal_slice_matches_the_reader() {
+    let from_slice = SessionDescription::unmarshal_slice(TWO_SECTIONS.as_bytes()).unwrap();
+    let from_reader =
+        SessionDescription::unmarshal(&mut std::io::Cursor::new(TWO_SECTIONS.as_bytes())).unwrap();
+    assert_eq!(from_slice.marshal(), from_reader.marshal());
+    assert_eq!(from_slice.marshal(), TWO_SECTIONS);
+}
+
+#[test]
+fn test_unmarshal_reads_from_the_reader_position() {
+    // The buffer is sized from what is left to read, not from the start of the stream.
+    let mut reader = std::io::Cursor::new(format!("junk\n{TWO_SECTIONS}").into_bytes());
+    reader.set_position(5);
+    let parsed = SessionDescription::unmarshal(&mut reader).unwrap();
+    assert_eq!(parsed.marshal(), TWO_SECTIONS);
+}
+
+#[test]
+fn test_unmarshal_slice_rejects_what_the_reader_rejects() {
+    for bad in [
+        "",
+        "v=0\r\n",
+        "v=1\r\n",
+        "garbage",
+        "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n",
+    ] {
+        assert_eq!(
+            SessionDescription::unmarshal_slice(bad.as_bytes()).is_err(),
+            SessionDescription::unmarshal(&mut std::io::Cursor::new(bad.as_bytes())).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn test_attribute_lists_hold_exactly_the_attributes_of_each_section() {
+    let parsed = SessionDescription::unmarshal_slice(TWO_SECTIONS.as_bytes()).unwrap();
+    let keys = |attrs: &[Attribute]| attrs.iter().map(|a| a.key.to_string()).collect::<Vec<_>>();
+    assert_eq!(keys(&parsed.attributes), ["group", "ice-lite"]);
+    assert_eq!(
+        keys(&parsed.media_descriptions[0].attributes),
+        ["mid", "rtpmap", "sendrecv"]
+    );
+    assert_eq!(
+        keys(&parsed.media_descriptions[1].attributes),
+        ["mid", "rtpmap"]
+    );
+    // The m= line's formats were sized from the line too.
+    assert_eq!(
+        parsed.media_descriptions[1].media_name.formats,
+        ["96", "97", "98"]
+    );
+}
+
+#[test]
+fn test_line_endings_and_look_alike_lines_do_not_miscount_attributes() {
+    // Bare LF, an `a=` inside a value, a section without attributes, and `m=` inside a value.
+    let sdp = "v=0\no=- 1 2 IN IP4 127.0.0.1\ns=-\nt=0 0\n\
+               a=x:a=b\n\
+               m=audio 9 RTP/AVP 0\n\
+               i=a=not an attribute m=nor a section\n\
+               m=video 9 RTP/AVP 96\n\
+               a=y\n";
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes()).unwrap();
+    assert_eq!(parsed.attributes.len(), 1);
+    assert_eq!(parsed.attributes[0].value.as_deref(), Some("a=b"));
+    assert!(parsed.media_descriptions[0].attributes.is_empty());
+    assert_eq!(parsed.media_descriptions[1].attributes.len(), 1);
+}
+
+#[test]
+fn test_short_m_line_fields_are_stored_inline_and_long_ones_survive() {
+    let long_proto = "UDP/TLS/RTP/SAVPF/WITH/A/RATHER/LONG/PROTOCOL/LIST";
+    let sdp =
+        format!("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 {long_proto} 0\r\n");
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes()).unwrap();
+    let name = &parsed.media_descriptions[0].media_name;
+    assert_eq!(name.media, "audio");
+    assert_eq!(name.protos.join("/"), long_proto);
+    assert_eq!(name.formats, ["0"]);
+}

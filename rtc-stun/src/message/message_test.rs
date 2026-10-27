@@ -789,3 +789,88 @@ fn test_decode_into_reused_message_never_leaks_previous_attributes() -> Result<(
     assert!(reused.get_value(ATTR_REALM).is_err());
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// Attribute value buffers are recycled across `reset`; none of that may show.
+
+fn build(m: &mut Message, attrs: &[(u16, &[u8])]) {
+    for (typ, value) in attrs {
+        m.add(AttrType(*typ), value);
+    }
+    m.write_header();
+}
+
+#[test]
+fn test_reset_recycles_value_buffers_without_leaking_old_bytes() {
+    let mut reused = Message::new();
+    // A long value first, so the buffer it leaves behind is bigger than what follows.
+    build(
+        &mut reused,
+        &[(0x0006, b"a-rather-long-username"), (0x0014, b"realm")],
+    );
+    reused.reset();
+    build(&mut reused, &[(0x0006, b"ab"), (0x0015, b"n")]);
+
+    let mut fresh = Message::new();
+    build(&mut fresh, &[(0x0006, b"ab"), (0x0015, b"n")]);
+
+    assert_eq!(reused.attributes.0.len(), 2);
+    assert_eq!(reused.attributes.0[0].value, b"ab");
+    assert_eq!(reused.attributes.0[0].length, 2);
+    assert_eq!(reused.attributes.0[1].value, b"n");
+    assert_eq!(
+        reused.raw[..],
+        fresh.raw[..],
+        "the encoding is the same bytes"
+    );
+    assert_eq!(reused, fresh);
+}
+
+#[test]
+fn test_padding_after_a_reset_is_zero() {
+    // The encoding's padding bytes must not be whatever the buffer held before.
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, &[0xff; 9])]);
+    m.reset();
+    build(&mut m, &[(0x0006, &[0xaa; 5])]);
+    let value_start = MESSAGE_HEADER_SIZE + ATTRIBUTE_HEADER_SIZE;
+    assert_eq!(&m.raw[value_start..value_start + 5], &[0xaa; 5]);
+    assert_eq!(&m.raw[value_start + 5..value_start + 8], &[0, 0, 0]);
+    assert_eq!(m.length, (ATTRIBUTE_HEADER_SIZE + 8) as u32);
+}
+
+#[test]
+fn test_recycled_buffers_are_bounded_by_the_most_attributes_in_use() {
+    let mut m = Message::new();
+    for _ in 0..100 {
+        build(&mut m, &[(0x0006, b"u"), (0x0014, b"r"), (0x0015, b"n")]);
+        m.reset();
+    }
+    assert_eq!(format!("{:?}", m.spare), "SpareValues(3)");
+}
+
+#[test]
+fn test_a_clone_does_not_carry_the_recycled_buffers() {
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, b"u"), (0x0014, b"r")]);
+    m.reset();
+    assert_eq!(format!("{:?}", m.spare), "SpareValues(2)");
+    let copy = m.clone();
+    assert_eq!(format!("{:?}", copy.spare), "SpareValues(0)");
+    assert_eq!(copy, m);
+}
+
+#[test]
+fn test_decode_after_a_build_cycle_is_unaffected() -> Result<()> {
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, b"user"), (0x0014, b"realm")]);
+    m.reset();
+    build(&mut m, &[(0x0015, b"nonce")]);
+
+    let mut decoded = Message::new();
+    decoded.raw = m.raw.clone();
+    decoded.decode()?;
+    assert_eq!(decoded.attributes.0.len(), 1);
+    assert_eq!(decoded.get_value(AttrType(0x0015))?, b"nonce");
+    Ok(())
+}
