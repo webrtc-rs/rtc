@@ -831,7 +831,7 @@ impl Server {
         let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
             return;
         };
-        // RFC 6062 §4.? : channels carry datagrams, which a TCP allocation does not relay.
+        // Channels carry datagrams, which a TCP allocation (RFC 6062) does not relay.
         if self.allocations[&five].tcp {
             self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
             return;
