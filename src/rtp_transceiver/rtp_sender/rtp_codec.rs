@@ -115,6 +115,30 @@ impl RTCRtpCodec {
             Ok(Box::<rtp::codec::av1::Av1Payloader>::default())
         } else if mime_type == MIME_TYPE_SMPTE336M.to_lowercase() {
             Ok(Box::<rtp::codec::smpte336m::Smpte336mPayloader>::default())
+        } else if mime_type == MIME_TYPE_MPEG4_GENERIC_APPLICATION.to_lowercase()
+            || mime_type == MIME_TYPE_MPEG4_GENERIC_AUDIO.to_lowercase()
+            || mime_type == MIME_TYPE_MPEG4_GENERIC_VIDEO.to_lowercase()
+        {
+            let fmtp = fmtp::parse(&self.mime_type, &self.sdp_fmtp_line);
+            let param = |key: &str, default: u8| {
+                fmtp.parameter(key)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(default)
+            };
+            let size_length_bits = param(
+                "sizelength",
+                rtp::codec::mpeg4_generic::DEFAULT_SIZE_LENGTH_BITS,
+            );
+            let index_length_bits = param(
+                "indexlength",
+                rtp::codec::mpeg4_generic::DEFAULT_INDEX_LENGTH_BITS,
+            );
+            Ok(Box::new(
+                rtp::codec::mpeg4_generic::Mpeg4GenericPayloader::new(
+                    size_length_bits,
+                    index_length_bits,
+                )?,
+            ))
         } else {
             Err(Error::ErrNoPayloaderForCodec)
         }
