@@ -90,8 +90,12 @@ jobs:
         run: |
           $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release \
             -p rtc-sdp -p rtc-rtcp -p rtc-rtp -p rtc-stun -p rtc-datachannel -p rtc-dtls -p rtc-srtp \
-            --test pion_golden --verbose
-          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release -p rtc-sctp --lib pion_golden --verbose
+            -p rtc-turn --test pion_golden --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release -p rtc-ice \
+            --test pion_candidate_golden --verbose
+          # The codecs that keep their parsers private are tested from inside the crate.
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release \
+            -p rtc-sctp -p rtc-mdns -p rtc-interceptor --lib pion_golden --verbose
 
   lint:
     name: lint / ${{ matrix.os }}

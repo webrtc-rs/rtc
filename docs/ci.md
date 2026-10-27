@@ -20,7 +20,7 @@ run nightly.
 | Job | Matrix | Guards |
 |---|---|---|
 | `test` | `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-latest` (arm64), `macos-15-intel` × debug/release × ring/aws-lc-rs | the whole workspace builds and passes everywhere; release catches optimiser- and overflow-dependent behaviour |
-| `pion-golden` | the four runners | each protocol parser agrees with pion on its differential corpus, in release |
+| `pion-golden` | the four runners | each protocol parser (SDP, RTCP, RTP, STUN, TURN, ICE candidates, mDNS, DCEP, DTLS, SCTP, SRTP, and the NACK buffers) agrees with pion on its differential corpus, in release |
 | `lint` | Linux, macOS | `rustfmt`; `clippy -D warnings` on library code; `clippy::correctness` as an error everywhere; rustdoc warnings |
 | `musl` | x86-64 and arm64 | static Linux builds are tested, not just compiled |
 | `msrv` | Linux | builds on the `rust-version` the workspace declares |
@@ -97,7 +97,8 @@ Targets worth knowing about:
 ## Benchmarks against pion
 
 `benchmarks/pion-compare` builds a Rust and a Go program that run the same micro-benchmarks
-(RTP, SRTP, STUN, SDP, RTCP, payloaders) and prints them side by side:
+(RTP, SRTP, STUN, SDP, RTCP, payloaders, DTLS handshakes and records, SCTP, an ICE session, TWCC,
+DCEP, mDNS) and prints them side by side:
 
 ```sh
 python3 benchmarks/pion-compare/compare.py --backend ring
@@ -106,3 +107,6 @@ python3 benchmarks/pion-compare/compare.py --backend ring
 A benchmark we win must stay within 25 % of pion's time and never allocate more; one we do not yet
 win has a ceiling it may not regress past. Shared CI runners are noisy, so each side runs several
 times and the fastest run is kept; allocation counts are exact.
+
+`benchmarks/turn-load` compares the TURN servers end to end on real sockets (CPU and memory per
+relayed round trip). It is run by hand: it needs loopback sockets and takes a minute.

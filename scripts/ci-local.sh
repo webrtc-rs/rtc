@@ -37,8 +37,10 @@ golden() {
   step "pion differential corpus (release)"
   cargo test --release \
     -p rtc-sdp -p rtc-rtcp -p rtc-rtp -p rtc-stun -p rtc-datachannel -p rtc-dtls -p rtc-srtp \
-    --test pion_golden
-  cargo test --release -p rtc-sctp --lib pion_golden
+    -p rtc-turn --test pion_golden
+  cargo test --release -p rtc-ice --test pion_candidate_golden
+  # The crates that keep their parsers private are tested from inside.
+  cargo test --release -p rtc-sctp -p rtc-mdns -p rtc-interceptor --lib pion_golden
 }
 
 docs() {
