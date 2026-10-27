@@ -52,6 +52,19 @@ pub(crate) struct DtlsHandler<'a> {
     stats: &'a mut RTCStatsAccumulator,
 }
 
+impl super::WriteBypass for DtlsHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        self.ctx.close_requested.is_none()
+            && self.ctx.write_outs.is_empty()
+            && pending
+                .iter()
+                .all(|msg| !matches!(msg.message, RTCMessageInternal::Dtls(DTLSMessage::Raw(_))))
+    }
+}
+
 impl<'a> DtlsHandler<'a> {
     /// Asks for a `close_notify` alert (RFC 5246 §7.2.1) to be sent to the peer, so that closing
     /// the connection tells the peer at once instead of leaving it to notice by timeout

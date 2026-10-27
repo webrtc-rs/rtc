@@ -220,6 +220,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for TwccReceiverInterceptor {
 }
 
 impl Interceptor for TwccReceiverInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         if let Some(hdr_ext_id) = stream_supports_twcc(info) {
             // Don't track if ID is 0 (invalid)

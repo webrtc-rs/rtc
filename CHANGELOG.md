@@ -107,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I-DATA messages than the cap is aborted with a protocol violation. Off by default.
 
 ### Changed
+- Sending a packet costs about 40% less CPU (an SFU forwarding voice to 31 listeners: 1,545 to 970 ns per
+  delivery). The interceptor chain no longer allocates a belt per packet or walks itself a second time
+  to find nothing, and carries an outgoing packet only through the interceptors that do something to
+  it: the new defaulted `Interceptor::writes_pass_through` marks the ones that only queue and return
+  it (the NACK generator, the receiver report, the TWCC receiver and a few more). A chain that has
+  been polled is idle until a packet is read, time passes or a stream is bound, so output must come
+  from one of those (a `handle_write` emits toward the wire, not toward the application). The
+  pipeline passes by the data channel, SCTP and DTLS handlers when they have nothing of their own
+  waiting, reuses its message queue between passes, and the statistics maps on the packet path use
+  a faster hash. `DataChannel::has_pending_writes` is new.
 - `rtc-sdp` (breaking): `MediaName::{media, protos, formats}`, `ConnectionInformation::{network_type,
   address_type}` and `Address::address` are `SmolStr` (inline up to 23 bytes), like `Attribute`
   already is; they compare equal to `&str` and `String`. Attribute and format lists are sized from

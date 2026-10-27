@@ -301,6 +301,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NackGeneratorInterceptor {
 }
 
 impl Interceptor for NackGeneratorInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         let passes_filter = self
             .streams_filter

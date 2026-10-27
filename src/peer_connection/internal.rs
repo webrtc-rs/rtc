@@ -206,6 +206,7 @@ impl RTCPeerConnection {
             data_read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            belt: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
             now,
         };

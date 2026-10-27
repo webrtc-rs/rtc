@@ -64,7 +64,7 @@ pub(crate) struct RTCStatsAccumulator {
     pub(crate) transport: TransportStatsAccumulator,
 
     /// ICE candidate pairs keyed by pair ID.
-    pub(crate) ice_candidate_pairs: HashMap<String, IceCandidatePairAccumulator>,
+    pub(crate) ice_candidate_pairs: FxHashMap<String, IceCandidatePairAccumulator>,
 
     /// Local ICE candidates keyed by candidate ID.
     pub(crate) local_candidates: HashMap<String, IceCandidateAccumulator>,
@@ -82,10 +82,10 @@ pub(crate) struct RTCStatsAccumulator {
     pub(crate) data_channels: FxHashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
 
     /// Inbound RTP stream accumulators keyed by SSRC.
-    pub(crate) inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,
+    pub(crate) inbound_rtp_streams: FxHashMap<SSRC, InboundRtpStreamAccumulator>,
 
     /// Outbound RTP stream accumulators keyed by SSRC.
-    pub(crate) outbound_rtp_streams: HashMap<SSRC, OutboundRtpStreamAccumulator>,
+    pub(crate) outbound_rtp_streams: FxHashMap<SSRC, OutboundRtpStreamAccumulator>,
 
     /// Media source stats keyed by track ID.
     pub(crate) media_sources: HashMap<String, MediaSourceStatsAccumulator>,
@@ -95,10 +95,10 @@ pub(crate) struct RTCStatsAccumulator {
 
     // Reverse lookup maps for O(1) RTX/FEC SSRC detection
     /// Maps RTX SSRC to primary SSRC for O(1) lookup.
-    rtx_ssrc_to_primary: HashMap<SSRC, SSRC>,
+    rtx_ssrc_to_primary: FxHashMap<SSRC, SSRC>,
 
     /// Maps FEC SSRC to primary SSRC for O(1) lookup.
-    fec_ssrc_to_primary: HashMap<SSRC, SSRC>,
+    fec_ssrc_to_primary: FxHashMap<SSRC, SSRC>,
 }
 
 /// Asserts a stats record was stamped with `expected`, ignoring the wall-clock half.

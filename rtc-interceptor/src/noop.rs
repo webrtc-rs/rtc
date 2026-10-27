@@ -112,6 +112,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
 }
 
 impl Interceptor for NoopInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_local_stream(&mut self, _info: &StreamInfo) {}
     fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
     fn bind_remote_stream(&mut self, _info: &StreamInfo) {}

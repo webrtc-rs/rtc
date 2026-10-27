@@ -66,6 +66,35 @@ pub(crate) struct DataChannelHandler<'a> {
     max_channels: Option<u16>,
 }
 
+impl super::WriteBypass for DataChannelHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        if !self.ctx.write_outs.is_empty()
+            || !pending.iter().all(|msg| {
+                !matches!(
+                    msg.message,
+                    RTCMessageInternal::Dtls(DTLSMessage::DataChannel(_))
+                )
+            })
+            || self.data_channels.values().any(|internal| {
+                internal
+                    .data_channel
+                    .as_ref()
+                    .is_some_and(|dc| dc.has_pending_writes())
+            })
+        {
+            return false;
+        }
+        // `handle_write` notes the time of every message it is given.
+        if let Some(latest) = pending.iter().map(|msg| msg.now).max() {
+            self.ctx.observe(latest);
+        }
+        true
+    }
+}
+
 impl<'a> DataChannelHandler<'a> {
     pub(crate) fn new(
         ctx: &'a mut DataChannelHandlerContext,

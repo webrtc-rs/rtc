@@ -89,6 +89,11 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
+    /// Whether a message is waiting for `poll_write`.
+    pub fn has_pending_writes(&self) -> bool {
+        !self.write_outs.is_empty()
+    }
+
     fn new(config: DataChannelConfig, association_handle: usize, stream_id: u16) -> Self {
         Self {
             config,

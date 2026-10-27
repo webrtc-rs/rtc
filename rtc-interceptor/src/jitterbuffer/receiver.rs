@@ -340,6 +340,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for JitterBufferInterceptor {
 }
 
 impl Interceptor for JitterBufferInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         // Keyed by SSRC, unlike upstream, whose single buffer interleaves every remote stream
         // into one sequence-number ordering.

@@ -100,6 +100,23 @@ macro_rules! for_each_handler {
     };
 }
 
+/// What lets [`RTCPeerConnection::flush_writes`] pass a message by a handler that would only queue
+/// it and hand it back, which for an outgoing media packet is most of the handlers.
+pub(crate) trait WriteBypass {
+    /// Whether the handler can be left out of this pass: it has no output of its own waiting, and
+    /// would only queue every message in `pending` and return it as it came. Whatever
+    /// `handle_write` would have noted from such a message is noted here.
+    fn can_skip_write(&mut self, _pending: &VecDeque<TaggedRTCMessageInternal>) -> bool {
+        false
+    }
+}
+
+impl WriteBypass for IceHandler<'_> {}
+impl WriteBypass for DemuxerHandler<'_> {}
+impl WriteBypass for SrtpHandler<'_> {}
+impl WriteBypass for InterceptorHandler<'_> {}
+impl WriteBypass for EndpointHandler<'_> {}
+
 pub(crate) struct PipelineContext {
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,
@@ -129,6 +146,10 @@ pub(crate) struct PipelineContext {
     pub(crate) data_read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
+
+    /// The queue a pass over the handlers carries messages between them on, kept between passes
+    /// so that each one does not allocate its own. Empty whenever no pass is running.
+    pub(crate) belt: VecDeque<TaggedRTCMessageInternal>,
 
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
@@ -261,16 +282,18 @@ impl RTCPeerConnection {
     fn flush_writes(&mut self) {
         use sansio::Protocol;
 
-        let mut intermediate_wouts = VecDeque::new();
+        let mut intermediate_wouts = std::mem::take(&mut self.pipeline_context.belt);
 
         for_each_handler!(reverse: process_handler!(self, handler, {
-            while let Some(msg) = intermediate_wouts.pop_front() {
-                if let Err(err) = handler.handle_write(msg) {
-                    warn!("{}.handle_write got error: {}", handler.name(), err);
+            if !handler.can_skip_write(&intermediate_wouts) {
+                while let Some(msg) = intermediate_wouts.pop_front() {
+                    if let Err(err) = handler.handle_write(msg) {
+                        warn!("{}.handle_write got error: {}", handler.name(), err);
+                    }
                 }
-            }
-            while let Some(msg) = handler.poll_write() {
-                intermediate_wouts.push_back(msg);
+                while let Some(msg) = handler.poll_write() {
+                    intermediate_wouts.push_back(msg);
+                }
             }
         }));
 
@@ -284,10 +307,11 @@ impl RTCPeerConnection {
                 });
             }
         }
+        self.pipeline_context.belt = intermediate_wouts;
     }
 
     fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
-        let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
+        let mut intermediate_routs = std::mem::take(&mut self.pipeline_context.belt);
 
         if let Some(msg) = msg {
             intermediate_routs.push_back(msg);
@@ -351,6 +375,7 @@ impl RTCPeerConnection {
                 }
             }
         }
+        self.pipeline_context.belt = intermediate_routs;
     }
 
     /// Returns whether any handler raised an event during the sweep.

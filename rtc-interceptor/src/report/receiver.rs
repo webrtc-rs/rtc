@@ -248,6 +248,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for ReceiverReportInterceptor {
 }
 
 impl Interceptor for ReceiverReportInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         let stream = ReceiverStream::new(info.ssrc, info.clock_rate);
         self.streams.insert(info.ssrc, stream);

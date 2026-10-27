@@ -163,6 +163,20 @@ pub(crate) struct SctpHandler<'a> {
     downstream_backlog: usize,
 }
 
+impl super::WriteBypass for SctpHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        !self.ctx.flush_dirty
+            && !self.ctx.abort_requested
+            && self.ctx.write_outs.is_empty()
+            && pending
+                .iter()
+                .all(|msg| !matches!(msg.message, RTCMessageInternal::Dtls(DTLSMessage::Sctp(_))))
+    }
+}
+
 impl<'a> SctpHandler<'a> {
     pub(crate) fn new(ctx: &'a mut SctpHandlerContext, downstream_backlog: usize) -> Self {
         SctpHandler {

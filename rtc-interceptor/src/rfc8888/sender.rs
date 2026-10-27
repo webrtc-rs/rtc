@@ -215,6 +215,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for Rfc8888Interceptor {
 }
 
 impl Interceptor for Rfc8888Interceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         self.streams.insert(info.ssrc);
     }

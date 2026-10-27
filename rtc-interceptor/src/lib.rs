@@ -380,6 +380,14 @@ pub use twcc::sender::{TwccSenderBuilder, TwccSenderInterceptor};
 /// by passing through the interceptors that follow it**. An interceptor that keeps a packet to
 /// itself keeps it from everything downstream, deliberately.
 ///
+/// # When the chain asks
+///
+/// After a packet has been walked, the chain has polled every interceptor, and it does not poll
+/// again until something could have given one something to emit: a packet read (which may ask for
+/// one to be sent), time passing (`handle_timeout`) or a stream being bound or unbound. So output
+/// must be queued from one of those. In particular a `handle_write` may emit toward the wire, and
+/// not toward the application.
+///
 /// # Direction
 ///
 /// Read walks the list forwards, write walks it in reverse, so one ordering serves both: the first
@@ -411,6 +419,15 @@ pub trait Interceptor:
 
     /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
     fn unbind_remote_stream(&mut self, info: &StreamInfo);
+
+    /// Whether this interceptor does nothing to a packet on the write path: `handle_write` only
+    /// queues it and `poll_write` hands it back unchanged, in order. The chain then does not carry
+    /// outgoing packets through it while it has nothing of its own waiting, which for a long chain
+    /// saves most of the work of sending a packet. Anything that looks at, changes, holds or counts
+    /// an outgoing packet must leave this `false`, the default.
+    fn writes_pass_through(&self) -> bool {
+        false
+    }
 }
 
 /// An interceptor whose concrete type has been erased.
@@ -420,6 +437,10 @@ pub trait Interceptor:
 pub type BoxedInterceptor = Box<dyn Interceptor>;
 
 impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
+    fn writes_pass_through(&self) -> bool {
+        (**self).writes_pass_through()
+    }
+
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
     }
@@ -448,6 +469,10 @@ impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
 /// outlives only `'a`. [`Registry::with`] is where the `'static` bound is asked for instead —
 /// locally, by the one method that has to box what it is given.
 impl<P: Interceptor + ?Sized> Interceptor for &mut P {
+    fn writes_pass_through(&self) -> bool {
+        (**self).writes_pass_through()
+    }
+
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
     }
