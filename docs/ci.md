@@ -10,7 +10,7 @@ run nightly.
 |---|---|---|
 | `platform.yml` | every push / PR | the matrix below |
 | `cargo.yml` | every push / PR | the feature graph, crypto-provider boundaries, packaging order |
-| `nightly.yml` | 02:17 UTC + manual | long fuzzing, Miri, 25× test repetition, beta/nightly compilers, careful benchmarks |
+| `nightly.yml` | 02:17 UTC + manual | long fuzzing (every parser, and the mDNS, TURN and ICE receive paths), Miri, 25× test repetition, beta/nightly compilers, careful benchmarks |
 | `grcov.yml` | every push / PR | coverage |
 | `semver.yml` | every push / PR | public-API breakage |
 | `release.yml` | tag `vX.Y.Z` / manual | full platform matrix, then publish to crates.io in dependency order behind an approval gate, then a GitHub release |

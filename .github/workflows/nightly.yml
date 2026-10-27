@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [ rtc-rtp, rtc-rtcp, rtc-sdp, rtc-stun, rtc-dtls, rtc-sctp, rtc-srtp, rtc-datachannel ]
+        crate: [ rtc-rtp, rtc-rtcp, rtc-sdp, rtc-stun, rtc-dtls, rtc-sctp, rtc-srtp, rtc-datachannel, rtc-mdns, rtc-turn, rtc-ice ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

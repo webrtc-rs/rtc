@@ -1,0 +1,55 @@
+[package]
+name = "rtc-turn-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.11.0"
+sansio = "1"
+
+[dependencies.rtc-turn]
+path = ".."
+
+[dependencies.shared]
+path = "../../rtc-shared"
+package = "rtc-shared"
+default-features = false
+
+[dependencies.crypto]
+path = "../../rtc-crypto"
+package = "rtc-crypto"
+features = ["crypto-ring"]
+
+[dependencies.stun]
+path = "../../rtc-stun"
+package = "rtc-stun"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "server_handle_read"
+path = "fuzz_targets/server_handle_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "channel_data"
+path = "fuzz_targets/channel_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stun_attributes"
+path = "fuzz_targets/stun_attributes.rs"
+test = false
+doc = false
+bench = false
