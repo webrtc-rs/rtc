@@ -824,3 +824,40 @@ fn test_short_m_line_fields_are_stored_inline_and_long_ones_survive() {
     assert_eq!(name.protos.join("/"), long_proto);
     assert_eq!(name.formats, ["0"]);
 }
+
+#[test]
+fn repeated_long_attribute_values_are_shared_but_never_merged_with_others() -> Result<()> {
+    // 23 bytes is the longest inline value; the others are 24 bytes or more.
+    let inline = "a".repeat(23);
+    let long = "b".repeat(24);
+    let same_start_a = format!("{}-one", "c".repeat(30));
+    let same_start_b = format!("{}-two", "c".repeat(30));
+    let mut sdp = String::from("v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n");
+    for media in ["audio", "video"] {
+        sdp += &format!("m={media} 9 UDP/TLS/RTP/SAVPF 0\r\nc=IN IP4 0.0.0.0\r\n");
+        for value in [&inline, &long, &same_start_a, &same_start_b, &long] {
+            sdp += &format!("a=x:{value}\r\n");
+        }
+    }
+
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes())?;
+    for media in &parsed.media_descriptions {
+        let values: Vec<_> = media
+            .attributes
+            .iter()
+            .map(|a| a.value.as_deref())
+            .collect();
+        assert_eq!(
+            values,
+            [
+                Some(inline.as_str()),
+                Some(long.as_str()),
+                Some(same_start_a.as_str()),
+                Some(same_start_b.as_str()),
+                Some(long.as_str()),
+            ]
+        );
+    }
+    assert_eq!(parsed.marshal(), sdp);
+    Ok(())
+}

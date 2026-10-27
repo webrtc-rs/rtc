@@ -75,8 +75,10 @@ GATES = {
     "srtp gcm-128 encrypt 1200B": gap(max_ratio=1.4, max_allocs=0),
     "stun decode+getters+integrity": win(max_allocs=2),
     "stun build binding request": win(max_allocs=3),
-    # Faster than pion; allocations are within 1.3x (long attribute values each own a string).
-    "sdp unmarshal ~chrome offer": win(max_allocs=87),
+    "stun add 3 attributes+reset": win(max_allocs=0),
+    # Faster than pion, with the same allocation count: a long attribute value that repeats
+    # (every media section repeats its header extensions and codec lines) shares one string.
+    "sdp unmarshal ~chrome offer": win(max_allocs=70),
     "sdp marshal": win(max_allocs=1),
     "sdp codec map": win(max_allocs=577),
     "rtcp unmarshal SR+SDES+REMB": gap(max_ratio=2.0, max_allocs=9),

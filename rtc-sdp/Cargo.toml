@@ -15,6 +15,7 @@ categories.workspace = true
 [dependencies]
 memchr.workspace = true
 smol_str.workspace = true
+rustc-hash.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 
 url.workspace = true

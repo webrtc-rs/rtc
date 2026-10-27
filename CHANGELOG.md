@@ -110,11 +110,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rtc-sdp` (breaking): `MediaName::{media, protos, formats}`, `ConnectionInformation::{network_type,
   address_type}` and `Address::address` are `SmolStr` (inline up to 23 bytes), like `Attribute`
   already is; they compare equal to `&str` and `String`. Attribute and format lists are sized from
-  one scan of each section.
+  one scan of each section, and an attribute value too long to be inline that repeats (header
+  extensions and codec lines repeat across media sections) shares the first one's allocation:
+  parsing a Chrome offer makes 70 allocations, as pion does, down from 87.
 - `rtc-dtls`, `rtc-stun`: no 8 KiB `BufWriter`/`BufReader` per message. A DTLS handshake allocates
   98 KB, not 965 KB, and takes a quarter of the time.
-- `rtc-stun`: `Message::reset` keeps the attribute buffers for `Message::add` to reuse (the public
-  `spare` field is `#[doc(hidden)]`; build a `Message` with `Message::new()` or `..Default::default()`).
+- `rtc-stun` (breaking): like pion's `Message.Attributes`, a message's attributes are positions in
+  `Message::raw` rather than owned copies, so `Message::add` writes each value once (TURN's three
+  attribute adds take 14 ns, pion's 17 ns) and decoding copies no values. `Attributes` is opaque
+  (`len`, `is_empty`); read attributes with `Message::iter_attributes` and `find_attribute`, which
+  borrow their value as `AttributeRef { typ, value }`. `Attributes::get` and `find` are gone, and
+  `Message::pop_attribute` removes the last attribute. `RawAttribute` remains the owned form, which
+  is what a `Setter` takes. `Message::encode` and `write_attributes` lay the attributes out again in
+  place, closing the gaps decoding leaves where it dropped attributes. `Message::reset` keeps a
+  zeroed header instead of emptying `raw`.
 - `rtc-mdns`: the query and the answer are packed straight to bytes; name compression no longer
   keys a map by a `String` per suffix.
 - `rtc-dtls`, fixes found by porting pion's tests (issues #24/#25): the client's

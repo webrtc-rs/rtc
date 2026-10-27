@@ -2,6 +2,7 @@
 //! reject exactly the same documents. The states `s1`..`s16` are the DFA documented on
 //! [`SessionDescription::unmarshal`](super::session::SessionDescription::unmarshal).
 
+use rustc_hash::FxHashSet;
 use shared::error::{Error, Result};
 use smol_str::SmolStr;
 
@@ -52,6 +53,9 @@ struct Lexer<'a> {
     text: Option<&'a str>,
     pos: usize,
     desc: SessionDescription,
+    /// The attribute values too long to be stored inline, kept so a repeat shares the first one's
+    /// allocation (see [`attribute_from`]).
+    long_values: FxHashSet<SmolStr>,
 }
 
 type StateFn = fn(&mut Lexer<'_>) -> R<Option<State>>;
@@ -307,6 +311,7 @@ pub(super) fn unmarshal_bytes(value: &[u8]) -> Result<SessionDescription> {
         text: std::str::from_utf8(value).ok(),
         pos: 0,
         desc: SessionDescription::default(),
+        long_values: FxHashSet::default(),
     };
     let mut state = Some(State(s1));
     while let Some(State(f)) = state {
@@ -594,12 +599,39 @@ fn unmarshal_session_encryption_key(l: &mut Lexer<'_>) -> R<Option<State>> {
     next(s11)
 }
 
-fn attribute_from(line: std::borrow::Cow<'_, str>) -> Attribute {
+/// The most a `SmolStr` holds without allocating.
+const INLINE_CAP: usize = 23;
+
+/// How many distinct long values a description usually has; the set is sized for it once.
+const EXPECTED_LONG_VALUES: usize = 56;
+
+/// `text` as a `SmolStr`. A value too long to be inline would allocate, and a browser's media
+/// sections repeat theirs (header extension URIs, `fmtp` and `rtcp-fb` lines, the same codecs
+/// again for each section), so a repeat clones the first one, which is a reference count.
+fn shared(long_values: &mut FxHashSet<SmolStr>, text: &str) -> SmolStr {
+    if text.len() <= INLINE_CAP {
+        return SmolStr::new(text);
+    }
+    if let Some(seen) = long_values.get(text) {
+        return seen.clone();
+    }
+    if long_values.is_empty() {
+        long_values.reserve(EXPECTED_LONG_VALUES);
+    }
+    let value = SmolStr::new(text);
+    long_values.insert(value.clone());
+    value
+}
+
+fn attribute_from(
+    line: std::borrow::Cow<'_, str>,
+    long_values: &mut FxHashSet<SmolStr>,
+) -> Attribute {
     match memchr::memchr(b':', line.as_bytes()) {
         // pion keeps `a=foo:` as a flag attribute, indistinguishable from `a=foo`.
         Some(i) if i > 0 && i + 1 < line.len() => Attribute {
             key: SmolStr::new(&line[..i]),
-            value: Some(SmolStr::new(&line[i + 1..])),
+            value: Some(shared(long_values, &line[i + 1..])),
         },
         Some(i) if i > 0 => Attribute {
             key: SmolStr::new(&line[..i]),
@@ -618,7 +650,8 @@ fn unmarshal_session_attribute(l: &mut Lexer<'_>) -> R<Option<State>> {
         l.desc.attributes.reserve_exact(n);
     }
     let value = l.read_line_lossy()?;
-    l.desc.attributes.push(attribute_from(value));
+    let attribute = attribute_from(value, &mut l.long_values);
+    l.desc.attributes.push(attribute);
     next(s11)
 }
 
@@ -721,7 +754,8 @@ fn unmarshal_media_encryption_key(l: &mut Lexer<'_>) -> R<Option<State>> {
 
 fn unmarshal_media_attribute(l: &mut Lexer<'_>) -> R<Option<State>> {
     let value = l.read_line_lossy()?;
-    l.last_media().attributes.push(attribute_from(value));
+    let attribute = attribute_from(value, &mut l.long_values);
+    l.last_media().attributes.push(attribute);
     next(s14)
 }
 
