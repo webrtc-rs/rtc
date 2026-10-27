@@ -294,7 +294,7 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
 pub(crate) fn unpack_resource_body(
     typ: DnsType,
     msg: &[u8],
-    mut off: usize,
+    off: usize,
     length: usize,
 ) -> Result<(Box<dyn ResourceBody>, usize)> {
     let mut rb: Box<dyn ResourceBody> = match typ {
@@ -311,7 +311,11 @@ pub(crate) fn unpack_resource_body(
         _ => return Err(Error::ErrNilResourceBody),
     };
 
-    off = rb.unpack(msg, off, length)?;
+    rb.unpack(msg, off, length)?;
 
-    Ok((rb, off))
+    // The next record starts where the header says this one ends, not where the body parser
+    // happened to stop (golang.org/x/net/dns/dnsmessage does the same). Following the bytes
+    // consumed instead would split a packet with a wrong RDLENGTH into different records than
+    // every other parser does.
+    Ok((rb, off + length))
 }

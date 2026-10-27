@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod message_test;
+#[cfg(test)]
+mod pion_golden_test;
 
 pub(crate) mod builder;
 pub(crate) mod header;

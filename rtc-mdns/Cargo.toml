@@ -25,6 +25,7 @@ env_logger.workspace = true
 tokio.workspace = true
 clap.workspace = true
 chrono.workspace = true
+serde_json.workspace = true
 
 [[example]]
 name = "mdns_query"
