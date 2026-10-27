@@ -261,7 +261,7 @@ impl<'a> SctpHandler<'a> {
             return Ok(());
         }
 
-        let max_len = self.ctx.sctp_transport.internal_buffer.len();
+        let max_len = self.ctx.sctp_transport.local_max_message_size() as usize;
         let mut pending: Vec<(AssociationHandle, StreamId)> =
             self.ctx.pending_readable.iter().copied().collect();
         pending.sort_unstable();
@@ -403,7 +403,7 @@ impl<'a>
 
             // Both are read before `sctp_transport` is split up below, which would otherwise
             // conflict with the borrow of `sctp_associations`.
-            let max_len = self.ctx.sctp_transport.internal_buffer.len();
+            let max_len = self.ctx.sctp_transport.local_max_message_size() as usize;
             let mut budget = self.read_budget();
             let mut inbound_transport = None;
 
@@ -641,7 +641,9 @@ impl<'a>
                 msg.transport.peer_addr
             );
 
-            if message.payload.len() > self.ctx.sctp_transport.internal_buffer.len() {
+            if message.payload.len()
+                > self.ctx.sctp_transport.max_message_size().unwrap_or(0) as usize
+            {
                 return Err(Error::ErrOutboundPacketTooLarge);
             }
 
@@ -1348,9 +1350,7 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch, conn);
         SctpHandlerContext::new(now, transport)
@@ -1917,9 +1917,7 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch_a, conn_a);
         transport.sctp_associations.insert(ch_b, conn_b);
@@ -1982,9 +1980,7 @@ mod tests {
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.negotiated_max_message_size = Some(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
         transport.sctp_endpoint = Some(Endpoint::new(
             client_addr(),
             TransportProtocol::UDP,
