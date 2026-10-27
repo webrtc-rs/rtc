@@ -834,3 +834,30 @@ fn an_allocation_holds_a_bounded_number_of_peer_connections() {
             .is_some()
     );
 }
+
+#[test]
+fn a_datagram_addressed_to_a_tcp_relay_is_dropped() {
+    let mut net = Net::new();
+    net.allocate_tcp(0);
+    net.clients[0]
+        .relay(relay_addr_advertised())
+        .unwrap()
+        .create_permission(net.now, peer())
+        .unwrap();
+    net.pump();
+    // A host that misroutes a UDP datagram for the relay address must not turn it into a Data
+    // indication to the client.
+    net.server
+        .handle_read(TaggedBytesMut {
+            now: net.now,
+            transport: TransportContext {
+                local_addr: relay_addr(),
+                peer_addr: peer(),
+                transport_protocol: TransportProtocol::UDP,
+                ecn: None,
+            },
+            message: BytesMut::from(&b"unexpected"[..]),
+        })
+        .unwrap();
+    assert!(net.server.poll_write().is_none());
+}

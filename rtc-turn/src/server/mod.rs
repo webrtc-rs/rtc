@@ -617,6 +617,10 @@ impl Server {
         let Some(allocation) = self.allocations.get(&five) else {
             return;
         };
+        if allocation.tcp {
+            // A TCP allocation relays no datagrams; its peers connect (`peer_accepted`).
+            return;
+        }
         if !allocation.has_permission(peer.ip(), now) {
             log::trace!("dropping data from {peer}: no permission on {relay}");
             return;
