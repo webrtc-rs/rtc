@@ -109,6 +109,25 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 //
 //      Message, its fields, results of m.Get or any attribute a.GetFrom
 //      are valid only until Message.Raw is not modified.
+/// Value buffers of attributes that [`Message::reset`] took off a message, so the next
+/// [`Message::add`] reuses one instead of allocating (pion's `Message.Add` slices its own buffer;
+/// here the attribute list owns a copy of each value). A clone starts empty.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct SpareValues(Vec<Vec<u8>>);
+
+impl Clone for SpareValues {
+    fn clone(&self) -> Self {
+        SpareValues::default()
+    }
+}
+
+impl fmt::Debug for SpareValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SpareValues({})", self.0.len())
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 /// A STUN message: type, transaction id, and attributes, plus the encoded bytes.
 pub struct Message {
@@ -122,6 +141,10 @@ pub struct Message {
     pub attributes: Attributes,
     /// The encoded message. Attributes whose value covers the message are computed over this.
     pub raw: Vec<u8>,
+    /// Internal: recycled attribute buffers. Build a `Message` with `Message::new()` or
+    /// `..Default::default()`.
+    #[doc(hidden)]
+    pub spare: SpareValues,
 }
 
 impl fmt::Display for Message {
@@ -213,7 +236,9 @@ impl Message {
     pub fn reset(&mut self) {
         self.raw.clear();
         self.length = 0;
-        self.attributes.0.clear();
+        while let Some(attr) = self.attributes.0.pop() {
+            self.spare.0.push(attr.value);
+        }
     }
 
     // grow ensures that internal buffer has n length.
@@ -244,43 +269,33 @@ impl Message {
         // [first:last]                         <- same as previous
         // [0 1|2 3|4    4 + len(v)]            <- mapping for allocated buffer
         //   T   L        V
-        let alloc_size = ATTRIBUTE_HEADER_SIZE + v.len(); // ~ len(TLV) = len(TL) + len(V)
+        let padded_len = nearest_padded_value_length(v.len());
         let first = MESSAGE_HEADER_SIZE + self.length as usize; // first byte number
-        let mut last = first + alloc_size; // last byte number
-        self.grow(last, true); // growing cap(Raw) to fit TLV
-        self.length += alloc_size as u32; // rendering length change
+        let value_start = first + ATTRIBUTE_HEADER_SIZE;
+        let end = value_start + padded_len; // the TLV and its padding
+        // One resize covers the TLV and the padding; the padding bytes are zeroed below, so
+        // nothing left in the buffer from earlier data leaks into them.
+        self.raw.resize(end, 0);
+        self.length = (end - MESSAGE_HEADER_SIZE) as u32; // rendering length change
 
         // Encoding attribute TLV to allocated buffer.
-        let buf = &mut self.raw[first..last];
+        let buf = &mut self.raw[first..end];
         buf[0..2].copy_from_slice(&t.value().to_be_bytes()); // T
         buf[2..4].copy_from_slice(&(v.len() as u16).to_be_bytes()); // L
+        buf[ATTRIBUTE_HEADER_SIZE..ATTRIBUTE_HEADER_SIZE + v.len()].copy_from_slice(v); // V
+        buf[ATTRIBUTE_HEADER_SIZE + v.len()..].fill(0);
 
-        let value = &mut buf[ATTRIBUTE_HEADER_SIZE..];
-        value.copy_from_slice(v); // V
-
+        // The attribute keeps its own copy of the value, in a buffer an earlier `reset` freed.
+        let mut spare_value = self.spare.0.pop().unwrap_or_default();
+        spare_value.clear();
+        spare_value.extend_from_slice(v); // V
         let attr = RawAttribute {
             typ: t,                 // T
             length: v.len() as u16, // L
-            value: value.to_vec(),  // V
+            value: spare_value,
         };
-
-        // Checking that attribute value needs padding.
-        if !(attr.length as usize).is_multiple_of(PADDING) {
-            // Performing padding.
-            let bytes_to_add = nearest_padded_value_length(v.len()) - v.len();
-            last += bytes_to_add;
-            self.grow(last, true);
-            // setting all padding bytes to zero
-            // to prevent data leak from previous
-            // data in next bytes_to_add bytes
-            let buf = &mut self.raw[last - bytes_to_add..last];
-            for b in buf {
-                *b = 0;
-            }
-            self.length += bytes_to_add as u32; // rendering length change
-        }
         self.attributes.0.push(attr);
-        self.write_length();
+        self.raw[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
     }
 
     /// WriteLength writes m.Length to m.Raw.

@@ -585,15 +585,15 @@ impl Relay<'_> {
     }
 
     fn send_channel_data(&mut self, now: Instant, data: &[u8], channel_number: u16) -> Result<()> {
-        let mut ch_data = proto::chandata::ChannelData {
-            data: data.to_vec(),
-            number: proto::channum::ChannelNumber(channel_number),
-            ..Default::default()
-        };
-        ch_data.encode();
+        let mut raw = Vec::new();
+        proto::chandata::ChannelData::encode_into(
+            proto::channum::ChannelNumber(channel_number),
+            data,
+            &mut raw,
+        );
 
         self.client
-            .write_to(now, &ch_data.raw, self.client.turn_server_addr()?);
+            .write_to(now, &raw, self.client.turn_server_addr()?);
 
         Ok(())
     }

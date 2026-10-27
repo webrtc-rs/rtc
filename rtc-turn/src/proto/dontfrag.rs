@@ -20,7 +20,7 @@ impl Setter for DontFragmentAttr {
 impl Getter for DontFragmentAttr {
     /// Returns true if `DONT-FRAGMENT` attribute is set.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let _ = m.get(ATTR_DONT_FRAGMENT)?;
+        let _ = m.get_value(ATTR_DONT_FRAGMENT)?;
         Ok(())
     }
 }

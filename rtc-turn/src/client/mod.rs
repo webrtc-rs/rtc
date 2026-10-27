@@ -410,25 +410,18 @@ impl Client {
     }
 
     fn handle_channel_data(&mut self, data: &[u8]) -> Result<()> {
-        let mut ch_data = ChannelData {
-            raw: data.to_vec(),
-            ..Default::default()
-        };
-        ch_data.decode()?;
+        let (number, payload) = ChannelData::parse(data)?;
 
         let addr = self
-            .find_addr_by_channel_number(ch_data.number.0)
+            .find_addr_by_channel_number(number.0)
             .ok_or(Error::ErrChannelBindNotFound)?;
 
-        trace!(
-            "channel data received from {} (ch={})",
-            addr, ch_data.number.0
-        );
+        trace!("channel data received from {} (ch={})", addr, number.0);
 
         self.events.push_back(Event::DataIndicationOrChannelData(
-            Some(ch_data.number),
+            Some(number),
             addr,
-            BytesMut::from(&ch_data.data[..]),
+            BytesMut::from(payload),
         ));
 
         Ok(())

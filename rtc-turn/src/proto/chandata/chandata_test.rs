@@ -209,3 +209,61 @@ fn test_chrome_channel_data() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_channel_data_parse_borrows_the_payload() -> Result<()> {
+    let mut d = ChannelData {
+        data: vec![1, 2, 3, 4, 5],
+        number: ChannelNumber(MIN_CHANNEL_NUMBER + 7),
+        ..Default::default()
+    };
+    d.encode();
+
+    let (number, payload) = ChannelData::parse(&d.raw)?;
+    assert_eq!(number, d.number);
+    assert_eq!(payload, &[1, 2, 3, 4, 5]);
+    // The payload is a subslice of the input, not a copy.
+    assert_eq!(payload.as_ptr(), d.raw[CHANNEL_DATA_HEADER_SIZE..].as_ptr());
+    Ok(())
+}
+
+#[test]
+fn test_channel_data_parse_rejects_malformed_input() {
+    assert_eq!(
+        ChannelData::parse(&[0x40]).unwrap_err(),
+        Error::ErrUnexpectedEof
+    );
+    // 0x3fff is below the channel number range.
+    assert_eq!(
+        ChannelData::parse(&[0x3f, 0xff, 0, 0]).unwrap_err(),
+        Error::ErrInvalidChannelNumber
+    );
+    // The length field claims more than the buffer holds.
+    assert_eq!(
+        ChannelData::parse(&[0x40, 0, 0, 5, 1, 2]).unwrap_err(),
+        Error::ErrBadChannelDataLength
+    );
+    // Padding after the payload is not part of it.
+    let (_, payload) = ChannelData::parse(&[0x40, 0, 0, 2, 9, 8, 0, 0]).unwrap();
+    assert_eq!(payload, &[9, 8]);
+}
+
+#[test]
+fn test_channel_data_encode_into_matches_encode() {
+    for len in 0..12usize {
+        let data: Vec<u8> = (0..len as u8).collect();
+        let mut d = ChannelData {
+            data: data.clone(),
+            number: ChannelNumber(MIN_CHANNEL_NUMBER + 3),
+            ..Default::default()
+        };
+        d.encode();
+
+        // Appending leaves what was already in `out` alone, and the padding is relative to the
+        // message, not to the buffer.
+        let mut out = vec![0xaa, 0xbb, 0xcc];
+        ChannelData::encode_into(d.number, &data, &mut out);
+        assert_eq!(&out[..3], &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(&out[3..], &d.raw[..], "len {len}");
+    }
+}

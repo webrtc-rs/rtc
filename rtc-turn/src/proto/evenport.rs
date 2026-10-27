@@ -51,7 +51,7 @@ impl EvenPort {
 impl Setter for EvenPort {
     /// Adds `EVEN-PORT` to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        let mut v = vec![0; EVEN_PORT_SIZE];
+        let mut v = [0u8; EVEN_PORT_SIZE];
         if self.reserve_port {
             // Set first bit to 1.
             v[0] = FIRST_BIT_SET;
@@ -64,7 +64,7 @@ impl Setter for EvenPort {
 impl Getter for EvenPort {
     /// Decodes `EVEN-PORT` from message.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let v = m.get(ATTR_EVEN_PORT)?;
+        let v = m.get_value(ATTR_EVEN_PORT)?;
 
         check_size(ATTR_EVEN_PORT, v.len(), EVEN_PORT_SIZE)?;
 
