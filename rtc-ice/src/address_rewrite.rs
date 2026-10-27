@@ -197,20 +197,20 @@ impl AddressRewriteRule {
     }
 
     fn matches(&self, ip: IpAddr, network: NetworkType, port: u16, iface: Option<&str>) -> bool {
-        if let Some(local) = self.local {
-            if local != ip {
-                return false;
-            }
+        if let Some(local) = self.local
+            && local != ip
+        {
+            return false;
         }
-        if let Some(cidr) = &self.cidr {
-            if !cidr.contains(ip) {
-                return false;
-            }
+        if let Some(cidr) = &self.cidr
+            && !cidr.contains(ip)
+        {
+            return false;
         }
-        if let Some(want) = &self.iface {
-            if iface != Some(want.as_str()) {
-                return false;
-            }
+        if let Some(want) = &self.iface
+            && iface != Some(want.as_str())
+        {
+            return false;
         }
         if !self.networks.is_empty() && !self.networks.contains(&network) {
             return false;

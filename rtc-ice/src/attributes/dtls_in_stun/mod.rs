@@ -74,8 +74,10 @@ impl Getter for DtlsInStunAckAttr {
             return Err(Error::ErrAttributeSizeInvalid);
         }
         self.0 = v
-            .chunks_exact(ACK_VALUE_SIZE)
-            .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<ACK_VALUE_SIZE>()
+            .0
+            .iter()
+            .map(|c| u32::from_be_bytes(*c))
             .collect();
         Ok(())
     }
