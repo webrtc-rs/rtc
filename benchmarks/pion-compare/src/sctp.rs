@@ -72,7 +72,7 @@ impl Node {
     }
 }
 
-pub struct Association1 {
+pub struct Transfer {
     client: Node,
     server: Node,
     c2s: VecDeque<Bytes>,
@@ -83,7 +83,7 @@ pub struct Association1 {
     accepted: bool,
 }
 
-impl Association1 {
+impl Transfer {
     pub fn new(msg_len: usize) -> Self {
         let c_addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let s_addr: SocketAddr = "127.0.0.1:5001".parse().unwrap();

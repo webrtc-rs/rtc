@@ -315,8 +315,8 @@ fn main() {
         black_box(mdns_server.answer());
     });
 
-    let mut assoc = sctp::Association1::new(1200);
+    let mut assoc = sctp::Transfer::new(1200);
     bench("sctp message 1200B", 1200, |_| assoc.transfer());
-    let mut assoc = sctp::Association1::new(100);
+    let mut assoc = sctp::Transfer::new(100);
     bench("sctp message 100B", 100, |_| assoc.transfer());
 }

@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-turn`: TCP allocations ([RFC 6062]). `Client::allocate_tcp`, `Relay::connect` and
+  `Relay::connection_bind`, with the events `ConnectResponse`, `ConnectError`,
+  `ConnectionBindResponse`, `ConnectionBindError` and `ConnectionAttempt`. The server accepts a TCP
+  `Allocate` over a TCP control connection (`442` over UDP), `Connect` (the peer is permitted; `446`
+  for a duplicate, `447` on failure or timeout) and `ConnectionBind` (the credentials must be the
+  allocation's, and an id is spent once), and hands the socket work to the application through
+  additive events: `BindRelayTcp`, `ConnectPeer`, `BindData`, `ClosePeer`, answered with
+  `Server::{peer_connected, peer_connect_failed, peer_accepted, peer_closed}`. New attribute
+  `CONNECTION-ID`. ChannelBind, Send and ChannelData are refused on a TCP allocation.
+- `rtc-ice`: `address_rewrite` (pion's `AddressRewriteRule`, the 1:1 NAT case): replace or append
+  host, server-reflexive and relay candidates for external addresses, scoped by local address, CIDR,
+  interface, network type and port. The caller applies it to each gathered host candidate, since the
+  agent never gathers. `attributes::dtls_in_stun`: `DTLS-IN-STUN` and `DTLS-IN-STUN-ACKNOWLEDGEMENT`.
+- `rtc-sdp`: `SessionDescription::unmarshal_slice`, parsing in-memory input without copying it.
+- `rtc-turn`: `ChannelData::parse` (borrows the payload) and `ChannelData::encode_into`.
+- Differential tests against pion, each with its Go oracle under `tests/oracle`: mDNS (against
+  `x/net/dns/dnsmessage`), ICE candidate parsing, the TURN attribute and ChannelData codec, and the
+  NACK receive log and send buffer. `benchmarks/pion-compare` gains DTLS, SCTP, ICE, TWCC, DCEP and
+  mDNS rows; `benchmarks/turn-load` compares the TURN servers on real sockets.
 - `rtc-interceptor`: `CongestionControlBuilder::with_twcc_only`, to record only the streams that
   negotiated transport-wide CC. By default every stream is recorded, for RFC 8888 feedback; an
   endpoint that gets only transport-wide feedback (a browser's) has no use for the records of a
@@ -88,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I-DATA messages than the cap is aborted with a protocol violation. Off by default.
 
 ### Changed
+- `rtc-sdp` (breaking): `MediaName::{media, protos, formats}`, `ConnectionInformation::{network_type,
+  address_type}` and `Address::address` are `SmolStr` (inline up to 23 bytes), like `Attribute`
+  already is; they compare equal to `&str` and `String`. Attribute and format lists are sized from
+  one scan of each section.
+- `rtc-dtls`, `rtc-stun`: no 8 KiB `BufWriter`/`BufReader` per message. A DTLS handshake allocates
+  98 KB, not 965 KB, and takes a quarter of the time.
+- `rtc-stun`: `Message::reset` keeps the attribute buffers for `Message::add` to reuse (the public
+  `spare` field is `#[doc(hidden)]`; build a `Message` with `Message::new()` or `..Default::default()`).
+- `rtc-mdns`: the query and the answer are packed straight to bytes; name compression no longer
+  keys a map by a `String` per suffix.
 - `rtc-dtls`, fixes found by porting pion's tests (issues #24/#25): the client's
   CertificateVerify scheme selection ignored the server's CertificateRequest and signed
   with its own first scheme; it now honors local policy while retaining the peer's
@@ -151,6 +180,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte (found by a differential run against pion rtp v1.10.6).
 
 ### Fixed
+- `rtc-mdns`: the next record starts where the previous record's `RDLENGTH` ends, as in
+  `dnsmessage`, not where its body parser stopped: a packet with a wrong `RDLENGTH` was split into
+  different records than every other parser splits it into.
+- `rtc-ice`: `tcptype ACTIVE` (any case) is accepted, as pion accepts it; the default priority of a
+  candidate with a component above 256 no longer overflows (a panic in debug builds).
+- `rtc-turn`: a `DONT-FRAGMENT` attribute with a value is malformed (RFC 5766 §14.8).
 - `rtc-interceptor`: `History::prune_before` no longer scans every recorded packet on each call.
   The congestion-control interceptor prunes on every timeout of a connection, and it records every
   packet it sends, so the scan grew with the number of streams a connection sends (a participant
@@ -740,3 +775,5 @@ tables and methodology.
 [0.20.1]: https://github.com/webrtc-rs/rtc/compare/0.20.0...0.20.1
 
 [0.20.0]: https://github.com/webrtc-rs/rtc/releases/tag/0.20.0
+
+[RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062

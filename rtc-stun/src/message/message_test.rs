@@ -846,7 +846,7 @@ fn test_recycled_buffers_are_bounded_by_the_most_attributes_in_use() {
         build(&mut m, &[(0x0006, b"u"), (0x0014, b"r"), (0x0015, b"n")]);
         m.reset();
     }
-    assert_eq!(format!("{:?}", m.spare), "SpareValues(3)");
+    assert_eq!(format!("{:?}", m.spare), "SpareAttributes(3)");
 }
 
 #[test]
@@ -854,9 +854,9 @@ fn test_a_clone_does_not_carry_the_recycled_buffers() {
     let mut m = Message::new();
     build(&mut m, &[(0x0006, b"u"), (0x0014, b"r")]);
     m.reset();
-    assert_eq!(format!("{:?}", m.spare), "SpareValues(2)");
+    assert_eq!(format!("{:?}", m.spare), "SpareAttributes(2)");
     let copy = m.clone();
-    assert_eq!(format!("{:?}", copy.spare), "SpareValues(0)");
+    assert_eq!(format!("{:?}", copy.spare), "SpareAttributes(0)");
     assert_eq!(copy, m);
 }
 

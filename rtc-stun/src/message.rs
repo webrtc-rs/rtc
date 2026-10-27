@@ -109,22 +109,22 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 //
 //      Message, its fields, results of m.Get or any attribute a.GetFrom
 //      are valid only until Message.Raw is not modified.
-/// Value buffers of attributes that [`Message::reset`] took off a message, so the next
+/// Attributes that [`Message::reset`] took off a message, kept with their value buffers so the next
 /// [`Message::add`] reuses one instead of allocating (pion's `Message.Add` slices its own buffer;
 /// here the attribute list owns a copy of each value). A clone starts empty.
 #[doc(hidden)]
 #[derive(Default)]
-pub struct SpareValues(Vec<Vec<u8>>);
+pub struct SpareAttributes(Vec<RawAttribute>);
 
-impl Clone for SpareValues {
+impl Clone for SpareAttributes {
     fn clone(&self) -> Self {
-        SpareValues::default()
+        SpareAttributes::default()
     }
 }
 
-impl fmt::Debug for SpareValues {
+impl fmt::Debug for SpareAttributes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SpareValues({})", self.0.len())
+        write!(f, "SpareAttributes({})", self.0.len())
     }
 }
 
@@ -144,7 +144,7 @@ pub struct Message {
     /// Internal: recycled attribute buffers. Build a `Message` with `Message::new()` or
     /// `..Default::default()`.
     #[doc(hidden)]
-    pub spare: SpareValues,
+    pub spare: SpareAttributes,
 }
 
 impl fmt::Display for Message {
@@ -236,9 +236,7 @@ impl Message {
     pub fn reset(&mut self) {
         self.raw.clear();
         self.length = 0;
-        while let Some(attr) = self.attributes.0.pop() {
-            self.spare.0.push(attr.value);
-        }
+        self.spare.0.append(&mut self.attributes.0);
     }
 
     // grow ensures that internal buffer has n length.
@@ -286,14 +284,11 @@ impl Message {
         buf[ATTRIBUTE_HEADER_SIZE + v.len()..].fill(0);
 
         // The attribute keeps its own copy of the value, in a buffer an earlier `reset` freed.
-        let mut spare_value = self.spare.0.pop().unwrap_or_default();
-        spare_value.clear();
-        spare_value.extend_from_slice(v); // V
-        let attr = RawAttribute {
-            typ: t,                 // T
-            length: v.len() as u16, // L
-            value: spare_value,
-        };
+        let mut attr = self.spare.0.pop().unwrap_or_default();
+        attr.typ = t; // T
+        attr.length = v.len() as u16; // L
+        attr.value.clear();
+        attr.value.extend_from_slice(v); // V
         self.attributes.0.push(attr);
         self.raw[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
     }
