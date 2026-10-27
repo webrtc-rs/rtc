@@ -697,9 +697,21 @@ impl SessionDescription {
     /// +--------+----+-------+----+-----+----+-----+---+----+----+---+---+-----+---+---+----+---+----+
     /// ```
     pub fn unmarshal<R: io::BufRead + io::Seek>(reader: &mut R) -> Result<Self> {
-        let mut data = Vec::new();
+        // Size the buffer from the reader's remaining length, so reading is one allocation, not
+        // a series of doublings.
+        let here = reader.stream_position()?;
+        let end = reader.seek(io::SeekFrom::End(0))?;
+        reader.seek(io::SeekFrom::Start(here))?;
+        let mut data = Vec::with_capacity(end.saturating_sub(here) as usize);
         reader.read_to_end(&mut data)?;
         super::unmarshal::unmarshal_bytes(&data)
+    }
+
+    /// Parses a session description held in memory, without copying it first: the counterpart of
+    /// pion's `Unmarshal([]byte)`. Accepts and rejects exactly what
+    /// [`unmarshal`](Self::unmarshal) does.
+    pub fn unmarshal_slice(raw: &[u8]) -> Result<Self> {
+        super::unmarshal::unmarshal_bytes(raw)
     }
 }
 
@@ -712,8 +724,6 @@ impl From<SessionDescription> for String {
 impl TryFrom<String> for SessionDescription {
     type Error = Error;
     fn try_from(sdp_string: String) -> Result<Self> {
-        let mut reader = io::Cursor::new(sdp_string.as_bytes());
-        let session_description = SessionDescription::unmarshal(&mut reader)?;
-        Ok(session_description)
+        SessionDescription::unmarshal_slice(sdp_string.as_bytes())
     }
 }

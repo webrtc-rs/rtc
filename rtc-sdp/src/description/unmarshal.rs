@@ -146,6 +146,50 @@ impl<'a> Lexer<'a> {
         Ok(self.text_at(start, stop).into_owned())
     }
 
+    /// [`read_field`](Self::read_field) without the allocation for short fields: a token of up to
+    /// 23 bytes (nearly every one on an `m=` or `c=` line) is stored inline.
+    fn read_field_small(&mut self) -> R<SmolStr> {
+        let start = self.pos;
+        let mut stop;
+        loop {
+            stop = self.pos;
+            let ch = match self.read_byte() {
+                Err(Fail::Eof) if stop > start => break,
+                Err(e) => return Err(e),
+                Ok(ch) => ch,
+            };
+            if is_newline(ch) {
+                self.unread_byte();
+                break;
+            }
+            if is_whitespace(ch) {
+                self.read_whitespace();
+                break;
+            }
+        }
+        Ok(SmolStr::new(self.text_at(start, stop)))
+    }
+
+    /// How many `a=` lines come before the next `m=` line (or the end), counted from here, so the
+    /// attribute list can be sized once instead of growing by doubling: a browser's media section
+    /// holds a hundred or more, and each doubling copies everything so far.
+    fn count_attributes(&self) -> usize {
+        let mut rest = &self.value[self.pos.min(self.value.len())..];
+        let mut count = 0;
+        while !rest.is_empty() {
+            let line_end = memchr::memchr(b'\n', rest).map_or(rest.len(), |i| i + 1);
+            let line = rest[..line_end].trim_ascii_start();
+            if line.starts_with(b"m=") {
+                break;
+            }
+            if line.starts_with(b"a=") {
+                count += 1;
+            }
+            rest = &rest[line_end..];
+        }
+        count
+    }
+
     fn read_required_field(&mut self) -> R<String> {
         let field = self.read_field()?;
         if field.is_empty() {
@@ -231,15 +275,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn unmarshal_connection_information(&mut self) -> R<ConnectionInformation> {
-        let network_type = self.read_field()?;
+        let network_type = self.read_field_small()?;
         if network_type != "IN" {
-            return Err(Fail::Value(network_type));
+            return Err(Fail::Value(network_type.into()));
         }
-        let address_type = self.read_field()?;
+        let address_type = self.read_field_small()?;
         if address_type != "IP4" && address_type != "IP6" {
-            return Err(Fail::Value(address_type));
+            return Err(Fail::Value(address_type.into()));
         }
-        let address = self.read_field()?;
+        let address = self.read_field_small()?;
         let address = if address.is_empty() {
             None
         } else {
@@ -569,6 +613,10 @@ fn attribute_from(line: std::borrow::Cow<'_, str>) -> Attribute {
 }
 
 fn unmarshal_session_attribute(l: &mut Lexer<'_>) -> R<Option<State>> {
+    if l.desc.attributes.is_empty() {
+        let n = l.count_attributes();
+        l.desc.attributes.reserve_exact(n);
+    }
     let value = l.read_line_lossy()?;
     l.desc.attributes.push(attribute_from(value));
     next(s11)
@@ -594,35 +642,42 @@ fn go_atoi(s: &str) -> Option<isize> {
 fn unmarshal_media_description(l: &mut Lexer<'_>) -> R<Option<State>> {
     let mut md = MediaDescription::default();
 
-    let field = l.read_field()?;
+    let field = l.read_field_small()?;
     if !matches!(
         field.as_str(),
         "audio" | "video" | "text" | "application" | "message"
     ) {
-        return Err(Fail::Value(field));
+        return Err(Fail::Value(field.into()));
     }
     md.media_name.media = field;
 
-    let field = l.read_field()?;
+    let field = l.read_field_small()?;
     let mut parts = field.split('/');
     let first = parts.next().unwrap_or("");
     md.media_name.port.value = parse_port(first)?;
     if let Some(range) = parts.next() {
-        md.media_name.port.range = Some(go_atoi(range).ok_or_else(|| Fail::Value(field.clone()))?);
+        md.media_name.port.range = Some(go_atoi(range).ok_or_else(|| Fail::Value(field.to_string()))?);
     }
 
     // RFC 8866 §5.14: <proto> is an extensible token, so unregistered protocols are accepted
     // (pion rejects them); an empty token, as in `//`, is still malformed.
-    let field = l.read_field()?;
+    let field = l.read_field_small()?;
     for proto in field.split('/') {
         if proto.is_empty() {
-            return Err(Fail::Numeric(field.clone()));
+            return Err(Fail::Numeric(field.to_string()));
         }
-        md.media_name.protos.push(proto.to_owned());
+        md.media_name.protos.push(SmolStr::new(proto));
     }
 
+    // One format per remaining token on the line: a browser's video section lists a dozen or
+    // more, and growing the list by doubling costs several allocations.
+    {
+        let rest = &l.value[l.pos.min(l.value.len())..];
+        let line = &rest[..memchr::memchr(b'\n', rest).unwrap_or(rest.len())];
+        md.media_name.formats.reserve_exact(line.split(|b| *b == b' ').filter(|t| !t.is_empty()).count());
+    }
     loop {
-        let field = l.read_field()?;
+        let field = l.read_field_small()?;
         if field.is_empty() {
             break;
         }
@@ -630,8 +685,7 @@ fn unmarshal_media_description(l: &mut Lexer<'_>) -> R<Option<State>> {
     }
 
     l.next_line()?;
-    // A browser's media section holds a hundred or more attributes; sizing the list from one
-    // quick scan beats growing it by doubling (each step copies everything so far).
+    md.attributes.reserve_exact(l.count_attributes());
     l.desc.media_descriptions.push(md);
     next(s12)
 }

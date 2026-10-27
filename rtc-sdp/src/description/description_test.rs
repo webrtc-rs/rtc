@@ -50,8 +50,8 @@ fn test_marshal() -> Result<()> {
             username: "jdoe".to_string(),
             session_id: 2890844526,
             session_version: 2890842807,
-            network_type: "IN".to_string(),
-            address_type: "IP4".to_string(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             unicast_address: "10.47.16.5".to_string(),
         },
         session_name: "SDP Seminar".to_string(),
@@ -60,10 +60,10 @@ fn test_marshal() -> Result<()> {
         email_address: Some("j.doe@example.com (Jane Doe)".to_string()),
         phone_number: Some("+1 617 555-6011".to_string()),
         connection_information: Some(ConnectionInformation {
-            network_type: "IN".to_string(),
-            address_type: "IP4".to_string(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             address: Some(Address {
-                address: "224.2.17.12".to_string(),
+                address: "224.2.17.12".into(),
                 ttl: Some(127),
                 range: None,
             }),
@@ -121,20 +121,20 @@ fn test_marshal() -> Result<()> {
         media_descriptions: vec![
             MediaDescription {
                 media_name: MediaName {
-                    media: "audio".to_string(),
+                    media: "audio".into(),
                     port: RangedPort {
                         value: 49170,
                         range: None,
                     },
-                    protos: vec!["RTP".to_string(), "AVP".to_string()],
-                    formats: vec!["0".to_string()],
+                    protos: vec!["RTP".into(), "AVP".into()],
+                    formats: vec!["0".into()],
                 },
                 media_title: Some("Vivamus a posuere nisl".to_string()),
                 connection_information: Some(ConnectionInformation {
-                    network_type: "IN".to_string(),
-                    address_type: "IP4".to_string(),
+                    network_type: "IN".into(),
+                    address_type: "IP4".into(),
                     address: Some(Address {
-                        address: "203.0.113.1".to_string(),
+                        address: "203.0.113.1".into(),
                         ttl: None,
                         range: None,
                     }),
@@ -149,13 +149,13 @@ fn test_marshal() -> Result<()> {
             },
             MediaDescription {
                 media_name: MediaName {
-                    media: "video".to_string(),
+                    media: "video".into(),
                     port: RangedPort {
                         value: 51372,
                         range: None,
                     },
-                    protos: vec!["RTP".to_string(), "AVP".to_string()],
-                    formats: vec!["99".to_string()],
+                    protos: vec!["RTP".into(), "AVP".into()],
+                    formats: vec!["99".into()],
                 },
                 media_title: None,
                 connection_information: None,

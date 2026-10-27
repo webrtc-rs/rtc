@@ -8,13 +8,13 @@ fn get_test_session_description() -> SessionDescription {
         media_descriptions: vec![
             MediaDescription {
                 media_name: MediaName {
-                    media: "video".to_string(),
+                    media: "video".into(),
                     port: RangedPort {
                         value: 51372,
                         range: None,
                     },
-                    protos: vec!["RTP".to_string(), "AVP".to_string()],
-                    formats: vec!["120".to_string(), "121".to_string(), "126".to_string(), "97".to_string()],
+                    protos: vec!["RTP".into(), "AVP".into()],
+                    formats: vec!["120".into(), "121".into(), "126".into(), "97".into()],
                 },
                 attributes: vec![
                     Attribute::new("fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1".to_string(), None),

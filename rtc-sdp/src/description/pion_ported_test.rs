@@ -458,7 +458,7 @@ fn test_new_jsep_media_description() {
         md.media_name
             .protos
             .iter()
-            .map(String::as_str)
+            .map(|p| p.as_str())
             .collect::<Vec<_>>()
     );
     let ci = md.connection_information.as_ref().expect("c=");

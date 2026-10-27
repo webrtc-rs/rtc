@@ -575,20 +575,20 @@ pub(crate) fn add_data_media_section(
 ) -> Result<SessionDescription> {
     let mut media = MediaDescription {
         media_name: MediaName {
-            media: MEDIA_SECTION_APPLICATION.to_owned(),
+            media: MEDIA_SECTION_APPLICATION.into(),
             port: RangedPort {
                 value: 9,
                 range: None,
             },
-            protos: vec!["UDP".to_owned(), "DTLS".to_owned(), "SCTP".to_owned()],
-            formats: vec!["webrtc-datachannel".to_owned()],
+            protos: vec!["UDP".into(), "DTLS".into(), "SCTP".into()],
+            formats: vec!["webrtc-datachannel".into()],
         },
         media_title: None,
         connection_information: Some(ConnectionInformation {
-            network_type: "IN".to_owned(),
-            address_type: "IP4".to_owned(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             address: Some(Address {
-                address: "0.0.0.0".to_owned(),
+                address: "0.0.0.0".into(),
                 ttl: None,
                 range: None,
             }),
@@ -718,18 +718,18 @@ impl RTCPeerConnection {
             d = d.with_media(
                 MediaDescription {
                     media_name: MediaName {
-                        media: transceiver.kind().to_string(),
+                        media: transceiver.kind().to_string().into(),
                         port: RangedPort {
                             value: 0,
                             range: None,
                         },
                         protos: vec![
-                            "UDP".to_owned(),
-                            "TLS".to_owned(),
-                            "RTP".to_owned(),
-                            "SAVPF".to_owned(),
+                            "UDP".into(),
+                            "TLS".into(),
+                            "RTP".into(),
+                            "SAVPF".into(),
                         ],
-                        formats: vec!["0".to_owned()],
+                        formats: vec!["0".into()],
                     },
                     media_title: None,
                     // We need to include connection information even if we're rejecting a track, otherwise Firefox will fail to
@@ -737,10 +737,10 @@ impl RTCPeerConnection {
                     // SIPCC Failed to parse SDP: SDP Parse Error on line 50:  c= connection line not specified for every media level, validation failed.
                     // In addition this makes our SDP compliant with RFC 4566 Section 5.7: https://datatracker.ietf.org/doc/html/rfc4566#section-5.7
                     connection_information: Some(ConnectionInformation {
-                        network_type: "IN".to_owned(),
-                        address_type: "IP4".to_owned(),
+                        network_type: "IN".into(),
+                        address_type: "IP4".into(),
                         address: Some(Address {
-                            address: "0.0.0.0".to_owned(),
+                            address: "0.0.0.0".into(),
                             ttl: None,
                             range: None,
                         }),
@@ -1494,7 +1494,7 @@ pub(crate) fn codecs_from_media_description(
 
         out.push(RTCRtpCodecParameters {
             rtp_codec: RTCRtpCodec {
-                mime_type: m.media_name.media.clone() + "/" + codec.name.as_str(),
+                mime_type: format!("{}/{}", m.media_name.media, codec.name),
                 clock_rate: codec.clock_rate,
                 channels,
                 sdp_fmtp_line: codec.fmtp.clone(),

@@ -20,9 +20,9 @@ pub type Information = String;
 #[derive(Debug, Default, Clone)]
 pub struct ConnectionInformation {
     /// The network type, always `IN` (Internet) in practice.
-    pub network_type: String,
+    pub network_type: SmolStr,
     /// The address type, `IP4` or `IP6`.
-    pub address_type: String,
+    pub address_type: SmolStr,
     /// The connection address, absent for a bare `c=` line.
     pub address: Option<Address>,
 }
@@ -44,7 +44,7 @@ impl fmt::Display for ConnectionInformation {
 #[derive(Debug, Default, Clone)]
 pub struct Address {
     /// The address itself: a host name, IPv4/IPv6 literal, or multicast group.
-    pub address: String,
+    pub address: SmolStr,
     /// The multicast TTL, for multicast addresses.
     pub ttl: Option<isize>,
     /// The number of consecutive multicast addresses in the range.

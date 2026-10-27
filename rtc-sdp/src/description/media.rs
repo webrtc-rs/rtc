@@ -8,6 +8,7 @@
 //! [`RangedPort`](crate::description::media::RangedPort) exists because a media section may claim consecutive ports (`<port>/<count>`),
 //! which RTP/RTCP without multiplexing needs.
 use std::collections::HashMap;
+use smol_str::SmolStr;
 use std::fmt;
 
 use url::Url;
@@ -123,25 +124,25 @@ impl MediaDescription {
     pub fn new_jsep_media_description(codec_type: String, _codec_prefs: Vec<&str>) -> Self {
         MediaDescription {
             media_name: MediaName {
-                media: codec_type,
+                media: codec_type.into(),
                 port: RangedPort {
                     value: 9,
                     range: None,
                 },
                 protos: vec![
-                    "UDP".to_string(),
-                    "TLS".to_string(),
-                    "RTP".to_string(),
-                    "SAVPF".to_string(),
+                    SmolStr::new_static("UDP"),
+                    SmolStr::new_static("TLS"),
+                    SmolStr::new_static("RTP"),
+                    SmolStr::new_static("SAVPF"),
                 ],
                 formats: vec![],
             },
             media_title: None,
             connection_information: Some(ConnectionInformation {
-                network_type: "IN".to_string(),
-                address_type: "IP4".to_string(),
+                network_type: SmolStr::new_static("IN"),
+                address_type: SmolStr::new_static("IP4"),
                 address: Some(Address {
-                    address: "0.0.0.0".to_string(),
+                    address: SmolStr::new_static("0.0.0.0"),
                     ttl: None,
                     range: None,
                 }),
@@ -184,7 +185,7 @@ impl MediaDescription {
         channels: u16,
         fmtp: String,
     ) -> Self {
-        self.media_name.formats.push(payload_type.to_string());
+        self.media_name.formats.push(SmolStr::new(payload_type.to_string()));
         let rtpmap = if channels > 0 {
             format!("{payload_type} {name}/{clockrate}/{channels}")
         } else {
@@ -273,13 +274,13 @@ impl fmt::Display for RangedPort {
 #[derive(Debug, Default, Clone)]
 pub struct MediaName {
     /// The media type: `audio`, `video`, or `application` for data channels.
-    pub media: String,
+    pub media: SmolStr,
     /// The transport port, possibly a range.
     pub port: RangedPort,
     /// The transport protocol tokens, such as `UDP`, `TLS`, `RTP`, `SAVPF`.
-    pub protos: Vec<String>,
+    pub protos: Vec<SmolStr>,
     /// The payload types (for RTP media) or format tokens this section offers.
-    pub formats: Vec<String>,
+    pub formats: Vec<SmolStr>,
 }
 
 impl fmt::Display for MediaName {
