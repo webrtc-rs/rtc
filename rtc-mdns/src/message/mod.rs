@@ -9,7 +9,7 @@ pub(crate) mod parser;
 pub(crate) mod question;
 pub(crate) mod resource;
 
-use std::collections::HashMap;
+use crate::message::name::NameTable;
 use std::fmt;
 
 use header::*;
@@ -318,7 +318,8 @@ impl Message {
 
     // Pack packs a full Message.
     pub(crate) fn pack(&mut self) -> Result<Vec<u8>> {
-        self.append_pack(vec![])
+        // pion's starting capacity: enough for a typical message, so packing does not regrow.
+        self.append_pack(Vec::with_capacity(512))
     }
 
     // append_pack is like Pack but appends the full Message to b and returns the
@@ -367,7 +368,7 @@ impl Message {
         // DNS messages can be a maximum of 512 bytes long. Without compression,
         // many DNS response messages are over this limit, so enabling
         // compression will help ensure compliance.
-        let mut compression = Some(HashMap::new());
+        let mut compression = Some(NameTable::default());
 
         for question in &self.questions {
             msg = question.pack(msg, &mut compression, compression_off)?;
@@ -384,4 +385,48 @@ impl Message {
 
         Ok(msg)
     }
+}
+
+/// The message `Message { questions: [A IN name] }.pack()` produces, built without constructing a
+/// `Message`: the query the mDNS client sends for a hostname. `name` carries its trailing dot.
+pub(crate) fn pack_a_question(name: &str) -> Result<Vec<u8>> {
+    if name.len() > name::NAME_LEN {
+        return Err(Error::ErrCalcLen);
+    }
+    let header = header::HeaderInternal {
+        questions: 1,
+        bits: Header::default().pack().1,
+        ..Default::default()
+    };
+    let mut msg = header.pack(Vec::with_capacity(12 + name.len() + 2 + 4));
+    msg = name::pack_name(name, msg, &mut None, 0)?;
+    msg = DnsType::A.pack(msg);
+    msg = DNSCLASS_INET.pack(msg);
+    Ok(msg)
+}
+
+/// The message with one authoritative A answer for `name`, the response the mDNS server sends:
+/// what `Message { answers: [A record] }.pack()` produces, without constructing a `Message`.
+pub(crate) fn pack_a_answer(name: &str, address: [u8; 4], ttl: u32) -> Result<Vec<u8>> {
+    if name.len() > name::NAME_LEN {
+        return Err(Error::ErrCalcLen);
+    }
+    let response = Header {
+        response: true,
+        authoritative: true,
+        ..Default::default()
+    };
+    let header = header::HeaderInternal {
+        answers: 1,
+        bits: response.pack().1,
+        ..Default::default()
+    };
+    let mut msg = header.pack(Vec::with_capacity(12 + name.len() + 2 + 2 + 4 + 2 + 4));
+    msg = name::pack_name(name, msg, &mut None, 0)?;
+    msg = DnsType::A.pack(msg);
+    msg = DNSCLASS_INET.pack(msg);
+    msg = pack_uint32(msg, ttl);
+    msg = pack_uint16(msg, 4);
+    msg.extend_from_slice(&address);
+    Ok(msg)
 }

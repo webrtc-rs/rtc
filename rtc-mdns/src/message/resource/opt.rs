@@ -46,7 +46,7 @@ impl ResourceBody for OptResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        _compression: &mut Option<HashMap<String, usize>>,
+        _compression: &mut Option<NameTable>,
         _compression_off: usize,
     ) -> Result<Vec<u8>> {
         for opt in &self.options {

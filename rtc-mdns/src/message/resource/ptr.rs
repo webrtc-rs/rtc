@@ -23,7 +23,7 @@ impl ResourceBody for PtrResource {
     fn pack(
         &self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         self.ptr.pack(msg, compression, compression_off)

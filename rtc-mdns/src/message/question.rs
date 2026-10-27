@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::message::name::NameTable;
 use std::fmt;
 
 use super::name::*;
@@ -28,7 +28,7 @@ impl Question {
     pub(crate) fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = self.name.pack(msg, compression, compression_off)?;

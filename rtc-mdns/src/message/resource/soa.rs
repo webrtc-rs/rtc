@@ -38,7 +38,7 @@ impl ResourceBody for SoaResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = self.ns.pack(msg, compression, compression_off)?;

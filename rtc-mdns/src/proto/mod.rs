@@ -12,14 +12,27 @@ use log::{trace, warn};
 use shared::{TaggedBytesMut, TransportContext, TransportMessage, TransportProtocol};
 
 use crate::config::{DEFAULT_QUERY_INTERVAL, MAX_MESSAGE_RECORDS, MdnsConfig, RESPONSE_TTL};
-use crate::message::header::Header;
-use crate::message::name::Name;
 use crate::message::parser::Parser;
-use crate::message::question::Question;
 use crate::message::resource::a::AResource;
-use crate::message::resource::{Resource, ResourceHeader};
-use crate::message::{DNSCLASS_INET, DnsType, Message};
+use crate::message::DnsType;
 use shared::error::{Error, Result};
+
+/// `name` with a trailing dot, in one allocation of the right size.
+fn with_trailing_dot(name: &str) -> String {
+    let mut owned = String::with_capacity(name.len() + 1);
+    owned.push_str(name);
+    if !name.ends_with('.') {
+        owned.push('.');
+    }
+    owned
+}
+
+/// `packet` as a `BytesMut`, without copying it when nothing else shares the allocation.
+fn into_bytes_mut(packet: Vec<u8>) -> BytesMut {
+    bytes::Bytes::from(packet)
+        .try_into_mut()
+        .unwrap_or_else(|shared| BytesMut::from(&shared[..]))
+}
 
 /// The mDNS multicast group address (224.0.0.251).
 pub const MDNS_MULTICAST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -350,11 +363,7 @@ impl Mdns {
     /// assert!(mdns.is_query_pending(query_id));
     /// ```
     pub fn query_now(&mut self, now: Instant, name: &str) -> QueryId {
-        let name_with_suffix = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{name}.")
-        };
+        let name_with_suffix = with_trailing_dot(name);
 
         let id = self.next_query_id;
         self.next_query_id += 1;
@@ -369,11 +378,7 @@ impl Mdns {
 
     /// Schedule a query
     pub fn schedule_query(&mut self, name: &str) -> QueryId {
-        let name_with_suffix = if name.ends_with('.') {
-            name.to_string()
-        } else {
-            format!("{name}.")
-        };
+        let name_with_suffix = with_trailing_dot(name);
 
         let id = self.next_query_id;
         self.next_query_id += 1;
@@ -463,44 +468,23 @@ impl Mdns {
     }
 
     fn query(&mut self, now: Instant, id: QueryId, name_with_suffix: String) {
-        let query = Query {
-            id,
-            name_with_suffix: name_with_suffix.clone(),
-            start_time: now,
-            next_retry: now + self.query_interval, // Schedule first retry after interval
-        };
-        self.queries.push(query);
-
         // Send the initial query immediately
         self.send_question(&name_with_suffix, now);
+
+        self.queries.push(Query {
+            id,
+            name_with_suffix,
+            start_time: now,
+            next_retry: now + self.query_interval, // Schedule first retry after interval
+        });
     }
 
     fn send_question(&mut self, name: &str, now: Instant) {
-        let packed_name = match Name::new(name) {
-            Ok(pn) => pn,
+        let raw_query = match crate::message::pack_a_question(name) {
+            Ok(v) => v,
             Err(err) => {
                 log::warn!("Failed to construct mDNS packet: {err}");
                 return;
-            }
-        };
-
-        let raw_query = {
-            let mut msg = Message {
-                header: Header::default(),
-                questions: vec![Question {
-                    typ: DnsType::A,
-                    class: DNSCLASS_INET,
-                    name: packed_name,
-                }],
-                ..Default::default()
-            };
-
-            match msg.pack() {
-                Ok(v) => v,
-                Err(err) => {
-                    log::error!("Failed to construct mDNS packet {err}");
-                    return;
-                }
             }
         };
 
@@ -513,54 +497,24 @@ impl Mdns {
                 transport_protocol: TransportProtocol::UDP,
                 ecn: None,
             },
-            message: BytesMut::from(&raw_query[..]),
+            message: into_bytes_mut(raw_query),
         });
     }
 
     fn send_answer(&mut self, local_ip: IpAddr, name: &str, now: Instant) {
-        let packed_name = match Name::new(name) {
-            Ok(n) => n,
-            Err(err) => {
-                log::warn!("Failed to pack name for answer: {err}");
+        let address = match local_ip {
+            IpAddr::V4(ip) => ip.octets(),
+            IpAddr::V6(_) => {
+                log::warn!("Cannot send IPv6 address in A record");
+                //TODO: How to support IPv6 mDNS?
                 return;
             }
         };
-
-        let raw_answer = {
-            let mut msg = Message {
-                header: Header {
-                    response: true,
-                    authoritative: true,
-                    ..Default::default()
-                },
-                answers: vec![Resource {
-                    header: ResourceHeader {
-                        typ: DnsType::A,
-                        class: DNSCLASS_INET,
-                        name: packed_name,
-                        ttl: RESPONSE_TTL,
-                        ..Default::default()
-                    },
-                    body: Some(Box::new(AResource {
-                        a: match local_ip {
-                            IpAddr::V4(ip) => ip.octets(),
-                            IpAddr::V6(_) => {
-                                log::warn!("Cannot send IPv6 address in A record");
-                                //TODO: How to support IPv6 mDNS?
-                                return;
-                            }
-                        },
-                    })),
-                }],
-                ..Default::default()
-            };
-
-            match msg.pack() {
-                Ok(v) => v,
-                Err(err) => {
-                    log::error!("Failed to pack answer: {err}");
-                    return;
-                }
+        let raw_answer = match crate::message::pack_a_answer(name, address, RESPONSE_TTL) {
+            Ok(v) => v,
+            Err(err) => {
+                log::warn!("Failed to pack name for answer: {err}");
+                return;
             }
         };
 
@@ -573,7 +527,7 @@ impl Mdns {
                 transport_protocol: TransportProtocol::UDP,
                 ecn: None,
             },
-            message: BytesMut::from(&raw_answer[..]),
+            message: into_bytes_mut(raw_answer),
         });
     }
 
@@ -594,9 +548,6 @@ impl Mdns {
     }
 
     fn process_questions(&mut self, parser: &mut Parser<'_>, _src: SocketAddr, now: Instant) {
-        // Collect names that need answers first to avoid borrow issues
-        let mut names_to_answer: Vec<String> = Vec::new();
-
         for _ in 0..=MAX_MESSAGE_RECORDS {
             let q = match parser.question() {
                 Ok(q) => q,
@@ -610,30 +561,24 @@ impl Mdns {
             };
 
             // Check if we should answer this question
-            for local_name in &self.local_names {
-                if *local_name == q.name.data {
-                    names_to_answer.push(q.name.data.clone());
-                    break;
-                }
-            }
+            let Some(index) = self.local_names.iter().position(|n| *n == q.name.data) else {
+                continue;
+            };
+            let Some(local_ip) = self.config.local_ip else {
+                log::warn!("Received questions for local names but no local_addr configured");
+                continue;
+            };
+            log::trace!(
+                "mDNS Found question for local name: {}, responding with {}",
+                self.local_names[index],
+                local_ip
+            );
+            // The answer is built from the name in `q`, which equals the local name.
+            self.send_answer(local_ip, &q.name.data, now);
         }
 
         // Skip remaining questions
         let _ = parser.skip_all_questions();
-
-        // Now send answers
-        if let Some(local_ip) = self.config.local_ip {
-            for name in names_to_answer {
-                log::trace!(
-                    "mDNS Found question for local name: {}, responding with {}",
-                    name,
-                    local_ip
-                );
-                self.send_answer(local_ip, &name, now);
-            }
-        } else if !names_to_answer.is_empty() {
-            log::warn!("Received questions for local names but no local_addr configured");
-        }
     }
 
     fn process_answers(&mut self, parser: &mut Parser<'_>, src: SocketAddr) {

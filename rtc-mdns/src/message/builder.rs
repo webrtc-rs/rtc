@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::message::name::NameTable;
 
 use super::header::*;
 use super::question::*;
@@ -32,7 +32,7 @@ pub(crate) struct Builder {
 
     // compression is a mapping from name suffixes to their starting index
     // in msg.
-    pub(crate) compression: Option<HashMap<String, usize>>,
+    pub(crate) compression: Option<NameTable>,
 }
 
 impl Builder {
@@ -78,7 +78,7 @@ impl Builder {
     //
     // Compression should be enabled before any sections are added for best results.
     pub(crate) fn enable_compression(&mut self) {
-        self.compression = Some(HashMap::new());
+        self.compression = Some(NameTable::default());
     }
 
     fn start_check(&self, section: Section) -> Result<()> {

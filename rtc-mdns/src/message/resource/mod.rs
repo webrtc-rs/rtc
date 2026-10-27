@@ -10,7 +10,7 @@ pub(crate) mod srv;
 pub(crate) mod txt;
 
 use std::any::Any;
-use std::collections::HashMap;
+use crate::message::name::NameTable;
 use std::fmt;
 
 use a::*;
@@ -72,7 +72,7 @@ impl Resource {
     pub(crate) fn pack(
         &mut self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         self.header.typ = self
@@ -182,7 +182,7 @@ impl ResourceHeader {
     pub(crate) fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<(Vec<u8>, usize)> {
         msg = self.name.pack(msg, compression, compression_off)?;
@@ -277,7 +277,7 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
     fn pack(
         &self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>>;
 

@@ -31,7 +31,7 @@ impl ResourceBody for SrvResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        _compression: &mut Option<HashMap<String, usize>>,
+        _compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = pack_uint16(msg, self.priority);
