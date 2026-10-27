@@ -113,73 +113,84 @@ async fn main() -> Result<()> {
     let mut buf = vec![0u8; 65_535];
 
     loop {
-        // Act on what the server asked for, then send what it produced.
-        while let Some(event) = server.poll_event() {
-            match event {
-                ServerEvent::BindRelay { id, plan } => match UdpSocket::bind(plan.bind).await {
-                    Ok(socket) => {
-                        let local = socket.local_addr()?;
-                        let socket = Arc::new(socket);
-                        let reader = {
-                            let (socket, tx) = (socket.clone(), peer_tx.clone());
-                            tokio::spawn(async move {
-                                let mut buf = vec![0u8; 65_535];
-                                while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
-                                    let data = buf[..n].to_vec();
-                                    if tx
-                                        .send(FromPeer {
-                                            relay: local,
-                                            peer,
-                                            data,
-                                        })
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
+        // Act on what the server asked for, then send what it produced, until it has nothing more:
+        // reporting a bound relay makes it produce the Allocate response.
+        loop {
+            let mut quiet = true;
+            while let Some(event) = server.poll_event() {
+                quiet = false;
+                match event {
+                    ServerEvent::BindRelay { id, plan } => match UdpSocket::bind(plan.bind).await {
+                        Ok(socket) => {
+                            let local = socket.local_addr()?;
+                            let socket = Arc::new(socket);
+                            let reader = {
+                                let (socket, tx) = (socket.clone(), peer_tx.clone());
+                                tokio::spawn(async move {
+                                    let mut buf = vec![0u8; 65_535];
+                                    while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
+                                        let data = buf[..n].to_vec();
+                                        if tx
+                                            .send(FromPeer {
+                                                relay: local,
+                                                peer,
+                                                data,
+                                            })
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
                                     }
-                                }
-                            })
-                        };
-                        relays.insert(local, (socket, reader));
-                        server.relay_bound(id, local, Instant::now());
+                                })
+                            };
+                            relays.insert(local, (socket, reader));
+                            server.relay_bound(id, local, Instant::now());
+                        }
+                        Err(err) => {
+                            eprintln!("could not bind a relay at {}: {err}", plan.bind);
+                            server.relay_bind_failed(id, Instant::now());
+                        }
+                    },
+                    ServerEvent::ReleaseRelay(addr) => {
+                        if let Some((_, reader)) = relays.remove(&addr) {
+                            reader.abort();
+                        }
                     }
-                    Err(err) => {
-                        eprintln!("could not bind a relay at {}: {err}", plan.bind);
-                        server.relay_bind_failed(id, Instant::now());
+                    ServerEvent::AllocationCreated {
+                        five_tuple,
+                        user_id,
+                        relayed_addr,
+                    } => {
+                        println!(
+                            "allocation for {user_id} ({}) -> {relayed_addr}",
+                            five_tuple.client
+                        );
                     }
-                },
-                ServerEvent::ReleaseRelay(addr) => {
-                    if let Some((_, reader)) = relays.remove(&addr) {
-                        reader.abort();
+                    ServerEvent::AllocationDeleted { five_tuple, reason } => {
+                        println!("allocation of {} ended: {reason:?}", five_tuple.client);
                     }
+                    _ => {}
                 }
-                ServerEvent::AllocationCreated {
-                    five_tuple,
-                    user_id,
-                    relayed_addr,
-                } => {
-                    println!(
-                        "allocation for {user_id} ({}) -> {relayed_addr}",
-                        five_tuple.client
-                    );
-                }
-                ServerEvent::AllocationDeleted { five_tuple, reason } => {
-                    println!("allocation of {} ended: {reason:?}", five_tuple.client);
-                }
-                _ => {}
             }
-        }
-        while let Some(out) = server.poll_write() {
-            let sent = match relays.get(&out.transport.local_addr) {
-                Some((socket, _)) => socket.send_to(&out.message, out.transport.peer_addr).await,
-                None => {
-                    listener
-                        .send_to(&out.message, out.transport.peer_addr)
-                        .await
+            while let Some(out) = server.poll_write() {
+                quiet = false;
+                let sent = match relays.get(&out.transport.local_addr) {
+                    Some((socket, _)) => {
+                        socket.send_to(&out.message, out.transport.peer_addr).await
+                    }
+                    None => {
+                        listener
+                            .send_to(&out.message, out.transport.peer_addr)
+                            .await
+                    }
+                };
+                if let Err(err) = sent {
+                    eprintln!("send to {} failed: {err}", out.transport.peer_addr);
                 }
-            };
-            if let Err(err) = sent {
-                eprintln!("send to {} failed: {err}", out.transport.peer_addr);
+            }
+            if quiet {
+                break;
             }
         }
 

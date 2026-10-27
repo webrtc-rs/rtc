@@ -263,56 +263,65 @@ async fn main() -> Result<()> {
     let mut peers: HashMap<PeerConnId, TcpStream> = HashMap::new();
 
     loop {
-        // Send what the server produced, then do what it asked for.
-        while let Some(out) = server.poll_write() {
-            if let Some(client) = clients.get(&out.transport.peer_addr) {
-                let _ = client.send(ToClient::Write(out.message.to_vec()));
+        // Send what the server produced and do what it asked for, until it has nothing more: doing
+        // what it asked (binding a relay) can make it produce more (the Allocate response).
+        loop {
+            let mut quiet = true;
+            while let Some(out) = server.poll_write() {
+                quiet = false;
+                if let Some(client) = clients.get(&out.transport.peer_addr) {
+                    let _ = client.send(ToClient::Write(out.message.to_vec()));
+                }
             }
-        }
-        while let Some(event) = server.poll_event() {
-            match event {
-                ServerEvent::BindRelayTcp { id, plan } => {
-                    match listen_for_peers(plan.bind, to_server.clone()).await {
-                        Ok((relay, task)) => {
-                            listeners.insert(relay, task);
-                            server.relay_bound(id, relay, Instant::now());
-                        }
-                        Err(err) => {
-                            eprintln!("could not bind a relay at {}: {err}", plan.bind);
-                            server.relay_bind_failed(id, Instant::now());
+            while let Some(event) = server.poll_event() {
+                quiet = false;
+                match event {
+                    ServerEvent::BindRelayTcp { id, plan } => {
+                        match listen_for_peers(plan.bind, to_server.clone()).await {
+                            Ok((relay, task)) => {
+                                listeners.insert(relay, task);
+                                server.relay_bound(id, relay, Instant::now());
+                            }
+                            Err(err) => {
+                                eprintln!("could not bind a relay at {}: {err}", plan.bind);
+                                server.relay_bind_failed(id, Instant::now());
+                            }
                         }
                     }
-                }
-                ServerEvent::ReleaseRelay(relay) => {
-                    if let Some(task) = listeners.remove(&relay) {
-                        task.abort();
-                    }
-                }
-                ServerEvent::ConnectPeer { id, relay, peer } => {
-                    connect_to_peer(id, relay, peer, to_server.clone());
-                }
-                ServerEvent::BindData { id, client, .. } => {
-                    match (peers.remove(&id), clients.get(&client)) {
-                        (Some(peer), Some(connection)) => {
-                            let _ = connection.send(ToClient::Splice(peer));
+                    ServerEvent::ReleaseRelay(relay) => {
+                        if let Some(task) = listeners.remove(&relay) {
+                            task.abort();
                         }
-                        _ => eprintln!("nothing to splice for {id:?}"),
                     }
+                    ServerEvent::ConnectPeer { id, relay, peer } => {
+                        connect_to_peer(id, relay, peer, to_server.clone());
+                    }
+                    ServerEvent::BindData { id, client, .. } => {
+                        match (peers.remove(&id), clients.get(&client)) {
+                            (Some(peer), Some(connection)) => {
+                                let _ = connection.send(ToClient::Splice(peer));
+                            }
+                            _ => eprintln!("nothing to splice for {id:?}"),
+                        }
+                    }
+                    ServerEvent::ClosePeer(id) => {
+                        peers.remove(&id);
+                    }
+                    ServerEvent::AllocationCreated {
+                        user_id,
+                        relayed_addr,
+                        ..
+                    } => {
+                        println!("allocation for {user_id} -> {relayed_addr}");
+                    }
+                    ServerEvent::AllocationDeleted { five_tuple, reason } => {
+                        println!("allocation of {} ended: {reason:?}", five_tuple.client);
+                    }
+                    _ => {}
                 }
-                ServerEvent::ClosePeer(id) => {
-                    peers.remove(&id);
-                }
-                ServerEvent::AllocationCreated {
-                    user_id,
-                    relayed_addr,
-                    ..
-                } => {
-                    println!("allocation for {user_id} -> {relayed_addr}");
-                }
-                ServerEvent::AllocationDeleted { five_tuple, reason } => {
-                    println!("allocation of {} ended: {reason:?}", five_tuple.client);
-                }
-                _ => {}
+            }
+            if quiet {
+                break;
             }
         }
 
