@@ -26,6 +26,7 @@ rand.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 
 [[bench]]
 name = "congestion_control"

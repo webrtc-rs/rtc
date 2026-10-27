@@ -12,6 +12,9 @@ pub(crate) mod receive_log;
 pub(crate) mod responder;
 pub(crate) mod send_buffer;
 
+#[cfg(test)]
+mod pion_golden_test;
+
 use crate::stream_info::StreamInfo;
 
 /// Check if a stream supports NACK feedback.
