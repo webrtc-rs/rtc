@@ -12,6 +12,10 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+# Exposes the TWCC recorder, which the benchmark harness times against pion's, as `bench`.
+bench = []
+
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 sansio.workspace = true

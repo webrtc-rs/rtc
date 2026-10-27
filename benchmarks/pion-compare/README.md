@@ -29,6 +29,12 @@ Needs a Rust toolchain and Go (the pion half is `go/`, pinned in `go/go.mod`).
 | `sdp unmarshal / marshal / codec map` | `SessionDescription` | `sdp.SessionDescription` |
 | `rtcp unmarshal SR+SDES+REMB` | `rtcp::packet::unmarshal` | `rtcp.Unmarshal` |
 | `vp8 / h264 payload 30KB mtu1200` | `Payloader::payload` | `Payloader.Payload` |
+| `dtls handshake`, `dtls app data 1200B` | two in-memory `Endpoint`s, one self-signed ECDSA P-256 certificate | `dtls.Client`/`dtls.Server` over an in-memory packet pipe (`go/pipe.go`) |
+| `sctp message 1200B / 100B` | `Endpoint`/`Association` pair on a zero-latency wire, one message written and read | `sctp.Client`/`sctp.Server` over the same pipe, a reader goroutine |
+| `ice connect, one host pair` | two sans-IO `Agent`s run until `Connected` (virtual clock; no sockets) | two `ice.Agent`s over loopback UDP; **CPU time** per session, because pion's wall time is its check timer. The Rust side excludes socket setup, which the application does. |
+| `twcc record`, `twcc record 100 + build feedback` | `rtc_interceptor::bench::TwccRecorder` (the `bench` feature) | pion's own `BenchmarkRecord` / `BenchmarkRecordAndBuildFeedbackPacket` |
+| `datachannel open parse+marshal` | `Message::unmarshal` then `marshal` of a DCEP `DATA_CHANNEL_OPEN` | `datachannel.TryMarshalUnmarshal` (parse then marshal) |
+| `mdns query build`, `mdns answer query` | `Mdns::query_now` + `poll_write`; `handle_read` + `poll_write` for a local name | `dnsmessage` packing a question; unpacking a question and packing the A answer, as pion/mdns does |
 
 Each pair uses the same input bytes and the same buffer-reuse conventions, so "faster" means the
 same work done in less time. Both programs print `name  N ns/op  N B/op  N allocs/op`; `compare.py`

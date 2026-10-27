@@ -464,3 +464,29 @@ impl<P: Interceptor + ?Sized> Interceptor for &mut P {
         (**self).unbind_remote_stream(info)
     }
 }
+
+/// The TWCC recorder, for `benchmarks/pion-compare`, which times it against pion's. Not part of
+/// the supported API.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench {
+    /// Records packet arrivals and builds TWCC feedback, as pion's `twcc.Recorder` does.
+    pub struct TwccRecorder(crate::twcc::recorder::Recorder);
+
+    impl TwccRecorder {
+        /// A recorder that reports feedback under `sender_ssrc`.
+        pub fn new(sender_ssrc: u32) -> Self {
+            Self(crate::twcc::recorder::Recorder::new(sender_ssrc))
+        }
+
+        /// Notes that packet `sequence_number` of `media_ssrc` arrived at `arrival_time` (µs).
+        pub fn record(&mut self, media_ssrc: u32, sequence_number: u16, arrival_time: i64) {
+            self.0.record(media_ssrc, sequence_number, arrival_time);
+        }
+
+        /// Builds the feedback packets for everything recorded since the last call.
+        pub fn build_feedback_packet(&mut self) -> Vec<Box<dyn rtcp::Packet>> {
+            self.0.build_feedback_packet()
+        }
+    }
+}

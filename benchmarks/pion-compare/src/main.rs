@@ -1,4 +1,6 @@
 mod dtls;
+mod ice;
+mod mdns;
 mod sctp;
 
 use bytes::{Bytes, BytesMut};
@@ -224,8 +226,7 @@ fn main() {
     // SDP
     let sdp = std::fs::read_to_string(&sdp_path).unwrap();
     bench("sdp unmarshal ~chrome offer", sdp.len(), |_| {
-        let mut c = std::io::Cursor::new(sdp.as_bytes());
-        black_box(rtc_sdp::SessionDescription::unmarshal(&mut c).unwrap());
+        black_box(rtc_sdp::SessionDescription::unmarshal_slice(sdp.as_bytes()).unwrap());
     });
     let parsed = rtc_sdp::SessionDescription::unmarshal(&mut std::io::Cursor::new(sdp.as_bytes())).unwrap();
     bench("sdp marshal", sdp.len(), |_| {
@@ -273,6 +274,46 @@ fn main() {
     let mut pair = dtls::Pair::connect(&dtls_cfg);
     let record = vec![0x5au8; 1200];
     bench("dtls app data 1200B", record.len(), |_| pair.send(&record));
+
+    let ice_provider = rtc_ice::crypto::default_provider().expect("a crypto provider");
+    bench("ice connect, one host pair", 0, |_| {
+        black_box(ice::connect(&ice_provider));
+    });
+
+    let mut twcc = rtc_interceptor::bench::TwccRecorder::new(5000);
+    let (mut twcc_at, mut twcc_seq) = (0i64, 0u16);
+    bench("twcc record", 0, |_| {
+        twcc_at += 1000;
+        twcc.record(5000, twcc_seq, twcc_at);
+        twcc_seq = twcc_seq.wrapping_add(1);
+    });
+    let mut twcc = rtc_interceptor::bench::TwccRecorder::new(5000);
+    let (mut twcc_at, mut twcc_seq) = (0i64, 0u16);
+    bench("twcc record 100 + build feedback", 0, |_| {
+        for _ in 0..100 {
+            twcc_at += 1000;
+            twcc.record(5000, twcc_seq, twcc_at);
+            twcc_seq = twcc_seq.wrapping_add(1);
+        }
+        black_box(twcc.build_feedback_packet());
+    });
+
+    // pion/datachannel's fuzz entry `TryMarshalUnmarshal`: parse a DCEP message, marshal it back.
+    let dcep: &[u8] = &[0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, b'c', b'h', b'a', b't'];
+    bench("datachannel open parse+marshal", dcep.len(), |_| {
+        use rtc_datachannel::message::Message;
+        let msg = Message::unmarshal(&mut black_box(dcep)).unwrap();
+        black_box(msg.marshal().unwrap());
+    });
+
+    let mut mdns_client = mdns::Client::new();
+    bench("mdns query build", 0, |_| {
+        black_box(mdns_client.query());
+    });
+    let mut mdns_server = mdns::Server::new();
+    bench("mdns answer query", 0, |_| {
+        black_box(mdns_server.answer());
+    });
 
     let mut assoc = sctp::Association1::new(1200);
     bench("sctp message 1200B", 1200, |_| assoc.transfer());

@@ -4,9 +4,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"testing"
 
+	"github.com/pion/datachannel"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
@@ -188,4 +190,28 @@ func main() {
 
 	benchDTLS()
 	benchSCTP()
+	benchICE()
+	benchInterceptor()
+
+	dcep := []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 'c', 'h', 'a', 't'}
+	report("datachannel open parse+marshal", len(dcep), func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if datachannel.TryMarshalUnmarshal(dcep) != 1 {
+				panic("dcep")
+			}
+		}
+	})
+
+	query := mdnsQuery()
+	addr := netip.MustParseAddr("192.168.1.100")
+	report("mdns query build", 0, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = mdnsQuery()
+		}
+	})
+	report("mdns answer query", len(query), func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = mdnsAnswer(query, addr)
+		}
+	})
 }

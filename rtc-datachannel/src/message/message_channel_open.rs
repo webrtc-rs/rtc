@@ -192,6 +192,21 @@ impl Marshal for DataChannelOpen {
     }
 }
 
+/// The next `len` bytes of `buf`, copied once into a vector of exactly that size (no zero-fill
+/// first, and none at all when `len` is 0). The caller has checked that `len` bytes remain.
+fn take_bytes<B: Buf>(buf: &mut B, len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut left = len;
+    while left > 0 {
+        let chunk = buf.chunk();
+        let n = chunk.len().min(left);
+        out.extend_from_slice(&chunk[..n]);
+        buf.advance(n);
+        left -= n;
+    }
+    out
+}
+
 impl Unmarshal for DataChannelOpen {
     fn unmarshal<B>(buf: &mut B) -> Result<Self>
     where
@@ -219,11 +234,8 @@ impl Unmarshal for DataChannelOpen {
             });
         }
 
-        let mut label = vec![0; label_len];
-        let mut protocol = vec![0; protocol_len];
-
-        buf.copy_to_slice(&mut label[..]);
-        buf.copy_to_slice(&mut protocol[..]);
+        let label = take_bytes(buf, label_len);
+        let protocol = take_bytes(buf, protocol_len);
 
         Ok(Self {
             channel_type,

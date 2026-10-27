@@ -29,6 +29,11 @@ rtc-stun = { path = "../../rtc-stun" }
 rtc-sdp = { path = "../../rtc-sdp" }
 rtc-dtls = { path = "../../rtc-dtls" }
 rtc-sctp = { path = "../../rtc-sctp" }
+rtc-ice = { path = "../../rtc-ice" }
+rtc-datachannel = { path = "../../rtc-datachannel" }
+rtc-interceptor = { path = "../../rtc-interceptor", features = ["bench"] }
+rtc-mdns = { path = "../../rtc-mdns" }
+sansio = "1"
 crypto = { package = "rtc-crypto", path = "../../rtc-crypto", features = ["crypto-ring"] }
 shared = { package = "rtc-shared", path = "../../rtc-shared", features = ["marshal"] }
 bytes = "1"

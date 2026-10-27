@@ -74,18 +74,31 @@ GATES = {
     # Parity: ring's AES-GCM and Go's assembly GCM are within a few percent of each other.
     "srtp gcm-128 encrypt 1200B": gap(max_ratio=1.4, max_allocs=0),
     "stun decode+getters+integrity": win(max_allocs=2),
-    "stun build binding request": win(max_allocs=6),
-    "sdp unmarshal ~chrome offer": win(max_allocs=219),
+    "stun build binding request": win(max_allocs=3),
+    # Faster than pion; allocations are within 1.3x (long attribute values each own a string).
+    "sdp unmarshal ~chrome offer": win(max_allocs=87),
     "sdp marshal": win(max_allocs=1),
     "sdp codec map": win(max_allocs=577),
     "rtcp unmarshal SR+SDES+REMB": gap(max_ratio=2.0, max_allocs=9),
     "vp8 payload 30KB mtu1200": win(max_allocs=32),
     "h264 payload 30KB mtu1200": win(max_allocs=32),
+    "dtls handshake ecdsa-p256 gcm": win(max_allocs=785),
+    "dtls app data 1200B": win(max_allocs=17),
+    "ice connect, one host pair": win(max_allocs=320),
+    "twcc record": win(max_allocs=0),
+    "twcc record 100 + build feedback": win(max_allocs=15),
+    # Two tiny allocations each side; the ratio is the platform malloc's price (see rtcp above).
+    "datachannel open parse+marshal": gap(max_ratio=2.0, max_allocs=2),
+    "mdns query build": win(max_allocs=3),
+    "mdns answer query": win(max_allocs=5),
+    "sctp message 1200B": win(max_allocs=17),
+    "sctp message 100B": win(max_allocs=12),
 }
 
 # What changes when the Rust side runs on mimalloc.
 OVERRIDES_MIMALLOC = {
     "rtcp unmarshal SR+SDES+REMB": win(max_allocs=9),
+    "datachannel open parse+marshal": win(max_allocs=2),
 }
 
 
