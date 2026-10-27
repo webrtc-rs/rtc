@@ -27,6 +27,9 @@ pub const DEF_EXT_MAP_VALUE_SDES_MID: usize = 3;
 /// The default id assigned to the SDES RTP stream id extension.
 pub const DEF_EXT_MAP_VALUE_SDES_RTP_STREAM_ID: usize = 4;
 
+/// The absolute-capture-time extension URI, relating a packet to its original capture clock.
+pub const ABS_CAPTURE_TIME_URI: &str =
+    "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time";
 /// The absolute-send-time extension URI, used for bandwidth estimation.
 pub const ABS_SEND_TIME_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time";
 /// The transport-wide congestion control extension URI.
@@ -42,6 +45,8 @@ pub const SDES_REPAIR_RTP_STREAM_ID_URI: &str =
 
 /// The audio-level extension URI, carrying per-packet loudness.
 pub const AUDIO_LEVEL_URI: &str = "urn:ietf:params:rtp-hdrext:ssrc-audio-level";
+/// The full-resolution NTP-64 timestamp extension URI.
+pub const NTP_64_URI: &str = "urn:ietf:params:rtp-hdrext:ntp-64";
 /// The video-orientation (CVO) extension URI, carrying rotation flags.
 pub const VIDEO_ORIENTATION_URI: &str = "urn:3gpp:video-orientation";
 
