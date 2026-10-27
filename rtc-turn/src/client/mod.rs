@@ -38,9 +38,9 @@ use binding::*;
 use transaction::*;
 
 use crate::client::relay::{Relay, RelayState};
-use crate::proto::PROTO_UDP;
 use crate::proto::chandata::*;
 use crate::proto::channum::ChannelNumber;
+use crate::proto::connid::ConnectionId;
 use crate::proto::data::*;
 use crate::proto::evenport::EvenPort;
 use crate::proto::lifetime::Lifetime;
@@ -49,6 +49,7 @@ use crate::proto::relayaddr::RelayedAddress;
 use crate::proto::reqfamily::{REQUESTED_FAMILY_IPV4, REQUESTED_FAMILY_IPV6};
 use crate::proto::reqtrans::RequestedTransport;
 use crate::proto::rsrvtoken::ReservationToken;
+use crate::proto::{PROTO_TCP, PROTO_UDP, Protocol};
 use shared::error::{Error, Result};
 use shared::util::lookup_host;
 use shared::{TransportContext, TransportMessage, TransportProtocol};
@@ -103,6 +104,29 @@ pub enum Event {
     /// The channel number is `Some` when it came as ChannelData and `None` when it came as a
     /// Data indication.
     DataIndicationOrChannelData(Option<ChannelNumber>, PeerAddr, BytesMut),
+
+    /// A `Connect` succeeded ([RFC 6062 §5.2]): the server opened a TCP connection to the peer
+    /// and names it with this id. Open a new TCP connection to the server and bind it with
+    /// [`Relay::connection_bind`].
+    ///
+    /// [RFC 6062 §5.2]: https://www.rfc-editor.org/rfc/rfc6062#section-5.2
+    ConnectResponse(TransactionId, PeerAddr, ConnectionId),
+    /// A `Connect` failed — the peer could not be reached (`447`), or a connection to it already
+    /// exists (`446`).
+    ConnectError(TransactionId, Error),
+    /// A `ConnectionBind` succeeded ([RFC 6062 §5.4]): the connection it was sent on is now the
+    /// data connection to the peer, and carries the peer's bytes from here on. Stop giving it to
+    /// this client.
+    ///
+    /// [RFC 6062 §5.4]: https://www.rfc-editor.org/rfc/rfc6062#section-5.4
+    ConnectionBindResponse(TransactionId, ConnectionId),
+    /// A `ConnectionBind` failed; the connection it was sent on should be closed.
+    ConnectionBindError(TransactionId, Error),
+    /// A peer connected to the relayed address ([RFC 6062 §5.5]). Open a new TCP connection to
+    /// the server and bind it with [`Relay::connection_bind`] to accept it.
+    ///
+    /// [RFC 6062 §5.5]: https://www.rfc-editor.org/rfc/rfc6062#section-5.5
+    ConnectionAttempt(ConnectionId, PeerAddr),
 }
 
 enum AllocateState {
@@ -202,6 +226,10 @@ pub struct Client {
     allocation_refresh_interval_cap: Option<Duration>,
 
     allocate_options: AllocateOptions,
+    /// What the Allocate in progress asks the relay to speak: UDP, or TCP ([RFC 6062]).
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    allocate_protocol: Protocol,
     relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
     events: VecDeque<Event>,
@@ -249,6 +277,7 @@ impl Client {
             },
             allocation_refresh_interval_cap: config.allocation_refresh_interval_cap,
             allocate_options: AllocateOptions::default(),
+            allocate_protocol: PROTO_UDP,
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -309,6 +338,17 @@ impl Client {
         }
 
         if msg.typ.class == CLASS_INDICATION {
+            if msg.typ.method == METHOD_CONNECTION_ATTEMPT {
+                let mut connection_id = ConnectionId::default();
+                connection_id.get_from(&msg)?;
+                let mut peer_addr = PeerAddress::default();
+                peer_addr.get_from(&msg)?;
+                self.events.push_back(Event::ConnectionAttempt(
+                    connection_id,
+                    SocketAddr::new(peer_addr.ip, peer_addr.port),
+                ));
+                return Ok(());
+            }
             if msg.typ.method == METHOD_DATA {
                 let mut peer_addr = PeerAddress::default();
                 peer_addr.get_from(&msg)?;
@@ -400,6 +440,28 @@ impl Client {
                             client: self,
                         };
                         relay.handle_channel_bind_response(now, msg, bind_addr)?;
+                    }
+                }
+                METHOD_CONNECT => {
+                    if let TransactionType::ConnectRequest(relayed_addr, peer_addr) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_connect_response(msg, peer_addr)?;
+                    }
+                }
+                METHOD_CONNECTION_BIND => {
+                    if let TransactionType::ConnectionBindRequest(relayed_addr, connection_id) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_connection_bind_response(msg, connection_id)?;
                     }
                 }
                 _ => {}
@@ -628,6 +690,35 @@ impl Client {
         now: Instant,
         options: AllocateOptions,
     ) -> Result<TransactionId> {
+        self.allocate_with_protocol(now, options, PROTO_UDP)
+    }
+
+    /// Asks for a TCP allocation ([RFC 6062]): a relayed address peers connect to over TCP, and
+    /// that the server connects from to peers named in [`Relay::connect`].
+    ///
+    /// The client must reach the server over TCP ([`ClientConfig::transport_protocol`]), and the
+    /// allocation takes no [`AllocateOptions`] that name a datagram port.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the client talks to the server over UDP, or if the request cannot be encoded.
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    pub fn allocate_tcp(&mut self, now: Instant) -> Result<TransactionId> {
+        if self.transport_protocol != TransportProtocol::TCP {
+            return Err(Error::Other(
+                "a TCP allocation is asked for over a TCP connection to the server".to_owned(),
+            ));
+        }
+        self.allocate_with_protocol(now, AllocateOptions::default(), PROTO_TCP)
+    }
+
+    fn allocate_with_protocol(
+        &mut self,
+        now: Instant,
+        options: AllocateOptions,
+        protocol: Protocol,
+    ) -> Result<TransactionId> {
         if options.reservation_token.is_some()
             && (options.even_port.is_some() || options.address_family.is_some())
         {
@@ -636,16 +727,14 @@ impl Client {
             ));
         }
         self.allocate_options = options;
+        self.allocate_protocol = protocol;
         let mut msg = Message::new();
         let mut setters: Vec<Box<dyn Setter + '_>> = vec![
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
-            Box::new(RequestedTransport {
-                // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
-                // names what the allocation relays, not the client-to-server transport
-                // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
-                protocol: PROTO_UDP,
-            }),
+            // REQUESTED-TRANSPORT names what the allocation relays, not the client-to-server
+            // transport (RFC 8656 §7.1): UDP unless a TCP allocation was asked for (RFC 6062).
+            Box::new(RequestedTransport { protocol }),
         ];
         setters.extend(self.allocate_option_setters());
         setters.push(Box::new(FINGERPRINT));
@@ -726,10 +815,7 @@ impl Client {
                     Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
-                        // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
-                        // names what the allocation relays, not the client-to-server transport
-                        // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
-                        protocol: PROTO_UDP,
+                        protocol: self.allocate_protocol,
                     }),
                 ];
                 setters.extend(self.allocate_option_setters());
@@ -865,12 +951,25 @@ impl Client {
         to: SocketAddr,
         transaction_type: TransactionType,
     ) -> TransactionId {
+        self.perform_transaction_from(now, msg, self.local_addr, to, transaction_type)
+    }
+
+    /// As [`perform_transaction`](Self::perform_transaction), from `local_addr`: a `ConnectionBind`
+    /// goes out on a connection of its own, not on the one the allocation lives on.
+    fn perform_transaction_from(
+        &mut self,
+        now: Instant,
+        msg: &Message,
+        local_addr: SocketAddr,
+        to: SocketAddr,
+        transaction_type: TransactionType,
+    ) -> TransactionId {
         let tr = Transaction::new(TransactionConfig {
             now,
             transaction_id: msg.transaction_id,
             transaction_type,
             raw: BytesMut::from(&msg.raw[..]),
-            local_addr: self.local_addr,
+            local_addr,
             peer_addr: to,
             transport_protocol: self.transport_protocol,
             interval: self.rto_in_ms,
@@ -882,7 +981,16 @@ impl Client {
         );
         self.tr_map.insert(msg.transaction_id, tr);
 
-        self.write_to(now, &msg.raw, to);
+        self.transmits.push_back(TransportMessage {
+            now,
+            transport: TransportContext {
+                local_addr,
+                peer_addr: to,
+                transport_protocol: self.transport_protocol,
+                ecn: None,
+            },
+            message: BytesMut::from(&msg.raw[..]),
+        });
 
         msg.transaction_id
     }

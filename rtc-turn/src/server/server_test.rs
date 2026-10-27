@@ -416,8 +416,9 @@ fn garbage_and_unknown_requests_do_not_disturb_the_server() {
     net.deliver(client_addr(), &[0, 1, 0, 200, 1, 2, 3]);
     net.deliver(client_addr(), &channel_data(0x4000, b"nobody"));
     net.assert_silent();
-    // A request for a method the server does not have is a Bad Request.
-    let reply = net.exchange(&request(METHOD_CONNECT, vec![]));
+    // A request for a method the server does not have is a Bad Request. ConnectionAttempt exists
+    // only as an indication (RFC 6062 §5.5), so as a request it is such a method.
+    let reply = net.exchange(&request(METHOD_CONNECTION_ATTEMPT, vec![]));
     assert_eq!(error_code(&reply), 400);
 }
 

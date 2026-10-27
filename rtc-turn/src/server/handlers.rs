@@ -18,9 +18,10 @@ use super::allocation::Allocation;
 use super::allocation::{Channel, FiveTuple};
 use super::auth::AuthRequest;
 use super::relay::RelayFamily;
+use super::tcp::{PeerConn, PeerConnId, PeerStage};
 use super::{PendingAllocation, RelayId, Server, ServerEvent, Stage, Timer};
-use crate::proto::PROTO_UDP;
 use crate::proto::channum::ChannelNumber;
+use crate::proto::connid::ConnectionId;
 use crate::proto::data::Data;
 use crate::proto::evenport::EvenPort;
 use crate::proto::lifetime::Lifetime;
@@ -28,6 +29,7 @@ use crate::proto::peeraddr::PeerAddress;
 use crate::proto::relayaddr::RelayedAddress;
 use crate::proto::reqtrans::RequestedTransport;
 use crate::proto::rsrvtoken::ReservationToken;
+use crate::proto::{PROTO_TCP, PROTO_UDP};
 
 /// A request's author, once their credentials checked out.
 struct Authed {
@@ -55,6 +57,7 @@ const UNDERSTOOD: &[AttrType] = &[
     ATTR_REQUESTED_TRANSPORT,
     ATTR_DONT_FRAGMENT,
     ATTR_RESERVATION_TOKEN,
+    ATTR_CONNECTION_ID,
     ATTR_REQUESTED_ADDRESS_FAMILY,
     ATTR_MESSAGE_INTEGRITY_SHA256,
     ATTR_PASSWORD_ALGORITHM,
@@ -170,7 +173,7 @@ impl Server {
         self.respond(now, ctx, req, CLASS_ERROR_RESPONSE, attrs, key);
     }
 
-    fn reply_success(
+    pub(super) fn reply_success(
         &mut self,
         now: Instant,
         ctx: &TransportContext,
@@ -296,7 +299,12 @@ impl Server {
             (CLASS_REQUEST, METHOD_BINDING) => self.handle_binding(now, ctx, &m),
             (
                 CLASS_REQUEST,
-                METHOD_ALLOCATE | METHOD_REFRESH | METHOD_CREATE_PERMISSION | METHOD_CHANNEL_BIND,
+                METHOD_ALLOCATE
+                | METHOD_REFRESH
+                | METHOD_CREATE_PERMISSION
+                | METHOD_CHANNEL_BIND
+                | METHOD_CONNECT
+                | METHOD_CONNECTION_BIND,
             ) if !can_relay => {
                 // A STUN-only server has no relays to offer.
                 self.reply_error(now, ctx, &m, CODE_BAD_REQUEST, Vec::new(), None);
@@ -307,6 +315,10 @@ impl Server {
                 self.handle_create_permission(now, ctx, &mut m)
             }
             (CLASS_REQUEST, METHOD_CHANNEL_BIND) => self.handle_channel_bind(now, ctx, &mut m),
+            (CLASS_REQUEST, METHOD_CONNECT) => self.handle_connect(now, ctx, &mut m),
+            (CLASS_REQUEST, METHOD_CONNECTION_BIND) => {
+                self.handle_connection_bind(now, ctx, &mut m)
+            }
             (CLASS_REQUEST, _) => {
                 self.reply_error(now, ctx, &m, CODE_BAD_REQUEST, Vec::new(), None);
             }
@@ -372,7 +384,15 @@ impl Server {
             self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
             return;
         }
-        if transport.protocol != PROTO_UDP {
+        // RFC 6062 §4.1: a TCP allocation is asked for over a TCP control connection, and takes
+        // none of the options that name a datagram port.
+        let tcp = transport.protocol == PROTO_TCP;
+        let unsupported = match transport.protocol {
+            PROTO_UDP => false,
+            PROTO_TCP => ctx.transport_protocol != shared::TransportProtocol::TCP,
+            _ => true,
+        };
+        if unsupported {
             self.reply_error(
                 now,
                 ctx,
@@ -381,6 +401,10 @@ impl Server {
                 Vec::new(),
                 Some(&auth.key),
             );
+            return;
+        }
+        if tcp && (m.contains(ATTR_EVEN_PORT) || m.contains(ATTR_RESERVATION_TOKEN)) {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
             return;
         }
         if m.contains(ATTR_DONT_FRAGMENT) {
@@ -509,13 +533,18 @@ impl Server {
                 reply_to: *ctx,
                 timer,
                 even,
+                tcp,
                 reserve,
                 attempts: 0,
                 stage: Stage::Relay,
             },
         );
         self.pending_by_tuple.insert(five, id);
-        self.events.push_back(ServerEvent::BindRelay { id, plan });
+        self.events.push_back(if tcp {
+            ServerEvent::BindRelayTcp { id, plan }
+        } else {
+            ServerEvent::BindRelay { id, plan }
+        });
     }
 
     /// The family of relay an Allocate that names none gets: IPv4 under [RFC 6156]'s rule, or
@@ -578,6 +607,7 @@ impl Server {
                 family: reservation.family,
                 allocate_tid: m.transaction_id,
                 reservation_token: None,
+                tcp: false,
                 expires,
                 permissions: Default::default(),
                 channels: Default::default(),
@@ -801,6 +831,11 @@ impl Server {
         let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
             return;
         };
+        // RFC 6062 §4.? : channels carry datagrams, which a TCP allocation does not relay.
+        if self.allocations[&five].tcp {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
+            return;
+        }
         let mut number = ChannelNumber::default();
         let mut peer = PeerAddress::default();
         if number.get_from(m).is_err() || !number.valid() || peer.get_from(m).is_err() {
@@ -867,6 +902,9 @@ impl Server {
         let Some(allocation) = self.allocations.get(&five) else {
             return;
         };
+        if allocation.tcp {
+            return;
+        }
         let Some(peers) = peer_addresses(m) else {
             return;
         };
@@ -895,6 +933,9 @@ impl Server {
         let Some(allocation) = self.allocations.get(&five) else {
             return;
         };
+        if allocation.tcp {
+            return;
+        }
         let number = u16::from_be_bytes([data[0], data[1]]);
         let length = u16::from_be_bytes([data[2], data[3]]) as usize;
         let Some(payload) = data.get(4..4 + length) else {
@@ -908,6 +949,129 @@ impl Server {
         }
         let (relay, peer) = (allocation.relay, channel.peer);
         self.relay_to_peer(now, relay, peer, payload.to_vec());
+    }
+
+    /// `Connect` ([RFC 6062 §5.2]): open a TCP connection from the relay to a peer.
+    ///
+    /// [RFC 6062 §5.2]: https://www.rfc-editor.org/rfc/rfc6062#section-5.2
+    fn handle_connect(&mut self, now: Instant, ctx: &TransportContext, m: &mut Message) {
+        let Some(auth) = self.authenticate(now, ctx, m) else {
+            return;
+        };
+        let Some(five) = self.owned_allocation(now, ctx, m, &auth) else {
+            return;
+        };
+        if !self.allocations[&five].tcp {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
+            return;
+        }
+        let peer = match peer_addresses(m).as_deref() {
+            Some([peer]) => *peer,
+            _ => {
+                self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
+                return;
+            }
+        };
+        if !self.allocations[&five].family.matches(peer.ip()) {
+            self.reply_error(
+                now,
+                ctx,
+                m,
+                CODE_PEER_ADDR_FAMILY_MISMATCH,
+                Vec::new(),
+                Some(&auth.key),
+            );
+            return;
+        }
+        if !self.peer_allowed(now, ctx, m, &auth, peer.ip()) {
+            return;
+        }
+        // One connection per peer at a time, whether still being opened or already open (446).
+        if self
+            .tcp_peers
+            .values()
+            .any(|c| c.five == five && c.peer == peer)
+        {
+            self.reply_error(
+                now,
+                ctx,
+                m,
+                CODE_CONN_ALREADY_EXISTS,
+                Vec::new(),
+                Some(&auth.key),
+            );
+            return;
+        }
+        // Connecting to a peer is itself the permission to hear from it.
+        let permitted_until = now + self.permission_lifetime;
+        self.install_permission(&five, peer.ip(), permitted_until);
+
+        let relay = self.allocations[&five].relay;
+        let id = PeerConnId(self.next_peer_id);
+        self.next_peer_id += 1;
+        let timer = self.schedule(
+            now + super::tcp::CONNECTION_BIND_TIMEOUT,
+            Timer::TcpPeer(id),
+        );
+        self.tcp_peers.insert(
+            id,
+            PeerConn {
+                five,
+                user_id: auth.user_id,
+                relay,
+                peer,
+                connection_id: 0,
+                stage: PeerStage::Connecting {
+                    request: std::mem::take(m),
+                    reply_to: *ctx,
+                    key: auth.key,
+                },
+                timer: Some(timer),
+            },
+        );
+        self.events
+            .push_back(ServerEvent::ConnectPeer { id, relay, peer });
+    }
+
+    /// `ConnectionBind` ([RFC 6062 §5.4]), on a new client connection: attach it to the peer
+    /// connection the id names.
+    ///
+    /// [RFC 6062 §5.4]: https://www.rfc-editor.org/rfc/rfc6062#section-5.4
+    fn handle_connection_bind(&mut self, now: Instant, ctx: &TransportContext, m: &mut Message) {
+        let Some(auth) = self.authenticate(now, ctx, m) else {
+            return;
+        };
+        let mut connection_id = ConnectionId::default();
+        if connection_id.get_from(m).is_err() {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
+            return;
+        }
+        // The credentials must be the allocation's own: an id is not a capability.
+        let id = self
+            .tcp_by_connection_id
+            .get(&connection_id.0)
+            .copied()
+            .filter(|id| {
+                self.tcp_peers.get(id).is_some_and(|c| {
+                    c.user_id == auth.user_id && matches!(c.stage, PeerStage::Waiting)
+                })
+            });
+        let Some(id) = id else {
+            self.reply_error(now, ctx, m, CODE_BAD_REQUEST, Vec::new(), Some(&auth.key));
+            return;
+        };
+        if let Some(conn) = self.tcp_peers.get_mut(&id) {
+            conn.stage = PeerStage::Bound;
+            if let Some(timer) = conn.timer.take() {
+                self.timers.remove(&timer);
+            }
+        }
+        self.reply_success(now, ctx, m, vec![Box::new(connection_id)], Some(&auth.key));
+        self.events.push_back(ServerEvent::BindData {
+            id,
+            client: ctx.peer_addr,
+            server: ctx.local_addr,
+        });
     }
 
     fn relay_to_peer(

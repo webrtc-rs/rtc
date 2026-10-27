@@ -17,6 +17,8 @@ pub mod addr;
 pub mod chandata;
 /// The `CHANNEL-NUMBER` attribute.
 pub mod channum;
+/// The `CONNECTION-ID` attribute of RFC 6062, which names a peer data connection.
+pub mod connid;
 /// The `DATA` attribute, which carries relayed payloads in Send/Data indications.
 pub mod data;
 /// The `DONT-FRAGMENT` attribute, asking the server to set DF on relayed packets.

@@ -43,6 +43,10 @@ pub(crate) struct Allocation {
     /// The token for the port reserved beside this relay, if one was asked for; repeated in the
     /// answer to a retransmitted Allocate.
     pub(crate) reservation_token: Option<[u8; 8]>,
+    /// A TCP allocation ([RFC 6062]): peers are reached over TCP connections, not datagrams.
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    pub(crate) tcp: bool,
     pub(crate) expires: Instant,
     /// Peer IP address -> when its permission lapses. Permissions are per IP, not per port.
     pub(crate) permissions: HashMap<IpAddr, Instant>,

@@ -13,6 +13,7 @@ use stun::textattrs::*;
 use super::permission::*;
 use super::transaction::*;
 use crate::proto;
+use crate::proto::connid::ConnectionId;
 
 use crate::client::binding::BindingState;
 use crate::client::{Client, Event, RelayedAddr};
@@ -307,6 +308,158 @@ impl Relay<'_> {
     /// Fails if the refresh request cannot be sent.
     pub fn close(&mut self, now: Instant) -> Result<()> {
         self.refresh_allocation(now, Duration::from_secs(0))
+    }
+
+    /// Asks the server to open a TCP connection from the relayed address to `peer` ([RFC 6062
+    /// §5.2]). Needs a TCP allocation ([`Client::allocate_tcp`]) and a permission for `peer`, which
+    /// the request itself grants. The answer is [`Event::ConnectResponse`] or
+    /// [`Event::ConnectError`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the allocation no longer exists or the request cannot be encoded.
+    ///
+    /// [RFC 6062 §5.2]: https://www.rfc-editor.org/rfc/rfc6062#section-5.2
+    pub fn connect(&mut self, now: Instant, peer: SocketAddr) -> Result<TransactionId> {
+        let (username, realm) = (self.client.username(), self.client.realm());
+        let Some(relay) = self.client.relays.get(&self.relayed_addr) else {
+            return Err(Error::ErrConnClosed);
+        };
+        let msg = {
+            let setters: Vec<Box<dyn Setter + '_>> = vec![
+                Box::new(TransactionId::new()),
+                Box::new(MessageType::new(METHOD_CONNECT, CLASS_REQUEST)),
+                Box::new(proto::peeraddr::PeerAddress {
+                    ip: peer.ip(),
+                    port: peer.port(),
+                }),
+                Box::new(username),
+                Box::new(realm),
+                Box::new(relay.nonce.clone()),
+                Box::new(MessageIntegrity::new_raw_integrity_with_provider(
+                    relay.long_term_integrity_key.clone(),
+                    self.client.crypto_provider.crypto(),
+                )),
+                Box::new(FINGERPRINT),
+            ];
+            let mut msg = Message::new();
+            msg.build(&setters)?;
+            msg
+        };
+        Ok(self.client.perform_transaction(
+            now,
+            &msg,
+            self.client.turn_server_addr()?,
+            TransactionType::ConnectRequest(self.relayed_addr, peer),
+        ))
+    }
+
+    /// Binds the TCP connection from `local_addr` to the server to the peer connection
+    /// `connection_id` names ([RFC 6062 §5.4]): send this on a *new* connection to the server,
+    /// opened after a [`Event::ConnectResponse`] or [`Event::ConnectionAttempt`]. The request
+    /// leaves through [`poll_write`](sansio::Protocol::poll_write) with `local_addr` as its local
+    /// address; the answer, read from that connection, is [`Event::ConnectionBindResponse`] or
+    /// [`Event::ConnectionBindError`]. After a success the connection carries the peer's bytes
+    /// and must not be given to the client again.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the allocation no longer exists or the request cannot be encoded.
+    ///
+    /// [RFC 6062 §5.4]: https://www.rfc-editor.org/rfc/rfc6062#section-5.4
+    pub fn connection_bind(
+        &mut self,
+        now: Instant,
+        connection_id: ConnectionId,
+        local_addr: SocketAddr,
+    ) -> Result<TransactionId> {
+        let (username, realm) = (self.client.username(), self.client.realm());
+        let Some(relay) = self.client.relays.get(&self.relayed_addr) else {
+            return Err(Error::ErrConnClosed);
+        };
+        let msg = {
+            let setters: Vec<Box<dyn Setter + '_>> = vec![
+                Box::new(TransactionId::new()),
+                Box::new(MessageType::new(METHOD_CONNECTION_BIND, CLASS_REQUEST)),
+                Box::new(connection_id),
+                Box::new(username),
+                Box::new(realm),
+                Box::new(relay.nonce.clone()),
+                Box::new(MessageIntegrity::new_raw_integrity_with_provider(
+                    relay.long_term_integrity_key.clone(),
+                    self.client.crypto_provider.crypto(),
+                )),
+                Box::new(FINGERPRINT),
+            ];
+            let mut msg = Message::new();
+            msg.build(&setters)?;
+            msg
+        };
+        Ok(self.client.perform_transaction_from(
+            now,
+            &msg,
+            local_addr,
+            self.client.turn_server_addr()?,
+            TransactionType::ConnectionBindRequest(self.relayed_addr, connection_id.0),
+        ))
+    }
+
+    pub(super) fn handle_connect_response(&mut self, res: Message, peer: SocketAddr) -> Result<()> {
+        if res.typ.class == CLASS_ERROR_RESPONSE {
+            let err = self.error_of(&res);
+            self.client
+                .events
+                .push_back(Event::ConnectError(res.transaction_id, err));
+            return Ok(());
+        }
+        let mut connection_id = ConnectionId::default();
+        match connection_id.get_from(&res) {
+            Ok(()) => self.client.events.push_back(Event::ConnectResponse(
+                res.transaction_id,
+                peer,
+                connection_id,
+            )),
+            Err(err) => self
+                .client
+                .events
+                .push_back(Event::ConnectError(res.transaction_id, err)),
+        }
+        Ok(())
+    }
+
+    pub(super) fn handle_connection_bind_response(
+        &mut self,
+        res: Message,
+        connection_id: u32,
+    ) -> Result<()> {
+        if res.typ.class == CLASS_ERROR_RESPONSE {
+            let err = self.error_of(&res);
+            self.client
+                .events
+                .push_back(Event::ConnectionBindError(res.transaction_id, err));
+        } else {
+            self.client.events.push_back(Event::ConnectionBindResponse(
+                res.transaction_id,
+                ConnectionId(connection_id),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The error an error response carries; a stale nonce refreshes the one this allocation signs
+    /// with, so a retry can succeed.
+    fn error_of(&mut self, res: &Message) -> Error {
+        let mut code = ErrorCodeAttribute::default();
+        if code.get_from(res).is_err() {
+            return Error::Other(format!("{}", res.typ));
+        }
+        if code.code == CODE_STALE_NONCE {
+            if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+                relay.set_nonce_from_msg(res);
+            }
+            return Error::ErrTryAgain;
+        }
+        Error::Other(format!("{} (error {})", res.typ, code))
     }
 
     fn create_permissions(

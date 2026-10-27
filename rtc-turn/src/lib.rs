@@ -19,6 +19,20 @@
 //!   `CREATE-PERMISSION`, `CHANNEL-BIND`, `XOR-RELAYED-ADDRESS`, ChannelData framing),
 //!   built on [`rtc-stun`].
 //!
+//! # TCP allocations
+//!
+//! Both halves also speak [RFC 6062]: [`Client::allocate_tcp`](client::Client::allocate_tcp) asks for
+//! a relay that talks TCP to peers, [`Relay::connect`](client::relay::Relay::connect) has the server
+//! connect to a peer, and [`Relay::connection_bind`](client::relay::Relay::connection_bind) attaches
+//! a new client connection to it. The server hands the socket work to the application through
+//! [`ServerEvent`](server::ServerEvent)s (`BindRelayTcp`, `ConnectPeer`, `BindData`, `ClosePeer`)
+//! and learns the outcome from [`peer_connected`](server::Server::peer_connected),
+//! [`peer_connect_failed`](server::Server::peer_connect_failed) and
+//! [`peer_accepted`](server::Server::peer_accepted); see the [`server`] module's `PeerConnId` for
+//! the whole flow.
+//!
+//! [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+//!
 //! # Example
 //!
 //! A client is configured with the server to allocate from and the long-term credentials to

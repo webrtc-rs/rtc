@@ -24,6 +24,10 @@ pub(crate) enum TransactionType {
     CreatePermissionRequest(RelayedAddr, Option<SocketAddr>),
     RefreshRequest(RelayedAddr),
     ChannelBindRequest(RelayedAddr, SocketAddr),
+    /// A `Connect` towards this peer, on the allocation at this relayed address.
+    ConnectRequest(RelayedAddr, SocketAddr),
+    /// A `ConnectionBind` for this connection id, on the allocation at this relayed address.
+    ConnectionBindRequest(RelayedAddr, u32),
 }
 
 // TransactionConfig is a set of config params used by NewTransaction

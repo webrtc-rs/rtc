@@ -66,10 +66,14 @@ pub use auth::{
     AuthCredentials, AuthHandler, AuthRequest, LongTermCredentials, PermissionHandler,
     QuotaHandler, generate_auth_key,
 };
+mod tcp;
+#[cfg(test)]
+mod tcp_test;
 pub use relay::{
     RelayAddressGenerator, RelayAddressGeneratorNone, RelayAddressGeneratorPortRange,
     RelayAddressGeneratorStatic, RelayFamily, RelayPlan,
 };
+pub use tcp::{CONNECTION_BIND_TIMEOUT, PeerConnId};
 
 /// How long a permission lasts without a refresh ([RFC 8656 §9]).
 ///
@@ -196,6 +200,45 @@ pub enum ServerEvent {
         /// Where to bind, and the address that will be advertised.
         plan: RelayPlan,
     },
+    /// Like [`BindRelay`](Self::BindRelay), for a TCP allocation ([RFC 6062]): bind a TCP
+    /// listener at `plan.bind`, with address reuse so that connections to peers can be opened from
+    /// the same local address. Report it with [`relay_bound`](Server::relay_bound) (or
+    /// [`relay_bind_failed`](Server::relay_bind_failed)), and report each connection a peer opens
+    /// to it with [`peer_accepted`](Server::peer_accepted). See [`PeerConnId`] for the rest of the
+    /// flow.
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    BindRelayTcp {
+        /// Quote this back when reporting.
+        id: RelayId,
+        /// Where to bind, and the address that will be advertised.
+        plan: RelayPlan,
+    },
+    /// Open a TCP connection from `relay` (the local address of a TCP allocation's listener) to
+    /// `peer`, then report it with [`peer_connected`](Server::peer_connected) or
+    /// [`peer_connect_failed`](Server::peer_connect_failed).
+    ConnectPeer {
+        /// Quote this back when reporting.
+        id: PeerConnId,
+        /// The local address to connect from.
+        relay: SocketAddr,
+        /// The peer to connect to.
+        peer: SocketAddr,
+    },
+    /// A client connection (`client` to `server`) has been bound to the peer connection `id`:
+    /// splice the two, copying bytes both ways, and close both when either closes. The server
+    /// is not given the bytes of that client connection again.
+    BindData {
+        /// The peer connection.
+        id: PeerConnId,
+        /// The client's end of the data connection.
+        client: SocketAddr,
+        /// The server's end of the data connection.
+        server: SocketAddr,
+    },
+    /// Close the peer connection `id`: its allocation ended, or no data connection was bound to it
+    /// in time.
+    ClosePeer(PeerConnId),
     /// Close the relay socket bound at this address: its allocation ended.
     ReleaseRelay(SocketAddr),
     /// A client obtained an allocation.
@@ -247,6 +290,8 @@ struct PendingAllocation {
     timer: (Instant, u64),
     /// The request asked for an even port.
     even: bool,
+    /// The request asked for a TCP allocation.
+    tcp: bool,
     /// The request asked for the next port up to be reserved.
     reserve: bool,
     /// How many plans have been tried for an even port.
@@ -269,6 +314,7 @@ enum Timer {
     Channel(FiveTuple, u16),
     PendingRelay(RelayId),
     Reservation([u8; 8]),
+    TcpPeer(PeerConnId),
 }
 
 /// The Sans-I/O TURN server; see the [module documentation](self).
@@ -297,6 +343,9 @@ pub struct Server {
     /// The local address of each socket holding a reserved port -> its token.
     held: HashMap<SocketAddr, [u8; 8]>,
     next_relay_id: u64,
+    tcp_peers: HashMap<PeerConnId, tcp::PeerConn>,
+    tcp_by_connection_id: HashMap<u32, PeerConnId>,
+    next_peer_id: u64,
     timers: BTreeMap<(Instant, u64), Timer>,
     timer_seq: u64,
 
@@ -340,6 +389,9 @@ impl Server {
             reservations: HashMap::new(),
             held: HashMap::new(),
             next_relay_id: 1,
+            tcp_peers: HashMap::new(),
+            tcp_by_connection_id: HashMap::new(),
+            next_peer_id: 1,
             timers: BTreeMap::new(),
             timer_seq: 0,
             transmits: VecDeque::new(),
@@ -389,6 +441,7 @@ impl Server {
                     family: pending.family,
                     allocate_tid: pending.request.transaction_id,
                     reservation_token: None,
+                    tcp: pending.tcp,
                     expires: now + pending.lifetime,
                     permissions: HashMap::new(),
                     channels: HashMap::new(),
@@ -517,6 +570,7 @@ impl Server {
             return false;
         };
         self.by_relay.remove(&allocation.relay);
+        self.close_peers_of(five);
         self.events
             .push_back(ServerEvent::ReleaseRelay(allocation.relay));
         self.events.push_back(ServerEvent::AllocationDeleted {
@@ -700,6 +754,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Server {
                         self.fail_pending(now, pending, false);
                     }
                 }
+                Timer::TcpPeer(id) => self.tcp_peer_timeout(id, now),
                 Timer::Reservation(token) => {
                     if self
                         .reservations
@@ -731,6 +786,8 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Server {
                 .push_back(ServerEvent::ReleaseRelay(reservation.relay));
         }
         self.held.clear();
+        self.tcp_peers.clear();
+        self.tcp_by_connection_id.clear();
         self.pending.clear();
         self.pending_by_tuple.clear();
         self.timers.clear();
