@@ -58,6 +58,7 @@
 /// without adding — and version-matching — a direct `rtc-crypto` dependency.
 pub use crypto;
 
+pub mod address_rewrite;
 pub mod agent;
 /// The ICE-specific STUN attributes carried in connectivity checks.
 pub mod attributes;

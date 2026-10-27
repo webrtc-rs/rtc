@@ -70,6 +70,8 @@ impl fmt::Display for AttrType {
             ATTR_USE_CANDIDATE => "USE-CANDIDATE",
             ATTR_ICE_CONTROLLED => "ICE-CONTROLLED",
             ATTR_ICE_CONTROLLING => "ICE-CONTROLLING",
+            ATTR_DTLS_IN_STUN => "DTLS-IN-STUN",
+            ATTR_DTLS_IN_STUN_ACK => "DTLS-IN-STUN-ACKNOWLEDGEMENT",
             ATTR_CHANNEL_NUMBER => "CHANNEL-NUMBER",
             ATTR_LIFETIME => "LIFETIME",
             ATTR_XOR_PEER_ADDRESS => "XOR-PEER-ADDRESS",
@@ -147,6 +149,11 @@ pub const ATTR_ICE_CONTROLLED: AttrType = AttrType(0x8029);
 pub const ATTR_ICE_CONTROLLING: AttrType = AttrType(0x802A);
 /// NETWORK-COST.
 pub const ATTR_NETWORK_COST: AttrType = AttrType(0xC057);
+/// DTLS-IN-STUN: DTLS handshake records carried inside connectivity checks
+/// (draft-ietf-mmusic-dtls-in-stun, "SPED").
+pub const ATTR_DTLS_IN_STUN: AttrType = AttrType(0xC070);
+/// DTLS-IN-STUN-ACKNOWLEDGEMENT: the DTLS-in-STUN packets a peer has received.
+pub const ATTR_DTLS_IN_STUN_ACK: AttrType = AttrType(0xC071);
 
 /// Attributes from RFC 5766 TURN.
 /// CHANNEL-NUMBER.
