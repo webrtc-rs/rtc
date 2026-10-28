@@ -64,7 +64,10 @@ pub(crate) struct SctpTransport {
     // SetSCTPCwndCAStep). `None` everywhere keeps the rtc-sctp defaults.
     pub(crate) congestion: SctpCongestionControls,
 
-    pub(crate) internal_buffer: Vec<u8>,
+    /// The largest message this transport reads or writes: the negotiated `maxMessageSize`, as
+    /// enforced. Messages are assembled straight into their payloads, so this is a bound and
+    /// owns no memory.
+    pub(crate) max_message_len: usize,
 }
 
 /// The four SCTP congestion/timer knobs a [`SettingEngine`](crate::peer_connection::configuration::setting_engine::SettingEngine)
@@ -107,7 +110,7 @@ impl SctpTransport {
             mtu,
             enable_zero_checksum,
             congestion,
-            internal_buffer: vec![],
+            max_message_len: 0,
         }
     }
 
@@ -233,7 +236,7 @@ impl SctpTransport {
         // the buffer and the transport config, and then discarded, which left nothing for
         // `maxMessageSize` to report.
         self.negotiated_max_message_size = Some(max_message_size);
-        self.internal_buffer.resize(max_message_size as usize, 0u8);
+        self.max_message_len = max_message_size as usize;
 
         let mut sctp_endpoint_config = ::sctp::EndpointConfig::default();
         if let Some(mtu) = self.mtu {
@@ -395,8 +398,8 @@ mod tests {
         );
         assert_eq!(
             SctpMaxMessageSize::MAX_MESSAGE_SIZE as usize,
-            transport.internal_buffer.len(),
-            "the reported size and the buffer actually allocated must be the same number"
+            transport.max_message_len,
+            "the reported size and the bound actually enforced must be the same number"
         );
     }
 
