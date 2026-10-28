@@ -17,8 +17,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use common::sim::Sim;
+use rtc::interceptor::Registry;
+use rtc::media_stream::MediaStreamTrack;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+};
 
 struct Counting;
 
@@ -62,6 +69,54 @@ fn pc() -> RTCPeerConnection {
     RTCPeerConnectionBuilder::new()
         .build(Instant::now())
         .unwrap()
+}
+
+/// A peer with the default codecs and interceptors, as an application would build it.
+fn media_pc() -> RTCPeerConnection {
+    let mut me = MediaEngine::default();
+    me.register_default_codecs().unwrap();
+    let registry = register_default_interceptors(Registry::new(), &mut me).unwrap();
+    RTCPeerConnectionBuilder::new()
+        .with_media_engine(me)
+        .with_interceptor_registry(registry)
+        .build(Instant::now())
+        .unwrap()
+}
+
+/// A connected pair where `a` has been sending video to `b` for three seconds, long enough for the
+/// per-stream state (send buffers, receive logs, reports) to have been used.
+fn media_sim() -> Sim {
+    const SSRC: u32 = 0x2222_0001;
+    let mut sim = Sim::new(media_pc(), media_pc());
+    let sender = sim
+        .a
+        .pc
+        .add_track(MediaStreamTrack::new(
+            "stream".to_owned(),
+            "video".to_owned(),
+            "label".to_owned(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(SSRC),
+                    ..Default::default()
+                },
+                codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_VP8.to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: String::new(),
+                    rtcp_feedback: vec![],
+                },
+                ..Default::default()
+            }],
+        ))
+        .unwrap();
+    sim.negotiate(true);
+    assert!(sim.run_until(Duration::from_secs(10), |s| s.a.connected()
+        && s.b.connected()));
+    sim.send_video(true, sender, SSRC, 150);
+    sim
 }
 
 fn data_channel_open(sim: &Sim, a: bool) -> bool {
@@ -140,6 +195,26 @@ fn memory_per_connection() {
         );
     }
     drop(sims);
+
+    // The same with media: a video track one way, the default interceptors on both ends.
+    let base = live();
+    let mut media: Vec<Sim> = Vec::with_capacity(pairs);
+    for _ in 0..pairs {
+        media.push(media_sim());
+    }
+    let media_bytes = live() - base;
+    println!(
+        "memory_per_connection: pairs={pairs} connected+video={:.1} KiB/pc",
+        per_pc(media_bytes)
+    );
+    drop(media);
+    // 130 KiB when this was written, 172 before the NACK send buffer grew with the stream: a
+    // window of 1024 packets allocated whole is over 100 KiB for every stream that sends.
+    assert!(
+        per_pc(media_bytes) < 150.0,
+        "a connected peer connection with a video track now holds {:.1} KiB of heap",
+        per_pc(media_bytes)
+    );
 
     // 62 KiB when this was written; the bound leaves room for a few new fields and a different
     // allocator's rounding but not for a buffer (the one removed here was 64 KiB on its own).

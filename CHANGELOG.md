@@ -114,6 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   association and the DTLS connection are boxed in the maps that hold them, which start at four
   slots; and the handlers that raise an event a handful of times per connection give their queue
   back once it is empty.
+- perf(nack): the send buffer used for retransmissions grows with the stream instead of being
+  allocated whole. A window of 1024 packets is over 100 KiB of slots, which a stream that has sent
+  a few hundred packets, or sends few, never uses: a peer connection sending video for three seconds
+  holds 130 KiB of heap instead of 172 KiB. Which packets it answers for is unchanged (a test runs it
+  against the previous implementation on random sequences with gaps, reordering and wrap-around).
 - `rtc-dtls` (breaking): `Endpoint::get_connections_keys` returns `impl Iterator<Item = &SocketAddr>`
   instead of `hash_map::Keys<'_, SocketAddr, DTLSConn>`, so the endpoint can keep its connections boxed.
 - Sending a packet costs about 40% less CPU (an SFU forwarding voice to 31 listeners: 1,545 to 970 ns per
