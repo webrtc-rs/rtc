@@ -122,12 +122,18 @@ pub(crate) trait WriteBypass {
     fn can_skip_write(&mut self, _pending: &VecDeque<TaggedRTCMessageInternal>) -> bool {
         false
     }
+
+    /// Passes `pending` through the handler where it lies, for a handler whose write turns one
+    /// message into at most one: each message is changed (or dropped) on the belt instead of being
+    /// taken off it, queued in the handler and polled back out, which moves a 224-byte message
+    /// three or four times for nothing. Returns whether it did; if it did not, `pending` is as it
+    /// was. The result must be what `handle_write` for each message in turn, then `poll_write`
+    /// until empty, would have left.
+    fn write_in_place(&mut self, _pending: &mut VecDeque<TaggedRTCMessageInternal>) -> bool {
+        false
+    }
 }
 
-impl WriteBypass for IceHandler<'_> {}
-impl WriteBypass for DemuxerHandler<'_> {}
-impl WriteBypass for SrtpHandler<'_> {}
-impl WriteBypass for InterceptorHandler<'_> {}
 impl WriteBypass for EndpointHandler<'_> {}
 
 pub(crate) struct PipelineContext {
@@ -298,7 +304,9 @@ impl RTCPeerConnection {
         let mut intermediate_wouts = std::mem::take(&mut self.pipeline_context.belt);
 
         for_each_handler!(reverse: process_handler!(self, handler, {
-            if !handler.can_skip_write(&intermediate_wouts) {
+            if !handler.can_skip_write(&intermediate_wouts)
+                && !handler.write_in_place(&mut intermediate_wouts)
+            {
                 while let Some(msg) = intermediate_wouts.pop_front() {
                     if let Err(err) = handler.handle_write(msg) {
                         warn!("{}.handle_write got error: {}", handler.name(), err);

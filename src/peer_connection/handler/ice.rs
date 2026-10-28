@@ -57,6 +57,101 @@ impl<'a> IceHandler<'a> {
     }
 }
 
+/// Where the ICE agent has the selected candidate pair send from and to.
+#[derive(Clone, Copy)]
+struct Route {
+    local_addr: std::net::SocketAddr,
+    peer_addr: std::net::SocketAddr,
+    transport_protocol: shared::TransportProtocol,
+}
+
+impl super::WriteBypass for IceHandler<'_> {
+    fn write_in_place(&mut self, pending: &mut VecDeque<TaggedRTCMessageInternal>) -> bool {
+        if !self.ctx.write_outs.is_empty() {
+            return false;
+        }
+        match self.selected_route() {
+            Some(route) => {
+                for msg in pending.iter_mut() {
+                    self.stamp(msg, route);
+                }
+            }
+            None => {
+                for msg in pending.drain(..) {
+                    trace!(
+                        "drop message from {:?} to {:?} before ICE connection is connected",
+                        msg.transport.local_addr, msg.transport.peer_addr,
+                    );
+                }
+            }
+        }
+        self.queue_agent_transmits(pending);
+        true
+    }
+}
+
+impl IceHandler<'_> {
+    fn selected_route(&self) -> Option<Route> {
+        let (local, remote) = self.ctx.ice_transport.agent.get_selected_candidate_pair()?;
+        // Use the local candidate's base address: for (server/peer-)
+        // reflexive candidates the candidate address is the NAT mapping,
+        // not a bound local socket (RFC 8445 §5.1.1).
+        Some(Route {
+            local_addr: local.base_addr(),
+            peer_addr: remote.addr(),
+            transport_protocol: local.network_type().to_protocol(),
+        })
+    }
+
+    /// Addresses `msg` with the selected candidate pair and counts it.
+    ///
+    /// The pair replaces local/peer addr and transport protocol: DTLS/SCTP endpoints run on
+    /// placeholder transport contexts, so without the protocol rewrite their transmits stay
+    /// stamped UDP even when the selected pair is TCP, and consumers routing poll_write() output by
+    /// transport_protocol send every non-STUN packet down the wrong transport.
+    fn stamp(&mut self, msg: &mut TaggedRTCMessageInternal, route: Route) {
+        msg.transport.local_addr = route.local_addr;
+        msg.transport.peer_addr = route.peer_addr;
+        msg.transport.transport_protocol = route.transport_protocol;
+        debug!("Bypass ice write {:?}", msg.transport.peer_addr);
+
+        // Track packets/bytes sent on the selected candidate pair. Look the
+        // accumulator up via the cached key to avoid allocating it per packet.
+        let bytes = msg.message.len();
+        if let Some(key) = &self.ctx.selected_pair_key
+            && let Some(pair) = self.stats.ice_candidate_pairs.get_mut(key)
+        {
+            pair.on_packet_sent(bytes, msg.now);
+        }
+    }
+
+    /// Puts what the agent has to send at the front of `queue`, in its own order.
+    ///
+    /// Control-plane first. The agent's transmits — an ICE nomination, a consent check
+    /// — must reach the peer before any data-plane packet the pipeline already queued
+    /// ahead of this call. The one that matters: the first DTLS ClientHello is queued
+    /// the instant the controlling side selects (its own nomination's success
+    /// response), and if it overtakes the nomination's USE-CANDIDATE request on the
+    /// wire, the peer has not set its selected pair yet and drops it — a full
+    /// retransmit cycle of otherwise-dead connect latency. Front-insertion keeps the
+    /// agent's traffic first while preserving its own order.
+    fn queue_agent_transmits(&mut self, queue: &mut VecDeque<TaggedRTCMessageInternal>) {
+        use sansio::Protocol;
+
+        let mut agent_transmits = Vec::new();
+        while let Some(transmit) = self.ctx.ice_transport.agent.poll_write() {
+            agent_transmits.push(TaggedRTCMessageInternal {
+                now: transmit.now,
+                transport: transmit.transport,
+                message: RTCMessageInternal::Stun(STUNMessage::Raw(transmit.message)),
+            });
+        }
+        for message in agent_transmits.into_iter().rev() {
+            queue.push_front(message);
+        }
+    }
+}
+
 impl<'a>
     sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for IceHandler<'a>
@@ -114,62 +209,23 @@ impl<'a>
     }
 
     fn handle_write(&mut self, mut msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let Some((local, remote)) = self.ctx.ice_transport.agent.get_selected_candidate_pair() {
-            // use ICE selected candidate pair to replace local/peer addr and
-            // transport protocol: DTLS/SCTP endpoints run on placeholder
-            // transport contexts, so without the protocol rewrite their
-            // transmits stay stamped UDP even when the selected pair is TCP,
-            // and consumers routing poll_write() output by transport_protocol
-            // send every non-STUN packet down the wrong transport.
-            // Use the local candidate's base address: for (server/peer-)
-            // reflexive candidates the candidate address is the NAT mapping,
-            // not a bound local socket (RFC 8445 §5.1.1).
-            msg.transport.local_addr = local.base_addr();
-            msg.transport.peer_addr = remote.addr();
-            msg.transport.transport_protocol = local.network_type().to_protocol();
-            debug!("Bypass ice write {:?}", msg.transport.peer_addr);
-
-            // Track packets/bytes sent on the selected candidate pair. Look the
-            // accumulator up via the cached key to avoid allocating it per packet.
-            let bytes = msg.message.len();
-            if let Some(key) = &self.ctx.selected_pair_key
-                && let Some(pair) = self.stats.ice_candidate_pairs.get_mut(key)
-            {
-                pair.on_packet_sent(bytes, msg.now);
+        match self.selected_route() {
+            Some(route) => {
+                self.stamp(&mut msg, route);
+                self.ctx.write_outs.push_back(msg);
             }
-
-            self.ctx.write_outs.push_back(msg);
-        } else {
-            trace!(
+            None => trace!(
                 "drop message from {:?} to {:?} before ICE connection is connected",
                 msg.transport.local_addr, msg.transport.peer_addr,
-            );
+            ),
         }
-
         Ok(())
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        // Control-plane first. The agent's transmits — an ICE nomination, a consent check
-        // — must reach the peer before any data-plane packet the pipeline already queued
-        // ahead of this call. The one that matters: the first DTLS ClientHello is queued
-        // the instant the controlling side selects (its own nomination's success
-        // response), and if it overtakes the nomination's USE-CANDIDATE request on the
-        // wire, the peer has not set its selected pair yet and drops it — a full
-        // retransmit cycle of otherwise-dead connect latency. Front-insertion keeps the
-        // agent's traffic first while preserving its own order.
-        let mut agent_transmits = Vec::new();
-        while let Some(transmit) = self.ctx.ice_transport.agent.poll_write() {
-            agent_transmits.push(TaggedRTCMessageInternal {
-                now: transmit.now,
-                transport: transmit.transport,
-                message: RTCMessageInternal::Stun(STUNMessage::Raw(transmit.message)),
-            });
-        }
-        for message in agent_transmits.into_iter().rev() {
-            self.ctx.write_outs.push_front(message);
-        }
-
+        let mut write_outs = std::mem::take(&mut self.ctx.write_outs);
+        self.queue_agent_transmits(&mut write_outs);
+        self.ctx.write_outs = write_outs;
         self.ctx.write_outs.pop_front()
     }
 

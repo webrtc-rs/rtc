@@ -119,6 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a few hundred packets, or sends few, never uses: a peer connection sending video for three seconds
   holds 130 KiB of heap instead of 172 KiB. Which packets it answers for is unchanged (a test runs it
   against the previous implementation on random sequences with gaps, reordering and wrap-around).
+- perf: an outgoing packet is passed through the demuxer, ICE, SRTP and interceptor handlers where
+  it lies on the pipeline's belt, instead of being taken off, queued in each handler and polled back
+  out, which moved the 224-byte message three or four times per handler. What each handler leaves
+  is what it left before (the ICE agent's own transmits still go in front, the interceptor chain's
+  output still follows the messages that bypass it). rtcd's per-delivery engine cost falls from 982
+  to 886 ns, about 10 %.
 - `rtc-dtls` (breaking): `Endpoint::get_connections_keys` returns `impl Iterator<Item = &SocketAddr>`
   instead of `hash_map::Keys<'_, SocketAddr, DTLSConn>`, so the endpoint can keep its connections boxed.
 - Sending a packet costs about 40% less CPU (an SFU forwarding voice to 31 listeners: 1,545 to 970 ns per

@@ -18,7 +18,7 @@ use crate::rtp_transceiver::{
 };
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Attribute, Interceptor, Packet, TaggedPacket};
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use rtcp::header::{FORMAT_CCFB, PacketType};
 use rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
@@ -865,6 +865,76 @@ impl<'a> InterceptorHandler<'a> {
     }
 }
 
+impl super::WriteBypass for InterceptorHandler<'_> {
+    fn write_in_place(&mut self, pending: &mut VecDeque<TaggedRTCMessageInternal>) -> bool {
+        if !self.ctx.write_outs.is_empty() {
+            return false;
+        }
+        if !self.ctx.is_dtls_handshake_complete {
+            // Before the handshake nothing goes through the chain.
+            return true;
+        }
+        // Packets go into the chain, everything else keeps its place behind them on the belt;
+        // what the chain then has ready lands after those, as it did when the handler queued the
+        // bypassed messages as they came and the chain's output at its `poll_write`.
+        for _ in 0..pending.len() {
+            let Some(msg) = pending.pop_front() else {
+                break;
+            };
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = msg.message {
+                let written = self.interceptor.handle_write(TaggedPacket {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: packet.into(),
+                });
+                if let Err(err) = written {
+                    warn!("{}.handle_write got error: {}", self.name(), err);
+                }
+            } else {
+                pending.push_back(msg);
+            }
+        }
+        self.drain_chain(pending);
+        true
+    }
+}
+
+impl InterceptorHandler<'_> {
+    /// Moves what the chain has ready to `out`, counting it as sent.
+    fn drain_chain(&mut self, out: &mut VecDeque<TaggedRTCMessageInternal>) {
+        while let Some(packet) = self.interceptor.poll_write() {
+            // Process outgoing packets for stats
+            match &packet.message.packet {
+                Packet::Rtcp(rtcp_packets) => {
+                    self.process_write_rtcp_for_stats(rtcp_packets);
+                }
+                Packet::Rtp(rtp_packet) => {
+                    // Track outbound RTP stats if the stream accumulator exists
+                    let ssrc = rtp_packet.header.ssrc;
+                    let payload_bytes = rtp_packet.payload.len();
+                    self.stats.on_rtx_packet_sent_if_rtx(ssrc, payload_bytes);
+
+                    if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&ssrc) {
+                        stream.on_rtp_sent(
+                            rtp_packet.header.marshal_size(),
+                            payload_bytes,
+                            packet.now,
+                        );
+                    }
+                }
+                _ => {}
+            }
+
+            out.push_back(TaggedRTCMessageInternal {
+                now: packet.now,
+                transport: packet.transport,
+                message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message.packet)),
+            });
+            trace!("interceptor write {:?}", packet.transport.peer_addr);
+        }
+    }
+}
+
 impl<'a>
     sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for InterceptorHandler<'a>
@@ -976,36 +1046,9 @@ impl<'a>
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
         if self.ctx.is_dtls_handshake_complete {
-            while let Some(packet) = self.interceptor.poll_write() {
-                // Process outgoing packets for stats
-                match &packet.message.packet {
-                    Packet::Rtcp(rtcp_packets) => {
-                        self.process_write_rtcp_for_stats(rtcp_packets);
-                    }
-                    Packet::Rtp(rtp_packet) => {
-                        // Track outbound RTP stats if the stream accumulator exists
-                        let ssrc = rtp_packet.header.ssrc;
-                        let payload_bytes = rtp_packet.payload.len();
-                        self.stats.on_rtx_packet_sent_if_rtx(ssrc, payload_bytes);
-
-                        if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&ssrc) {
-                            stream.on_rtp_sent(
-                                rtp_packet.header.marshal_size(),
-                                payload_bytes,
-                                packet.now,
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-
-                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                    now: packet.now,
-                    transport: packet.transport,
-                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message.packet)),
-                });
-                trace!("interceptor write {:?}", packet.transport.peer_addr);
-            }
+            let mut write_outs = std::mem::take(&mut self.ctx.write_outs);
+            self.drain_chain(&mut write_outs);
+            self.ctx.write_outs = write_outs;
         }
 
         self.ctx.write_outs.pop_front()
