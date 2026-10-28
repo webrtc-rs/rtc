@@ -1164,6 +1164,7 @@ impl RTCPeerConnection {
             local_description.parsed = Some(local_description.unmarshal()?);
         }
         self.set_description(&local_description, StateChangeOp::SetLocal)?;
+        self.update_rtp_codec_parameters()?;
 
         let we_answer = local_description.sdp_type == RTCSdpType::Answer;
         if we_answer && let Some(parsed_local_description) = &local_description.parsed {
@@ -1345,6 +1346,7 @@ impl RTCPeerConnection {
             remote_description.parsed = Some(remote_description.unmarshal()?);
         }
         self.set_description(&remote_description, StateChangeOp::SetRemote)?;
+        self.update_rtp_codec_parameters()?;
 
         if let Some(parsed_remote_description) = &remote_description.parsed {
             self.media_engine
@@ -1445,11 +1447,6 @@ impl RTCPeerConnection {
                                 transceiver.set_direction(RTCRtpTransceiverDirection::Recvonly);
                             }
 
-                            transceiver.set_codec_preferences_from_remote_description(
-                                media,
-                                &self.media_engine,
-                            )?;
-
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
@@ -1470,11 +1467,6 @@ impl RTCPeerConnection {
                                     send_encodings: vec![],
                                 },
                             );
-
-                            transceiver.set_codec_preferences_from_remote_description(
-                                media,
-                                &self.media_engine,
-                            )?;
 
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
@@ -1527,11 +1519,6 @@ impl RTCPeerConnection {
                         }
 
                         transceiver.set_current_direction(direction);
-
-                        transceiver.set_codec_preferences_from_remote_description(
-                            media,
-                            &self.media_engine,
-                        )?;
                     }
                 }
             }

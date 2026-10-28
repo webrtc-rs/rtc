@@ -6,9 +6,9 @@ use crate::peer_connection::handler::endpoint::EndpointHandlerContext;
 use crate::peer_connection::handler::interceptor::InterceptorHandlerContext;
 use crate::peer_connection::handler::srtp::SrtpHandlerContext;
 use crate::peer_connection::sdp::{
-    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
-    get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
-    rtp_extensions_from_media_description, track_details_from_sdp,
+    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions,
+    codecs_from_media_description, get_by_mid, get_peer_direction, get_rids, have_data_channel,
+    is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -326,6 +326,13 @@ impl RTCPeerConnection {
                             transceiver_index: i,
                             match_extensions: extensions,
                             rid_map: get_rids(media),
+                            codecs: Some(
+                                self.rtp_transceivers[i].get_codecs_for_remote_description(
+                                    media,
+                                    &self.media_engine,
+                                    !include_unmatched,
+                                )?,
+                            ),
                             ..Default::default()
                         });
                     } else {
@@ -758,6 +765,46 @@ impl RTCPeerConnection {
             }
         }
         mids
+    }
+
+    // Codec preferences are local configuration. The sender/receiver's negotiated
+    // parameters instead belong to the current remote / local SDP, per MID.
+    pub(super) fn update_rtp_codec_parameters(&mut self) -> Result<()> {
+        for transceiver in &mut self.rtp_transceivers {
+            let Some(mid) = transceiver.mid().as_deref() else {
+                continue;
+            };
+            let codecs = |description: Option<&RTCSessionDescription>| -> Result<Vec<RTCRtpCodecParameters>> {
+                description.and_then(|description| get_by_mid(mid, description))
+                    .map(codecs_from_media_description).transpose().map(Option::unwrap_or_default)
+            };
+            let mut current_local = codecs(self.current_local_description.as_ref())?;
+            let mut remote = codecs(self.current_remote_description.as_ref())?;
+            remote.retain(|remote| {
+                current_local
+                    .iter()
+                    .any(|local| local.payload_type == remote.payload_type)
+            });
+            let local = if self.pending_local_description.is_some() {
+                codecs(self.pending_local_description.as_ref())?
+            } else {
+                if self.current_remote_description.is_some() {
+                    current_local.retain(|local| {
+                        remote
+                            .iter()
+                            .any(|remote| remote.payload_type == local.payload_type)
+                    });
+                }
+                current_local
+            };
+            if let Some(sender) = transceiver.sender_mut() {
+                sender.set_codec_preferences(remote);
+            }
+            if let Some(receiver) = transceiver.receiver_mut() {
+                receiver.set_codec_preferences(local);
+            }
+        }
+        Ok(())
     }
 
     fn start_rtp_senders(&mut self) -> Result<()> {
@@ -1522,7 +1569,7 @@ impl RTCPeerConnection {
         kind: RtpCodecKind,
         encodings: &[RTCRtpEncodingParameters],
     ) -> Result<Vec<RTCRtpCodecParameters>> {
-        let media_engine_codecs = self.media_engine.get_codecs_by_kind(kind);
+        let media_engine_codecs = self.media_engine.get_local_codecs_by_kind(kind);
         let mut codec_preferences = vec![];
 
         for encoding in encodings {

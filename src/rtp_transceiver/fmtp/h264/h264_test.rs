@@ -101,6 +101,24 @@ fn test_h264_fmtp_compare() {
             true,
         ),
         (
+            "EquivalentConstrainedBaselineFlags",
+            "packetization-mode=1;profile-level-id=42e01f",
+            "packetization-mode=1;profile-level-id=42c01f",
+            true,
+        ),
+        (
+            "EquivalentConstrainedBaselineProfileIdc",
+            "packetization-mode=1;profile-level-id=4d801f",
+            "packetization-mode=1;profile-level-id=58c02a",
+            true,
+        ),
+        (
+            "Level1bStillMatchesTheSameProfile",
+            "packetization-mode=1;profile-level-id=42f00b",
+            "packetization-mode=1;profile-level-id=42e00a",
+            true,
+        ),
+        (
             "Inconsistent",
             "packetization-mode=1;profile-level-id=42e029",
             "packetization-mode=0;profile-level-id=42e029",
