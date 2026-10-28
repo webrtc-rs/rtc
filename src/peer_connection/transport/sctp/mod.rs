@@ -32,7 +32,9 @@ pub(crate) struct SctpTransport {
 
     pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
     pub(crate) sctp_transport_config: Option<::sctp::TransportConfig>,
-    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
+    // Boxed: an `Association` is nearly 2 KiB, and a map keeps its values inline in a table that
+    // starts at four slots, so the one association a peer connection has cost four times that.
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Box<Association>>,
 
     // SCTPTransportState doesn't have an enum to distinguish between New/Connecting
     // so we need a dedicated field
@@ -131,7 +133,7 @@ impl SctpTransport {
     /// `sctp_associations` is a map because the endpoint API is written for the general case, but
     /// a peer connection negotiates exactly one SCTP association.
     fn association(&self) -> Option<&Association> {
-        self.sctp_associations.values().next()
+        self.sctp_associations.values().next().map(|a| &**a)
     }
 
     /// W3C `SctpTransport.state`.
@@ -449,7 +451,7 @@ mod tests {
         );
         transport
             .sctp_associations
-            .insert(AssociationHandle(0), Association::default());
+            .insert(AssociationHandle(0), Box::new(Association::default()));
         assert_eq!(RTCSctpTransportState::Closed, transport.state());
         assert_eq!(
             None,

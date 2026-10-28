@@ -15,7 +15,6 @@ use shared::{TransportMessage, TransportProtocol};
 use crate::config::HandshakeConfig;
 use crate::state::State;
 use bytes::BytesMut;
-use std::collections::hash_map::Keys;
 use std::collections::{HashMap, VecDeque, hash_map::Entry::Vacant};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -43,7 +42,9 @@ pub struct Endpoint {
     local_addr: SocketAddr,
     transport_protocol: TransportProtocol,
     transmits: VecDeque<TransportMessage<BytesMut>>,
-    connections: HashMap<SocketAddr, DTLSConn>,
+    // Boxed: a `DTLSConn` is over a kilobyte, and a map keeps its values inline in a table that
+    // starts at four slots, so the one connection an endpoint usually has cost four times that.
+    connections: HashMap<SocketAddr, Box<DTLSConn>>,
     server_config: Option<Arc<HandshakeConfig>>,
 }
 
@@ -77,7 +78,7 @@ impl Endpoint {
     }
 
     /// Get keys of Connections
-    pub fn get_connections_keys(&self) -> Keys<'_, SocketAddr, DTLSConn> {
+    pub fn get_connections_keys(&self) -> impl Iterator<Item = &SocketAddr> {
         self.connections.keys()
     }
 
@@ -119,7 +120,7 @@ impl Endpoint {
                 });
             }
 
-            e.insert(conn);
+            e.insert(Box::new(conn));
         }
 
         Ok(())
@@ -146,7 +147,7 @@ impl Endpoint {
                 });
             }
         }
-        self.connections.remove(&remote)
+        self.connections.remove(&remote).map(|conn| *conn)
     }
 
     /// Process close
@@ -228,7 +229,7 @@ impl Endpoint {
             if let Some(server_config) = &self.server_config {
                 let handshake_config = server_config.clone();
                 let conn = DTLSConn::new(handshake_config, false, None);
-                e.insert(conn);
+                e.insert(Box::new(conn));
             } else {
                 return Err(Error::NoServerConfig);
             }

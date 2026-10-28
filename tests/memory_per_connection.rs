@@ -1,7 +1,10 @@
 //! What a peer connection holds on to: live heap bytes per connection, idle and connected, to put
 //! next to pion's `benchmarks/pion-compare/go` figure for the same shape (one data channel, no media).
 //!
-//! `cargo test --release --test memory_per_connection -- --ignored --nocapture`
+//! `cargo test --release --test memory_per_connection -- --nocapture` (`PAIRS=200` for more pairs)
+//!
+//! It also guards the figure: a connection that grows past the bound below fails the test, so a
+//! buffer added to the connection path shows up here and not in a production memory graph.
 //!
 //! A counting allocator wraps the system one, so the figure is the bytes the library asks for and
 //! has not given back, not the pages the allocator happens to keep: it does not move with the
@@ -72,12 +75,11 @@ fn data_channel_open(sim: &Sim, a: bool) -> bool {
 }
 
 #[test]
-#[ignore = "a measurement, run by hand"]
 fn memory_per_connection() {
     let pairs: usize = std::env::var("PAIRS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(200);
+        .unwrap_or(50);
 
     // One pair first: whatever is built once per process (lazy statics, the crypto provider's
     // tables) is not a cost of the next connection.
@@ -138,4 +140,12 @@ fn memory_per_connection() {
         );
     }
     drop(sims);
+
+    // 62 KiB when this was written; the bound leaves room for a few new fields and a different
+    // allocator's rounding but not for a buffer (the one removed here was 64 KiB on its own).
+    assert!(
+        per_pc(connected_bytes) < 96.0,
+        "a connected peer connection now holds {:.1} KiB of heap",
+        per_pc(connected_bytes)
+    );
 }

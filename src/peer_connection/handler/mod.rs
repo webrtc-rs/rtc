@@ -37,6 +37,19 @@ use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
 use std::time::Instant;
 
+/// Pops the next event from a queue that only ever holds a handful of them over a connection's
+/// life (a state change, a handshake, a channel opening), and hands the queue's memory back once it
+/// is empty. A `VecDeque` keeps the room its first push made, which for events of 288 bytes is over
+/// a kilobyte in each of seven handlers for as long as the connection lives. Not for a queue that
+/// fills on every packet: that would allocate again each time.
+pub(super) fn pop_event<T>(queue: &mut VecDeque<T>) -> Option<T> {
+    let event = queue.pop_front();
+    if event.is_none() && queue.capacity() > 0 {
+        *queue = VecDeque::new();
+    }
+    event
+}
+
 /// Forward handler list - invokes callback with handler list
 macro_rules! forward_handlers {
     ($callback:ident!($($args:tt)*)) => {

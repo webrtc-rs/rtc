@@ -6,7 +6,7 @@ data channel each, and report live heap plus goroutine stacks per connection aft
 ```sh
 cd benchmarks/pion-compare/memory
 go mod tidy && go run . 200          # or: go mod edit -replace github.com/pion/webrtc/v4=/path/to/pion
-cargo test --release --test memory_per_connection -- --ignored --nocapture   # from the repo root
+cargo test --release --test memory_per_connection -- --nocapture   # from the repo root
 ```
 
 The figures are not the same kind of thing, and both favour pion slightly: pion's include

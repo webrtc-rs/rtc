@@ -107,11 +107,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I-DATA messages than the cap is aborted with a protocol violation. Off by default.
 
 ### Changed
-- perf(sctp): a connection no longer allocates a zeroed buffer the size of `maxMessageSize` (64 KiB,
-  256 KiB with an unbounded limit) when SCTP starts. It was only ever read for its length, messages
-  are assembled straight into their payloads, so it is now a bound and owns nothing. A connected peer
-  connection with a data channel holds 78 KiB of heap instead of 150 KiB (pion v4.2.24: 353 KiB, see
-  `tests/memory_per_connection.rs` and `benchmarks/pion-compare/memory`).
+- perf: a connected peer connection with a data channel holds 62 KiB of heap instead of 150 KiB
+  (pion v4.2.24: 353 KiB; `tests/memory_per_connection.rs` measures and guards it,
+  `benchmarks/pion-compare/memory` is the pion side). SCTP no longer zero-fills a buffer of
+  `maxMessageSize` (64 KiB, 256 KiB unbounded) that was only ever read for its length; the SCTP
+  association and the DTLS connection are boxed in the maps that hold them, which start at four
+  slots; and the handlers that raise an event a handful of times per connection give their queue
+  back once it is empty.
+- `rtc-dtls` (breaking): `Endpoint::get_connections_keys` returns `impl Iterator<Item = &SocketAddr>`
+  instead of `hash_map::Keys<'_, SocketAddr, DTLSConn>`, so the endpoint can keep its connections boxed.
 - Sending a packet costs about 40% less CPU (an SFU forwarding voice to 31 listeners: 1,545 to 970 ns per
   delivery). The interceptor chain no longer allocates a belt per packet or walks itself a second time
   to find nothing, and carries an outgoing packet only through the interceptors that do something to

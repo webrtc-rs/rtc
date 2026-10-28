@@ -102,7 +102,7 @@ impl SctpHandlerContext {
             )
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        sctp_associations.insert(ch, conn);
+        sctp_associations.insert(ch, Box::new(conn));
 
         // `connect` queued the client INIT. Mark dirty so poll_write emits it at the next flush
         // instead of waiting for a later handle_* (the deferred flush is now the only transmit
@@ -420,7 +420,7 @@ impl<'a>
                 inbound_transport = Some((ch, msg.transport));
                 match event {
                     DatagramEvent::NewAssociation(conn) => {
-                        sctp_associations.insert(ch, conn);
+                        sctp_associations.insert(ch, Box::new(conn));
                     }
                     DatagramEvent::AssociationEvent(event) => {
                         sctp_events.entry(ch).or_default().push_back(event);
@@ -1289,7 +1289,7 @@ mod tests {
         );
         transport.max_message_len = SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize;
         transport.sctp_endpoint = Some(client_ep);
-        transport.sctp_associations.insert(ch, conn);
+        transport.sctp_associations.insert(ch, Box::new(conn));
         SctpHandlerContext::new(now, transport)
     }
 
@@ -1873,8 +1873,8 @@ mod tests {
         );
         transport.max_message_len = SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize;
         transport.sctp_endpoint = Some(client_ep);
-        transport.sctp_associations.insert(ch_a, conn_a);
-        transport.sctp_associations.insert(ch_b, conn_b);
+        transport.sctp_associations.insert(ch_a, Box::new(conn_a));
+        transport.sctp_associations.insert(ch_b, Box::new(conn_b));
         let mut ctx = SctpHandlerContext::new(now, transport);
 
         {

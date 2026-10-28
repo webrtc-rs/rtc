@@ -236,7 +236,7 @@ impl<'a>
             }
         }
 
-        self.ctx.event_outs.pop_front()
+        super::pop_event(&mut self.ctx.event_outs)
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {

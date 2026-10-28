@@ -3039,7 +3039,7 @@ mod tests {
         pc.dtls_transport_mut().dtls_role = RTCDtlsRole::Client;
         pc.sctp_transport_mut()
             .sctp_associations
-            .insert(AssociationHandle(0), sctp::Association::default());
+            .insert(AssociationHandle(0), Box::new(sctp::Association::default()));
 
         let _dc = pc.create_data_channel("test", None).unwrap();
 
@@ -3071,7 +3071,7 @@ mod tests {
             .unwrap();
         pc.sctp_transport_mut()
             .sctp_associations
-            .insert(AssociationHandle(0), sctp::Association::default());
+            .insert(AssociationHandle(0), Box::new(sctp::Association::default()));
 
         let dc = pc.create_data_channel("test", None).unwrap();
         let id = dc.id();
@@ -3481,7 +3481,10 @@ mod tests {
             .sctp_handler_context
             .sctp_transport
             .sctp_associations
-            .insert(AssociationHandle(0), ::sctp::Association::default());
+            .insert(
+                AssociationHandle(0),
+                Box::new(::sctp::Association::default()),
+            );
         let report = pc.get_stats(Instant::now(), StatsSelector::None);
         let sctp = report
             .sctp_transport()
