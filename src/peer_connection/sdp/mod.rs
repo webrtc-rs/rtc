@@ -755,17 +755,17 @@ impl RTCPeerConnection {
         let parameters =
             media_engine.get_rtp_parameters_by_kind(transceiver.kind(), transceiver.direction());
         for rtp_extension in &parameters.header_extensions {
-            if !media_section.match_extensions.is_empty()
-                && !media_section
-                    .match_extensions
-                    .contains_key(&rtp_extension.uri)
-            {
+            let id = if media_section.match_extensions.is_empty() {
+                rtp_extension.id
+            } else if let Some(id) = media_section.match_extensions.get(&rtp_extension.uri) {
+                *id
+            } else {
                 continue;
-            }
+            };
 
             let ext_url = Url::parse(rtp_extension.uri.as_str())?;
             media = media.with_extmap(sdp::extmap::ExtMap {
-                value: rtp_extension.id,
+                value: id,
                 uri: Some(ext_url),
                 ..Default::default()
             });

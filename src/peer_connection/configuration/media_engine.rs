@@ -896,6 +896,14 @@ impl MediaEngine {
         &mut self,
         media: &MediaDescription,
     ) -> Result<()> {
+        if media.media_name.port.value == 0
+            && !media
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "bundle-only")
+        {
+            return Ok(());
+        }
         let typ = if media.media_name.media.to_lowercase() == "audio" {
             RtpCodecKind::Audio
         } else if media.media_name.media.to_lowercase() == "video" {
@@ -922,24 +930,27 @@ impl MediaEngine {
     ) -> Result<()> {
         for local_extension in &self.header_extensions {
             if local_extension.uri == extension {
-                if let Some(existing_extension) = self.negotiated_header_extensions.get_mut(&id) {
-                    if local_extension.is_audio && typ == RtpCodecKind::Audio {
-                        existing_extension.is_audio = true;
-                    }
-                    if local_extension.is_video && typ == RtpCodecKind::Video {
-                        existing_extension.is_video = true;
-                    }
-                } else {
-                    self.negotiated_header_extensions.insert(
-                        id,
-                        MediaEngineHeaderExtension {
-                            uri: extension.to_owned(),
-                            is_audio: local_extension.is_audio && typ == RtpCodecKind::Audio,
-                            is_video: local_extension.is_video && typ == RtpCodecKind::Video,
-                            allowed_direction: local_extension.allowed_direction,
-                        },
-                    );
+                let mut negotiated = self
+                    .negotiated_header_extensions
+                    .get(&id)
+                    .filter(|current| current.uri == extension)
+                    .cloned()
+                    .unwrap_or_else(|| MediaEngineHeaderExtension {
+                        uri: extension.to_owned(),
+                        allowed_direction: local_extension.allowed_direction,
+                        ..Default::default()
+                    });
+                // A retired section cannot retain a conflicting ID or duplicate
+                // this URI at its previous ID. RTP and SDP use the same mapping.
+                self.negotiated_header_extensions
+                    .retain(|old_id, current| *old_id == id || current.uri != extension);
+                if local_extension.is_audio && typ == RtpCodecKind::Audio {
+                    negotiated.is_audio = true;
                 }
+                if local_extension.is_video && typ == RtpCodecKind::Video {
+                    negotiated.is_video = true;
+                }
+                self.negotiated_header_extensions.insert(id, negotiated);
             }
         }
         Ok(())
