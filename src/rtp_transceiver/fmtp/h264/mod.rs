@@ -2,34 +2,64 @@
 mod h264_test;
 
 use super::*;
+use crate::rtp_transceiver::h264::H264ProfileLevelId;
 
 fn profile_level_id_matches(a: &str, b: &str) -> bool {
-    let aa = match hex::decode(a) {
-        Ok(aa) => {
-            if aa.len() < 2 {
-                return false;
-            }
-            aa
-        }
-        Err(_) => return false,
-    };
-
-    let bb = match hex::decode(b) {
-        Ok(bb) => {
-            if bb.len() < 2 {
-                return false;
-            }
-            bb
-        }
-        Err(_) => return false,
-    };
-
-    aa[0] == bb[0] && aa[1] == bb[1]
+    matches!(
+        (H264ProfileLevelId::parse(a), H264ProfileLevelId::parse(b)),
+        (Some(a), Some(b)) if a.is_same_profile(b)
+    )
 }
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct H264Fmtp {
     pub(crate) parameters: HashMap<String, String>,
+}
+
+// RFC 6184 8.2.2: each endpoint advertises its own receive level when both
+// permit asymmetry; otherwise the answer must select the lower level.
+fn receive_level(local: &str, remote: &str) -> Option<H264ProfileLevelId> {
+    let local_fmtp = parse("video/H264", local);
+    let remote_fmtp = parse("video/H264", remote);
+    if !local_fmtp.match_fmtp(&*remote_fmtp) {
+        return None;
+    }
+    let local = H264ProfileLevelId::parse(local_fmtp.parameter("profile-level-id")?)?;
+    let remote = H264ProfileLevelId::parse(remote_fmtp.parameter("profile-level-id")?)?;
+    let asymmetric = local_fmtp
+        .parameter("level-asymmetry-allowed")
+        .map(String::as_str)
+        == Some("1")
+        && remote_fmtp
+            .parameter("level-asymmetry-allowed")
+            .map(String::as_str)
+            == Some("1");
+    Some(if asymmetric || local.is_level_at_most(remote) {
+        local
+    } else {
+        local.with_level(remote)
+    })
+}
+
+pub(crate) fn answer_fmtp(local: &str, remote: &str) -> Option<String> {
+    let profile = receive_level(local, remote)?;
+    Some(
+        local
+            .split(';')
+            .map(|part| {
+                if part
+                    .trim()
+                    .split_once('=')
+                    .is_some_and(|(key, _)| key.eq_ignore_ascii_case("profile-level-id"))
+                {
+                    format!("profile-level-id={profile}")
+                } else {
+                    part.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
 }
 
 impl Fmtp for H264Fmtp {

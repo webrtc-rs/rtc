@@ -673,7 +673,10 @@ impl RTCPeerConnection {
                 .with_property_attribute(ATTR_KEY_RTCPMUX.to_owned())
                 .with_property_attribute(ATTR_KEY_RTCPRSIZE.to_owned());
 
-        let codecs = transceiver.get_codecs(media_engine);
+        let codecs = media_section
+            .codecs
+            .clone()
+            .unwrap_or_else(|| transceiver.get_codecs(media_engine));
         for codec in &codecs {
             let name = codec
                 .rtp_codec
@@ -1016,6 +1019,7 @@ pub(crate) struct MediaSection {
     pub(crate) data: bool,
     pub(crate) match_extensions: HashMap<String, u16>,
     pub(crate) rid_map: Vec<SimulcastRid>,
+    pub(crate) codecs: Option<Vec<RTCRtpCodecParameters>>,
 }
 
 pub(crate) struct PopulateSdpParams {
