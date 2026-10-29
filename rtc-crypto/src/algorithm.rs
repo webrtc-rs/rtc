@@ -41,6 +41,8 @@ pub enum AeadAlgorithm {
     Aes128Ccm,
     /// AES-128-CCM with an 8-byte tag.
     Aes128Ccm8,
+    /// AES-256-CCM with an 8-byte tag.
+    Aes256Ccm8,
     /// ChaCha20-Poly1305.
     ChaCha20Poly1305,
 }
@@ -69,6 +71,8 @@ pub enum BlockCipherAlgorithm {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CbcAlgorithm {
+    /// AES-128-CBC.
+    Aes128Cbc,
     /// AES-256-CBC.
     Aes256Cbc,
 }

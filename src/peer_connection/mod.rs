@@ -271,7 +271,7 @@ use crate::peer_connection::handler::sctp::SctpHandlerContext;
 use crate::peer_connection::sdp::MediaDescriptionExt;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    extract_fingerprint, extract_ice_details, get_application_media,
+    add_ice_option, extract_fingerprint, extract_ice_details, get_application_media,
     get_application_media_section_max_message_size, get_application_media_section_sctp_port,
     get_mid_value, get_peer_direction, has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType,
     update_sdp_origin,
@@ -293,6 +293,7 @@ use crate::peer_connection::transport::ice::IceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
+use crate::peer_connection::transport::sctp::SctpCongestionControls;
 use crate::peer_connection::transport::sctp::SctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
@@ -309,13 +310,16 @@ use crate::rtp_transceiver::{
 };
 use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use crate::statistics::report::RTCStatsReport;
+use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
+use crate::statistics::stats::csrc::RTCRTPContributingSourceStats;
+use crate::statistics::stats::{RTCStats, RTCStatsType};
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::AgentConfig;
 use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::{Interceptor, Registry};
 use shared::error::{Error, Result};
+use shared::time::SystemInstant;
 use shared::util::math_rand_alpha;
 use std::time::Instant;
 
@@ -848,6 +852,13 @@ impl RTCPeerConnection {
             )?
         };
 
+        if self.setting_engine.ice_trickle_advertised {
+            add_ice_option(&mut d, "trickle");
+        }
+        if self.setting_engine.ice_renomination.is_some() {
+            add_ice_option(&mut d, "renomination");
+        }
+
         update_sdp_origin(&mut self.sdp_origin, &mut d);
 
         let sdp = d.marshal();
@@ -996,7 +1007,18 @@ impl RTCPeerConnection {
             connection_role,
             ConnectionRole::Unspecified | ConnectionRole::Actpass
         ) {
-            connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
+            // RFC 5763 §5 / RFC 4145: take the complement of an explicit `active` or `passive`
+            // in the offer; only an `actpass` offer leaves the choice to us.
+            let offered_role = self
+                .remote_description()
+                .and_then(|d| d.parsed.as_ref().map(RTCDtlsRole::from))
+                .unwrap_or(RTCDtlsRole::Auto);
+            connection_role = match offered_role {
+                RTCDtlsRole::Client => RTCDtlsRole::Server,
+                RTCDtlsRole::Server => RTCDtlsRole::Client,
+                _ => DEFAULT_DTLS_ROLE_ANSWER,
+            }
+            .to_connection_role();
 
             if let Some(remote_description) = self.remote_description()
                 && let Some(parsed) = remote_description.parsed.as_ref()
@@ -1007,11 +1029,42 @@ impl RTCPeerConnection {
             }
         }
 
+        // Renegotiation reuses the DTLS association, including across ICE restarts: "the
+        // answerer MUST insert an SDP "setup" attribute with an attribute value that does not
+        // change the previously negotiated DTLS roles" (RFC 8842 §5.3).
+        if let (Some(local), Some(remote)) = (
+            self.current_local_description.as_ref(),
+            self.current_remote_description.as_ref(),
+        ) {
+            if local.sdp_type == RTCSdpType::Answer {
+                if let Some(parsed) = local.parsed.as_ref() {
+                    connection_role = RTCDtlsRole::from(parsed).to_connection_role();
+                }
+            } else if let Some(parsed) = remote.parsed.as_ref() {
+                match RTCDtlsRole::from(parsed) {
+                    RTCDtlsRole::Client => {
+                        connection_role = RTCDtlsRole::Server.to_connection_role();
+                    }
+                    RTCDtlsRole::Server => {
+                        connection_role = RTCDtlsRole::Client.to_connection_role();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let mut d = self.generate_matched_sdp(
             false, /*includeUnmatched */
             connection_role,
             self.setting_engine.ignore_rid_pause_for_recv,
         )?;
+
+        if self.setting_engine.ice_trickle_advertised {
+            add_ice_option(&mut d, "trickle");
+        }
+        if self.setting_engine.ice_renomination.is_some() {
+            add_ice_option(&mut d, "renomination");
+        }
 
         update_sdp_origin(&mut self.sdp_origin, &mut d);
 
@@ -1204,6 +1257,8 @@ impl RTCPeerConnection {
                 self.rtp_transceivers[i].set_current_direction(direction);
             }
 
+            self.record_rtp_header_encryption(parsed_local_description);
+
             if let Some(remote_description) = self.remote_description().cloned()
                 && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
             {
@@ -1236,9 +1291,29 @@ impl RTCPeerConnection {
                         local_sctp_port,
                         remote_sctp_port,
                     )?;
+                    // Over a DTLS connection that is already up there is no handshake-complete
+                    // event still to come, so the client side starts here.
+                    if self.dtls_transport().state
+                        == transport::dtls::state::RTCDtlsTransportState::Connected
+                    {
+                        self.pipeline_context
+                            .sctp_handler_context
+                            .connect_client(now)?;
+                    }
                 }
                 self.start_rtp(remote_description)?;
             }
+        }
+
+        // What this side declared it can receive decides what it must still accept.
+        if let Some(parsed) = local_description.parsed.as_ref()
+            && let Ok(receive) = crate::peer_connection::sdp::cryptex::cryptex_mode_from_sdp(
+                self.configuration.rtp_header_encryption_policy,
+                parsed,
+            )
+        {
+            let send = self.dtls_transport().cryptex_send_mode;
+            self.apply_cryptex_modes(send, receive);
         }
 
         self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Gathering;
@@ -1310,6 +1385,45 @@ impl RTCPeerConnection {
         self.can_trickle_ice_candidates
     }
 
+    /// Returns the signaling state: where the offer/answer exchange stands.
+    ///
+    /// Also reported through [`RTCPeerConnectionEvent::OnSignalingStateChange`](crate::peer_connection::event::RTCPeerConnectionEvent)
+    /// as it changes; this reads it at any moment.
+    ///
+    /// # Specification
+    ///
+    /// See [signalingState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-signalingstate)
+    pub fn signaling_state(&self) -> RTCSignalingState {
+        self.signaling_state
+    }
+
+    /// Returns the aggregate connection state of the peer connection.
+    ///
+    /// # Specification
+    ///
+    /// See [connectionState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-connectionstate)
+    pub fn connection_state(&self) -> RTCPeerConnectionState {
+        self.peer_connection_state
+    }
+
+    /// Returns the state of the ICE connection.
+    ///
+    /// # Specification
+    ///
+    /// See [iceConnectionState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-iceconnectionstate)
+    pub fn ice_connection_state(&self) -> RTCIceConnectionState {
+        self.ice_transport().ice_connection_state
+    }
+
+    /// Returns the state of ICE candidate gathering.
+    ///
+    /// # Specification
+    ///
+    /// See [iceGatheringState](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-icegatheringstate)
+    pub fn ice_gathering_state(&self) -> RTCIceGatheringState {
+        self.ice_transport().ice_gathering_state
+    }
+
     /// Sets the remote description as part of the offer/answer negotiation.
     ///
     /// This changes the remote description associated with the connection. This description
@@ -1344,6 +1458,14 @@ impl RTCPeerConnection {
         if remote_description.sdp_type != RTCSdpType::Rollback {
             remote_description.parsed = Some(remote_description.unmarshal()?);
         }
+
+        // Cryptex (RFC 9335) is checked before anything is committed, so a description that breaks
+        // the header-encryption policy leaves the signaling state as it was.
+        let cryptex_modes = match remote_description.parsed.as_ref() {
+            Some(parsed) => Some(self.cryptex_modes(parsed)?),
+            None => None,
+        };
+
         self.set_description(&remote_description, StateChangeOp::SetRemote)?;
 
         if let Some(parsed_remote_description) = &remote_description.parsed {
@@ -1423,6 +1545,7 @@ impl RTCPeerConnection {
                         };
 
                         if let Some(transceiver) = transceiver {
+                            transceiver.set_current_remote_direction(direction);
                             if direction == RTCRtpTransceiverDirection::Recvonly {
                                 if transceiver.direction() == RTCRtpTransceiverDirection::Sendrecv {
                                     transceiver.set_direction(RTCRtpTransceiverDirection::Sendonly);
@@ -1454,12 +1577,17 @@ impl RTCPeerConnection {
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
                         } else {
-                            let local_direction =
-                                if direction == RTCRtpTransceiverDirection::Recvonly {
+                            // The mirror of the remote direction: it sends what the remote only
+                            // receives, receives otherwise, and an inactive section stays inactive.
+                            let local_direction = match direction {
+                                RTCRtpTransceiverDirection::Recvonly => {
                                     RTCRtpTransceiverDirection::Sendonly
-                                } else {
-                                    RTCRtpTransceiverDirection::Recvonly
-                                };
+                                }
+                                RTCRtpTransceiverDirection::Inactive => {
+                                    RTCRtpTransceiverDirection::Inactive
+                                }
+                                _ => RTCRtpTransceiverDirection::Recvonly,
+                            };
 
                             let mut transceiver = RTCRtpTransceiverInternal::new(
                                 kind,
@@ -1479,6 +1607,8 @@ impl RTCPeerConnection {
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
+
+                            transceiver.set_current_remote_direction(direction);
 
                             // Mark as implicitly created by a remote offer so that, if this offer
                             // is later rolled back, the transceiver is stopped and removed
@@ -1534,6 +1664,10 @@ impl RTCPeerConnection {
                         )?;
                     }
                 }
+            }
+
+            if we_offer {
+                self.record_rtp_header_encryption(parsed_remote_description);
             }
 
             let (remote_ufrag, remote_pwd, candidates) =
@@ -1637,9 +1771,22 @@ impl RTCPeerConnection {
                         local_sctp_port,
                         remote_sctp_port,
                     )?;
+                    // Over a DTLS connection that is already up there is no handshake-complete
+                    // event still to come, so the client side starts here.
+                    if self.dtls_transport().state
+                        == transport::dtls::state::RTCDtlsTransportState::Connected
+                    {
+                        self.pipeline_context
+                            .sctp_handler_context
+                            .connect_client(now)?;
+                    }
                 }
                 self.start_rtp(remote_description)?;
             }
+        }
+
+        if let Some((send, receive)) = cryptex_modes {
+            self.apply_cryptex_modes(send, receive);
         }
 
         Ok(())
@@ -1708,6 +1855,8 @@ impl RTCPeerConnection {
     /// - No remote description has been set
     /// - The candidate string is invalid
     ///
+    /// A candidate of an unknown type or transport is discarded with a warning, not reported.
+    ///
     /// # Specification
     ///
     /// See [addIceCandidate](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addicecandidate!overload-1)
@@ -1722,7 +1871,16 @@ impl RTCPeerConnection {
         };
 
         if !candidate_value.is_empty() {
-            self.add_ice_remote_candidate(candidate_value)?;
+            match self.add_ice_remote_candidate(candidate_value) {
+                Ok(()) => {}
+                // A candidate of a type or transport this stack does not know (legacy Chrome's
+                // `ssltcp`, for one) is not an error: it is discarded, as pion does, so that
+                // trickle from such a peer keeps working.
+                Err(err @ (Error::ErrUnknownCandidateType | Error::ErrDetermineNetworkType)) => {
+                    log::warn!("Discarding remote candidate: {err}");
+                }
+                Err(err) => return Err(err),
+            }
         }
 
         Ok(())
@@ -1789,6 +1947,22 @@ impl RTCPeerConnection {
         Ok(())
     }
 
+    /// Returns the local ICE credentials — the username fragment and password the local
+    /// transport is (or, after a restart is armed, will be) listening with.
+    ///
+    /// This is what an I/O layer demultiplexing several peer connections over one shared
+    /// UDP socket keys incoming STUN by: an ICE connectivity check's `USERNAME` attribute
+    /// carries the local fragment of exactly one agent, so a shared-socket driver can route
+    /// the packet to the right connection. The fragments are generated at construction and
+    /// replaced on [`restart_ice`](Self::restart_ice), so reading them through this accessor
+    /// at bind time — and again on every rebind — always yields the fragment matching the
+    /// traffic about to arrive.
+    ///
+    /// [`RTCIceParameters`]: crate::peer_connection::transport::RTCIceParameters
+    pub fn local_ice_parameters(&self) -> Result<RTCIceParameters> {
+        self.ice_transport().get_local_parameters()
+    }
+
     /// Tells the peer connection that ICE should be restarted.
     ///
     /// This method causes the next call to `create_offer` to generate an offer that
@@ -1829,6 +2003,9 @@ impl RTCPeerConnection {
     /// - The peer connection is closed (`ErrConnectionClosed`)
     /// - The peer identity differs from the one already set (`ErrModifyingPeerIdentity`)
     /// - The number of certificates differs from the one already set (`ErrModifyingCertificates`)
+    /// - The bundle policy, RTCP mux policy or RTP header encryption policy differ
+    ///
+    /// A rejected call changes nothing.
     ///
     /// # Specification
     ///
@@ -1839,57 +2016,79 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
+        // Every check runs before anything is applied, so a rejected call leaves the
+        // configuration untouched (pion `TestPeerConnection_SetConfiguration_RejectsBeforeMutating`).
+
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #3)
-        if !configuration.peer_identity.is_empty() {
-            if configuration.peer_identity != self.configuration.peer_identity {
-                return Err(Error::ErrModifyingPeerIdentity);
-            }
-            self.configuration.peer_identity = configuration.peer_identity;
+        if !configuration.peer_identity.is_empty()
+            && configuration.peer_identity != self.configuration.peer_identity
+        {
+            return Err(Error::ErrModifyingPeerIdentity);
         }
 
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #4)
-        if !configuration.certificates.is_empty() {
-            if configuration.certificates.len() != self.configuration.certificates.len() {
-                return Err(Error::ErrModifyingCertificates);
-            }
-
-            self.configuration.certificates = configuration.certificates;
+        if !configuration.certificates.is_empty()
+            && configuration.certificates.len() != self.configuration.certificates.len()
+        {
+            return Err(Error::ErrModifyingCertificates);
         }
 
+        // An unspecified policy means "leave as is", as in pion.
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #5)
-
-        if configuration.bundle_policy != self.configuration.bundle_policy {
+        if configuration.bundle_policy != configuration::bundle_policy::RTCBundlePolicy::Unspecified
+            && configuration.bundle_policy != self.configuration.bundle_policy
+        {
             return Err(Error::ErrModifyingBundlePolicy);
         }
-        self.configuration.bundle_policy = configuration.bundle_policy;
 
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #6)
-        if configuration.rtcp_mux_policy != self.configuration.rtcp_mux_policy {
+        if configuration.rtcp_mux_policy
+            != configuration::rtcp_mux_policy::RTCRtcpMuxPolicy::Unspecified
+            && configuration.rtcp_mux_policy != self.configuration.rtcp_mux_policy
+        {
             return Err(Error::ErrModifyingRTCPMuxPolicy);
         }
-        self.configuration.rtcp_mux_policy = configuration.rtcp_mux_policy;
 
-        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #7)
-        if configuration.ice_candidate_pool_size != 0 {
-            if self.configuration.ice_candidate_pool_size != configuration.ice_candidate_pool_size
-                && self.local_description().is_some()
-            {
-                return Err(Error::ErrModifyingICECandidatePoolSize);
-            }
-            self.configuration.ice_candidate_pool_size = configuration.ice_candidate_pool_size;
+        // Immutable after construction, like the two policies above.
+        if configuration.rtp_header_encryption_policy
+            != configuration::rtp_header_encryption_policy::RTCRtpHeaderEncryptionPolicy::Unspecified
+            && configuration.rtp_header_encryption_policy
+                != self.configuration.rtp_header_encryption_policy
+        {
+            return Err(Error::ErrModifyingRTPHeaderEncryptionPolicy);
         }
 
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #7)
+        if configuration.ice_candidate_pool_size != 0
+            && self.configuration.ice_candidate_pool_size != configuration.ice_candidate_pool_size
+            && self.local_description().is_some()
+        {
+            return Err(Error::ErrModifyingICECandidatePoolSize);
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3)
+        for server in &configuration.ice_servers {
+            server.validate()?;
+        }
+
+        // Nothing can fail from here on.
+        if !configuration.peer_identity.is_empty() {
+            self.configuration.peer_identity = configuration.peer_identity;
+        }
+        if !configuration.certificates.is_empty() {
+            self.configuration.certificates = configuration.certificates;
+        }
+        if configuration.ice_candidate_pool_size != 0 {
+            self.configuration.ice_candidate_pool_size = configuration.ice_candidate_pool_size;
+        }
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #8)
-
         self.configuration.ice_transport_policy = configuration.ice_transport_policy;
-
-        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11)
+        // Like other zero-value fields, only `true` changes the existing setting.
+        if configuration.always_negotiate_data_channels {
+            self.configuration.always_negotiate_data_channels = true;
+        }
         if !configuration.ice_servers.is_empty() {
-            // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3)
-            for server in &configuration.ice_servers {
-                server.validate()?;
-            }
-            self.configuration.ice_servers = configuration.ice_servers
+            self.configuration.ice_servers = configuration.ice_servers;
         }
 
         Ok(())
@@ -2064,7 +2263,7 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [getTransceivers](https://www.w3.org/TR/webrtc/#dom-peerconnection-gettranseceivers)
-    pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> {
+    pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> + use<> {
         0..self.rtp_transceivers.len()
     }
 
@@ -2098,10 +2297,7 @@ impl RTCPeerConnection {
         let (track, send_encodings, codec_preferences) =
             self.normalize_sender_track(track, send_encodings)?;
         for (id, transceiver) in self.rtp_transceivers.iter_mut().enumerate() {
-            if !transceiver.stopped()
-                && transceiver.kind() == track.kind()
-                && transceiver.sender().is_none()
-            {
+            if transceiver.is_send_allowed(track.kind()) {
                 let mut sender =
                     RTCRtpSenderInternal::new(track.kind(), track, vec![], send_encodings);
 
@@ -2274,9 +2470,13 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let init = if let Some(init) = init {
+        let init = if let Some(mut init) = init {
+            // A sending transceiver created from a kind has no track to take encodings from. As
+            // W3C `addTransceiver` and pion allow, one encoding with a fresh SSRC and the
+            // engine's preferred codec is used (`normalize_sender_track` fills the SSRC in).
             if init.direction.has_send() && init.send_encodings.is_empty() {
-                return Err(Error::ErrInvalidDirection);
+                init.send_encodings
+                    .push(crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters::default());
             }
 
             init
@@ -2471,11 +2671,59 @@ impl RTCPeerConnection {
         self.update_ice_agent_stats(now);
         // Update codec stats from transceivers before taking snapshot
         self.update_codec_stats();
-        self.pipeline_context
+        let mut report = self
+            .pipeline_context
             .stats
-            .snapshot_with_selector(now, selector)
+            .snapshot_with_selector(now, selector);
+
+        // The SCTP association and the receivers' source lists are read live rather than
+        // maintained as parallel accumulator copies: their state is cumulative, so a fresh
+        // read each call is equivalent and cannot drift.
+        if let Some(sctp) = self
+            .pipeline_context
+            .sctp_handler_context
+            .sctp_transport
+            .stats(now)
+        {
+            report.push_entry(RTCStatsReportEntry::SctpTransport(sctp));
+        }
+        self.append_contributing_source_stats(now, &mut report);
+
+        report
+    }
+
+    /// Appends one `csrc` stats entry per (inbound stream, CSRC) pair that contributed
+    /// within the receiver's source memory window.
+    ///
+    /// The stream id in each entry mirrors the accumulator's inbound-stream id
+    /// (`RTCInboundRTPStream_{kind}_{ssrc}`) so a consumer can join the two entries.
+    fn append_contributing_source_stats(&self, now: Instant, report: &mut RTCStatsReport) {
+        for transceiver in &self.rtp_transceivers {
+            let Some(receiver) = transceiver.receiver() else {
+                continue;
+            };
+            let kind = receiver.kind();
+            for track_ssrc in receiver.track().ssrcs() {
+                for csrc in receiver.get_contributing_sources() {
+                    report.push_entry(RTCStatsReportEntry::Csrc(RTCRTPContributingSourceStats {
+                        stats: RTCStats {
+                            timestamp: SystemInstant::now(now),
+                            typ: RTCStatsType::Csrc,
+                            id: format!("RTCRTPContributingSource_{track_ssrc}_{}", csrc.source),
+                        },
+                        contributor_ssrc: csrc.source,
+                        inbound_rtp_stream_id: format!("RTCInboundRTPStream_{kind}_{track_ssrc}"),
+                        packets_contributed_to: csrc.packets_contributed_to,
+                        audio_level: csrc.audio_level,
+                    }));
+                }
+            }
+        }
     }
 }
+
+#[cfg(test)]
+mod pion_cryptex_test;
 
 #[cfg(test)]
 mod tests {
@@ -2486,6 +2734,7 @@ mod tests {
     use crate::peer_connection::transport::RTCIceComponent;
     use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
     use sctp::AssociationHandle;
+    use std::time::Duration;
 
     #[test]
     fn with_sctp_receive_buffer_size_sets_and_clamps() {
@@ -2512,6 +2761,30 @@ mod tests {
                 "input {input} should clamp up to the 1500-byte floor"
             );
         }
+    }
+
+    // The four pion SCTP congestion/timer setters land on the engine verbatim;
+    // the transport forwards them into the association's TransportConfig (see
+    // `sctp_congestion_knobs_flow_into_the_transport_config`).
+    #[test]
+    fn sctp_congestion_setters_land_on_the_setting_engine() {
+        let setting_engine = SettingEngineBuilder::new()
+            .with_sctp_rto_max(Duration::from_secs(2))
+            .with_sctp_min_cwnd(64 * 1024)
+            .with_sctp_fast_rtx_wnd(16 * 1024)
+            .with_sctp_cwnd_ca_step(8 * 1024)
+            .build();
+        assert_eq!(setting_engine.sctp_rto_max, Some(Duration::from_secs(2)));
+        assert_eq!(setting_engine.sctp_min_cwnd, Some(64 * 1024));
+        assert_eq!(setting_engine.sctp_fast_rtx_wnd, Some(16 * 1024));
+        assert_eq!(setting_engine.sctp_cwnd_ca_step, Some(8 * 1024));
+
+        // Everything unset stays None — "keep the default", pion's 0 convention.
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert_eq!(setting_engine.sctp_rto_max, None);
+        assert_eq!(setting_engine.sctp_min_cwnd, None);
+        assert_eq!(setting_engine.sctp_fast_rtx_wnd, None);
+        assert_eq!(setting_engine.sctp_cwnd_ca_step, None);
     }
 
     // The graph the spec exposes: `pc.sctp` is the only way in, and the rest is walked.
@@ -2697,7 +2970,7 @@ mod tests {
             pc.ice_transport_mut()
                 .generate_restart_credentials(
                     "newufrag".to_owned(),
-                    "newpasswordlongenough".to_owned(),
+                    "newpasswordlongenough1234".to_owned(),
                 )
                 .expect("stage restart");
             pc.apply_ice_restart(Instant::now())
@@ -2766,7 +3039,7 @@ mod tests {
         pc.dtls_transport_mut().dtls_role = RTCDtlsRole::Client;
         pc.sctp_transport_mut()
             .sctp_associations
-            .insert(AssociationHandle(0), sctp::Association::default());
+            .insert(AssociationHandle(0), Box::new(sctp::Association::default()));
 
         let _dc = pc.create_data_channel("test", None).unwrap();
 
@@ -2798,7 +3071,7 @@ mod tests {
             .unwrap();
         pc.sctp_transport_mut()
             .sctp_associations
-            .insert(AssociationHandle(0), sctp::Association::default());
+            .insert(AssociationHandle(0), Box::new(sctp::Association::default()));
 
         let dc = pc.create_data_channel("test", None).unwrap();
         let id = dc.id();
@@ -3155,5 +3428,173 @@ mod tests {
                 .is_some(),
             "audio transceiver must be re-associated for the follow-up offer"
         );
+    }
+
+    // The two stats entries `get_stats` reads live rather than from the accumulator: the
+    // `sctp-transport` entry once an association exists, and `csrc` entries from the receivers'
+    // source lists. Both are cumulative state read at snapshot time.
+    #[test]
+    fn get_stats_reports_sctp_transport_and_contributing_sources() {
+        use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+        use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
+        use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
+        use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+        use crate::statistics::StatsSelector;
+        use crate::statistics::stats::RTCStatsType;
+
+        let mut media_engine = MediaEngine::default();
+        media_engine
+            .register_default_codecs()
+            .expect("register default codecs");
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .with_media_engine(media_engine)
+            .build(Instant::now())
+            .expect("build peer connection");
+
+        // Before any SCTP negotiation and before any media: neither entry exists.
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        assert!(report.sctp_transport().is_none());
+        assert_eq!(report.contributing_sources().count(), 0);
+
+        // Start SCTP as negotiation does. `start()` alone creates the endpoint but no
+        // association, which is when the entry should still be absent: reporting congestion
+        // state for an association that does not exist would be fiction.
+        pc.sctp_transport_mut()
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        assert!(
+            report.sctp_transport().is_none(),
+            "no association yet, so no sctp-transport entry"
+        );
+
+        // Once the association exists the entry reads live, so it appears without any
+        // accumulator bookkeeping.
+        pc.pipeline_context
+            .sctp_handler_context
+            .sctp_transport
+            .sctp_associations
+            .insert(
+                AssociationHandle(0),
+                Box::new(::sctp::Association::default()),
+            );
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        let sctp = report
+            .sctp_transport()
+            .expect("association exists: entry present");
+        assert_eq!(sctp.stats.id, "RTCSctpTransport");
+        assert_eq!(sctp.transport_id, "RTCTransport");
+        assert_eq!(sctp.stats.typ, RTCStatsType::SctpTransport);
+        // A default association has no measured state; the entry reports the zeros honestly.
+        assert_eq!(sctp.congestion_window, 0);
+        assert_eq!(sctp.bytes_sent, 0);
+
+        // csrc entries come from receivers that have seen CSRC-carrying packets. Register the
+        // stream on the receiver's track the way the inbound pipeline does, record a packet,
+        // and the entry must appear joined to that inbound stream's id.
+        pc.add_transceiver_from_kind(
+            crate::rtp_transceiver::rtp_sender::RtpCodecKind::Video,
+            None,
+        )
+        .expect("add transceiver");
+        let transceiver = pc.rtp_transceivers.last_mut().expect("transceiver");
+        let receiver = transceiver.receiver_mut().as_mut().expect("receiver");
+        receiver.track_mut().add_coding(RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(5000),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut header = rtp::Header::default();
+        header.ssrc = 5000;
+        header.csrc = vec![0x1111_1111];
+        receiver.on_rtp_packet(Instant::now(), &header);
+
+        let report = pc.get_stats(Instant::now(), StatsSelector::None);
+        let csrcs: Vec<_> = report.contributing_sources().collect();
+        assert_eq!(csrcs.len(), 1, "one csrc entry for one contributing source");
+        assert_eq!(csrcs[0].contributor_ssrc, 0x1111_1111);
+        assert_eq!(csrcs[0].packets_contributed_to, 1);
+        assert_eq!(
+            csrcs[0].inbound_rtp_stream_id, "RTCInboundRTPStream_video_5000",
+            "the entry joins to the inbound stream it contributed to"
+        );
+    }
+
+    /// pion `TestICELite`: against an ice-lite offer this side must take the controlling role,
+    /// because a lite agent never initiates checks.
+    #[test]
+    fn an_ice_lite_offer_makes_us_controlling() {
+        use crate::peer_connection::transport::ice::role::RTCIceRole;
+        use sansio::Protocol;
+
+        let lite_offer = "v=0\r
+o=- 4596489990601351948 2 IN IP4 127.0.0.1\r
+s=-\r
+t=0 0\r
+a=msid-semantic: WMS\r
+a=ice-lite\r
+m=application 47299 DTLS/SCTP 5000\r
+c=IN IP4 192.168.20.129\r
+a=ice-ufrag:1/MvHwjAyVf27aLu\r
+a=ice-pwd:3dBU7cFOBl120v33cynDvN1E\r
+a=fingerprint:sha-256 75:74:5A:A6:A4:E5:52:F4:A7:67:4C:01:C7:EE:91:3F:21:3D:A2:E3:53:7B:6F:30:86:F2:30:AA:65:FB:04:24\r
+a=mid:data\r
+";
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        pc.set_remote_description(
+            Instant::now(),
+            RTCSessionDescription::offer(lite_offer.to_owned()).unwrap(),
+        )
+        .unwrap();
+        let answer = pc.create_answer(None).unwrap();
+        pc.set_local_description(Instant::now(), answer).unwrap();
+        assert_eq!(pc.ice_transport().role(), RTCIceRole::Controlling);
+        pc.close().unwrap();
+    }
+    /// pion `TestPeerConnectionState`: the connection state derived from the ICE and DTLS
+    /// transport states, through to `Closed`.
+    #[test]
+    fn connection_state_follows_ice_and_dtls_transport_states() {
+        use RTCDtlsTransportState as D;
+        use RTCIceConnectionState as I;
+        use RTCPeerConnectionState as P;
+        use sansio::Protocol;
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        assert_eq!(pc.connection_state(), P::New);
+
+        let steps = [
+            (I::Checking, D::New, P::Connecting),
+            (I::Connected, D::New, P::Connecting),
+            (I::Connected, D::Connecting, P::Connecting),
+            (I::Connected, D::Connected, P::Connected),
+            (I::Completed, D::Connected, P::Connected),
+            (I::Connected, D::Closed, P::Connected),
+            (I::Disconnected, D::Connected, P::Disconnected),
+            (I::Failed, D::Connected, P::Failed),
+            (I::Connected, D::Failed, P::Failed),
+        ];
+        for (ice, dtls, want) in steps {
+            pc.ice_transport_mut().ice_connection_state = ice;
+            pc.dtls_transport_mut().state = dtls;
+            pc.update_connection_state(false);
+            assert_eq!(pc.connection_state(), want, "ice={ice:?} dtls={dtls:?}");
+        }
+
+        pc.close().unwrap();
+        assert_eq!(pc.connection_state(), P::Closed);
     }
 }

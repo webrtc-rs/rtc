@@ -85,6 +85,44 @@ pub(crate) struct SctpHandlerContext {
 }
 
 impl SctpHandlerContext {
+    /// Starts the client side of the association (the INIT) when this endpoint was configured as
+    /// the DTLS client. Idempotent: an association that exists is left alone.
+    ///
+    /// Called when the DTLS handshake completes, and when the SCTP transport is started over a
+    /// DTLS connection that is already up (a data channel added to a media-only session).
+    pub(crate) fn connect_client(&mut self, now: Instant) -> Result<()> {
+        let Some(sctp_transport_config) = self.sctp_transport.sctp_transport_config.clone() else {
+            return Ok(());
+        };
+        if !self.sctp_transport.sctp_associations.is_empty() {
+            return Ok(());
+        }
+        let (sctp_endpoint, sctp_associations) = (
+            self.sctp_transport
+                .sctp_endpoint
+                .as_mut()
+                .ok_or(Error::ErrSCTPNotEstablished)?,
+            &mut self.sctp_transport.sctp_associations,
+        );
+
+        debug!("sctp endpoint initiates connection for dtls client role");
+        let (ch, conn) = sctp_endpoint
+            .connect(
+                now,
+                ClientConfig::new(sctp_transport_config),
+                TransportContext::default().peer_addr,
+            )
+            .map_err(|e| Error::Other(e.to_string()))?;
+
+        sctp_associations.insert(ch, Box::new(conn));
+
+        // `connect` queued the client INIT. Mark dirty so poll_write emits it at the next flush
+        // instead of waiting for a later handle_* (the deferred flush is now the only transmit
+        // path).
+        self.flush_dirty = true;
+        Ok(())
+    }
+
     pub(crate) fn new(now: Instant, sctp_transport: SctpTransport) -> Self {
         Self {
             sctp_transport,
@@ -136,6 +174,20 @@ pub(crate) struct SctpHandler<'a> {
     /// Bounding against it would be a no-op. The queue that actually grows when the
     /// application stops consuming is the pipeline's, one hop downstream.
     downstream_backlog: usize,
+}
+
+impl super::WriteBypass for SctpHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        !self.ctx.flush_dirty
+            && !self.ctx.abort_requested
+            && self.ctx.write_outs.is_empty()
+            && pending
+                .iter()
+                .all(|msg| !matches!(msg.message, RTCMessageInternal::Dtls(DTLSMessage::Sctp(_))))
+    }
 }
 
 impl<'a> SctpHandler<'a> {
@@ -261,7 +313,7 @@ impl<'a> SctpHandler<'a> {
             return Ok(());
         }
 
-        let max_len = self.ctx.sctp_transport.internal_buffer.len();
+        let max_len = self.ctx.sctp_transport.max_message_len;
         let mut pending: Vec<(AssociationHandle, StreamId)> =
             self.ctx.pending_readable.iter().copied().collect();
         pending.sort_unstable();
@@ -403,7 +455,7 @@ impl<'a>
 
             // Both are read before `sctp_transport` is split up below, which would otherwise
             // conflict with the borrow of `sctp_associations`.
-            let max_len = self.ctx.sctp_transport.internal_buffer.len();
+            let max_len = self.ctx.sctp_transport.max_message_len;
             let mut budget = self.read_budget();
             let mut inbound_transport = None;
 
@@ -429,7 +481,7 @@ impl<'a>
                 inbound_transport = Some((ch, msg.transport));
                 match event {
                     DatagramEvent::NewAssociation(conn) => {
-                        sctp_associations.insert(ch, conn);
+                        sctp_associations.insert(ch, Box::new(conn));
                     }
                     DatagramEvent::AssociationEvent(event) => {
                         sctp_events.entry(ch).or_default().push_back(event);
@@ -641,7 +693,7 @@ impl<'a>
                 msg.transport.peer_addr
             );
 
-            if message.payload.len() > self.ctx.sctp_transport.internal_buffer.len() {
+            if message.payload.len() > self.ctx.sctp_transport.max_message_len {
                 return Err(Error::ErrOutboundPacketTooLarge);
             }
 
@@ -777,34 +829,7 @@ impl<'a>
         if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
-            if let Some(sctp_transport_config) =
-                self.ctx.sctp_transport.sctp_transport_config.clone()
-            {
-                let (sctp_endpoint, sctp_associations) = (
-                    self.ctx
-                        .sctp_transport
-                        .sctp_endpoint
-                        .as_mut()
-                        .ok_or(Error::ErrSCTPNotEstablished)?,
-                    &mut self.ctx.sctp_transport.sctp_associations,
-                );
-
-                debug!("sctp endpoint initiates connection for dtls client role");
-                let (ch, conn) = sctp_endpoint
-                    .connect(
-                        now,
-                        ClientConfig::new(sctp_transport_config),
-                        TransportContext::default().peer_addr,
-                    )
-                    .map_err(|e| Error::Other(e.to_string()))?;
-
-                sctp_associations.insert(ch, conn);
-
-                // `connect` queued the client INIT. Mark dirty so poll_write emits
-                // it at the next flush instead of waiting for a later handle_* (the
-                // deferred flush is now the only transmit path).
-                self.ctx.flush_dirty = true;
-            }
+            self.ctx.connect_client(now)?;
         }
 
         // The peer closed the DTLS transport the associations run over, so they are over too.
@@ -949,6 +974,7 @@ mod tests {
     };
     use crate::peer_connection::message::internal::DataChannelEvent;
     use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+    use crate::peer_connection::transport::sctp::SctpCongestionControls;
     use crate::peer_connection::transport::{RTCTransportId, TransportKind};
     use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
@@ -1345,14 +1371,14 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.max_message_len = SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize;
         transport.sctp_endpoint = Some(client_ep);
-        transport.sctp_associations.insert(ch, conn);
+        transport.sctp_associations.insert(ch, Box::new(conn));
         SctpHandlerContext::new(now, transport)
     }
 
@@ -1462,9 +1488,11 @@ mod tests {
         }
     }
 
-    /// An SCTP DATA message received before COOKIE-ACK must stay in the association's receive
-    /// queue.  Once COOKIE-ACK establishes the association, the same message is delivered exactly
-    /// once, allowing the DataChannel handler to announce `OnOpen` only after SCTP is ready.
+    /// An SCTP DATA message received before COOKIE-ACK is ignored, as pion's association ignores
+    /// it (`TestAssociationDataIgnoredOutsideReceiveStates`): nothing reaches the DataChannel
+    /// handler and nothing is queued. The peer, which never got a SACK for it, sends it again,
+    /// and the retransmission is delivered exactly once once COOKIE-ACK has established the
+    /// association, so the DataChannel handler announces `OnOpen` only after SCTP is ready.
     #[test]
     fn inbound_data_waits_for_sctp_handshake() {
         let now = Instant::now();
@@ -1472,7 +1500,7 @@ mod tests {
 
         {
             let mut handler = SctpHandler::new(&mut ctx, 0);
-            for dgram in early_data {
+            for dgram in early_data.iter().cloned() {
                 handler
                     .handle_read(raw_read(now, dgram))
                     .expect("early DATA");
@@ -1483,10 +1511,9 @@ mod tests {
             ctx.read_outs.is_empty(),
             "handshaking SCTP data must not reach the DataChannel handler"
         );
-        assert_eq!(
-            ctx.pending_readable.len(),
-            1,
-            "the readable stream must be retried after SCTP connects"
+        assert!(
+            ctx.pending_readable.is_empty(),
+            "DATA before the association is established is ignored, not queued"
         );
 
         {
@@ -1495,6 +1522,20 @@ mod tests {
                 handler
                     .handle_read(raw_read(now, dgram))
                     .expect("COOKIE-ACK");
+            }
+        }
+        assert!(
+            ctx.read_outs.is_empty(),
+            "the ignored DATA is not delivered by the handshake completing"
+        );
+
+        // The peer's retransmission of it, now that the association is established.
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            for dgram in early_data {
+                handler
+                    .handle_read(raw_read(now, dgram))
+                    .expect("retransmitted DATA");
             }
         }
 
@@ -1914,15 +1955,15 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.max_message_len = SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize;
         transport.sctp_endpoint = Some(client_ep);
-        transport.sctp_associations.insert(ch_a, conn_a);
-        transport.sctp_associations.insert(ch_b, conn_b);
+        transport.sctp_associations.insert(ch_a, Box::new(conn_a));
+        transport.sctp_associations.insert(ch_b, Box::new(conn_b));
         let mut ctx = SctpHandlerContext::new(now, transport);
 
         {
@@ -1979,12 +2020,12 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
-        transport
-            .internal_buffer
-            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.max_message_len = SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize;
         transport.sctp_endpoint = Some(Endpoint::new(
             client_addr(),
             TransportProtocol::UDP,

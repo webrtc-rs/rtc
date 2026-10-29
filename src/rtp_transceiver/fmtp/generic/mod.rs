@@ -27,6 +27,8 @@ fn fmtp_consist(a: &HashMap<String, String>, b: &HashMap<String, String>) -> boo
 #[derive(Debug, PartialEq)]
 pub(crate) struct GenericFmtp {
     pub(crate) mime_type: String,
+    pub(crate) clock_rate: u32,
+    pub(crate) channels: u16,
     pub(crate) parameters: HashMap<String, String>,
 }
 
@@ -43,7 +45,9 @@ impl Fmtp for GenericFmtp {
                 return false;
             }
 
-            fmtp_consist(&self.parameters, &c.parameters)
+            clock_rate_equal(&self.mime_type, self.clock_rate, c.clock_rate)
+                && channels_equal(&self.mime_type, self.channels, c.channels)
+                && fmtp_consist(&self.parameters, &c.parameters)
         } else {
             false
         }

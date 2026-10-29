@@ -36,7 +36,8 @@ impl Packet for Goodbye {
     /// Header returns the Header associated with this packet.
     fn header(&self) -> Header {
         Header {
-            padding: get_padding_size(self.raw_size()) != 0,
+            // The reason text is padded with zero octets (RFC 3550 §6.6); the P bit stays clear.
+            padding: false,
             count: self.sources.len() as u8,
             packet_type: PacketType::Goodbye,
             length: ((self.marshal_size() / 4) - 1) as u16,
@@ -50,7 +51,12 @@ impl Packet for Goodbye {
 
     fn raw_size(&self) -> usize {
         let srcs_length = self.sources.len() * SSRC_LENGTH;
-        let reason_length = self.reason.len() + 1;
+        // The reason is optional: with none there is no length octet either.
+        let reason_length = if self.reason.is_empty() {
+            0
+        } else {
+            self.reason.len() + 1
+        };
 
         HEADER_LENGTH + srcs_length + reason_length
     }
@@ -113,13 +119,13 @@ impl Marshal for Goodbye {
             buf.put_u32(*source);
         }
 
-        buf.put_u8(self.reason.len() as u8);
         if !self.reason.is_empty() {
+            buf.put_u8(self.reason.len() as u8);
             buf.put(self.reason.clone());
         }
 
-        if h.padding {
-            put_padding(buf, self.raw_size());
+        for _ in 0..get_padding_size(self.raw_size()) {
+            buf.put_u8(0);
         }
 
         Ok(self.marshal_size())

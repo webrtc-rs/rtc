@@ -1,0 +1,41 @@
+[package]
+name = "rtc-mdns-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.11.0"
+sansio = "1"
+
+[dependencies.rtc-mdns]
+path = ".."
+
+[dependencies.shared]
+path = "../../rtc-shared"
+package = "rtc-shared"
+default-features = false
+
+[dependencies.crypto]
+path = "../../rtc-crypto"
+package = "rtc-crypto"
+features = ["crypto-ring"]
+
+[dependencies.stun]
+path = "../../rtc-stun"
+package = "rtc-stun"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "mdns_handle_read"
+path = "fuzz_targets/mdns_handle_read.rs"
+test = false
+doc = false
+bench = false

@@ -107,8 +107,8 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 // buffering to enable zero-allocation encoding and decoding,
 // so there are some usage constraints:
 //
-// 	Message, its fields, results of m.Get or any attribute a.GetFrom
-//	are valid only until Message.Raw is not modified.
+//      Message, its fields, results of m.Get or any attribute a.GetFrom
+//      are valid only until Message.Raw is not modified.
 #[derive(Default, Debug, Clone)]
 /// A STUN message: type, transaction id, and attributes, plus the encoded bytes.
 pub struct Message {
@@ -151,10 +151,11 @@ impl PartialEq for Message {
         if self.length != other.length {
             return false;
         }
-        if self.attributes != other.attributes {
-            return false;
-        }
-        true
+        self.attributes.len() == other.attributes.len()
+            && self
+                .iter_attributes()
+                .zip(other.iter_attributes())
+                .all(|(a, b)| a == b)
     }
 }
 
@@ -211,7 +212,12 @@ impl Message {
 
     /// Reset resets Message, attributes and underlying buffer length.
     pub fn reset(&mut self) {
-        self.raw.clear();
+        // What stays is a zeroed header, so the next `add` appends right after it.
+        self.raw.truncate(MESSAGE_HEADER_SIZE);
+        if self.raw.len() < MESSAGE_HEADER_SIZE {
+            self.raw.resize(MESSAGE_HEADER_SIZE, 0);
+        }
+        self.raw[..MESSAGE_HEADER_SIZE].copy_from_slice(&[0; MESSAGE_HEADER_SIZE]);
         self.length = 0;
         self.attributes.0.clear();
     }
@@ -224,7 +230,10 @@ impl Message {
             }
             return;
         }
-        self.raw.extend_from_slice(&vec![0; n - self.raw.len()]);
+        // `resize` (not `extend` of a temporary zeroed Vec): growing the
+        // buffer back after a reset must not allocate (pion's
+        // TestAllocations pins zero allocations on the reset/write path).
+        self.raw.resize(n, 0);
     }
 
     /// Add appends new attribute to message. Not goroutine-safe.
@@ -241,43 +250,35 @@ impl Message {
         // [first:last]                         <- same as previous
         // [0 1|2 3|4    4 + len(v)]            <- mapping for allocated buffer
         //   T   L        V
-        let alloc_size = ATTRIBUTE_HEADER_SIZE + v.len(); // ~ len(TLV) = len(TL) + len(V)
+        let len = v.len();
+        let pad = nearest_padded_value_length(len) - len;
         let first = MESSAGE_HEADER_SIZE + self.length as usize; // first byte number
-        let mut last = first + alloc_size; // last byte number
-        self.grow(last, true); // growing cap(Raw) to fit TLV
-        self.length += alloc_size as u32; // rendering length change
 
-        // Encoding attribute TLV to allocated buffer.
-        let buf = &mut self.raw[first..last];
-        buf[0..2].copy_from_slice(&t.value().to_be_bytes()); // T
-        buf[2..4].copy_from_slice(&(v.len() as u16).to_be_bytes()); // L
-
-        let value = &mut buf[ATTRIBUTE_HEADER_SIZE..];
-        value.copy_from_slice(v); // V
-
-        let attr = RawAttribute {
-            typ: t,                 // T
-            length: v.len() as u16, // L
-            value: value.to_vec(),  // V
-        };
-
-        // Checking that attribute value needs padding.
-        if !(attr.length as usize).is_multiple_of(PADDING) {
-            // Performing padding.
-            let bytes_to_add = nearest_padded_value_length(v.len()) - v.len();
-            last += bytes_to_add;
-            self.grow(last, true);
-            // setting all padding bytes to zero
-            // to prevent data leak from previous
-            // data in next bytes_to_add bytes
-            let buf = &mut self.raw[last - bytes_to_add..last];
-            for b in buf {
-                *b = 0;
-            }
-            self.length += bytes_to_add as u32; // rendering length change
+        // The TLV is appended at `first`, replacing whatever `raw` held from there on. Right
+        // after a reset that is nothing, and the header's bytes before it are zeroed.
+        self.raw.resize(first, 0);
+        let [t0, t1] = t.value().to_be_bytes(); // T
+        let [l0, l1] = (len as u16).to_be_bytes(); // L
+        self.raw.extend_from_slice(&[t0, t1, l0, l1]);
+        // V. Most values are one of a few small sizes; a fixed size copies without a call.
+        if let Ok(v) = <&[u8; 4]>::try_from(v) {
+            self.raw.extend_from_slice(v);
+        } else if let Ok(v) = <&[u8; 8]>::try_from(v) {
+            self.raw.extend_from_slice(v);
+        } else {
+            self.raw.extend_from_slice(v);
         }
-        self.attributes.0.push(attr);
-        self.write_length();
+        if pad != 0 {
+            self.raw.extend_from_slice(&[0; PADDING][..pad]); // zeroed padding
+        }
+
+        self.length += (ATTRIBUTE_HEADER_SIZE + len + pad) as u32; // rendering length change
+        self.attributes.0.push(Span {
+            typ: t,
+            start: (first + ATTRIBUTE_HEADER_SIZE) as u32,
+            len: len as u16,
+        });
+        self.raw[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
     }
 
     /// WriteLength writes m.Length to m.Raw.
@@ -303,13 +304,32 @@ impl Message {
         // transaction ID
     }
 
-    /// WriteAttributes encodes all m.Attributes to m.
+    /// WriteAttributes lays the attributes out again in `raw`, one after another with their
+    /// padding, and sets the message length to match.
+    ///
+    /// Attributes only ever move towards the start of `raw` (decoding can leave gaps where it
+    /// dropped some), so each value is moved within the buffer.
     pub fn write_attributes(&mut self) {
-        let attributes: Vec<RawAttribute> = std::mem::take(&mut self.attributes.0);
-        for a in &attributes {
-            self.add(a.typ, &a.value);
+        let mut end = MESSAGE_HEADER_SIZE;
+        for span in &mut self.attributes.0 {
+            let (from, len) = (span.start as usize, span.len as usize);
+            let start = end + ATTRIBUTE_HEADER_SIZE;
+            let padded_end = start + nearest_padded_value_length(len);
+            if self.raw.len() < padded_end.max(from + len) {
+                self.raw.resize(padded_end.max(from + len), 0);
+            }
+            if from != start {
+                self.raw.copy_within(from..from + len, start);
+            }
+            self.raw[end..end + 2].copy_from_slice(&span.typ.value().to_be_bytes());
+            self.raw[end + 2..start].copy_from_slice(&span.len.to_be_bytes());
+            self.raw[start + len..padded_end].fill(0);
+            span.start = start as u32;
+            end = padded_end;
         }
-        self.attributes = Attributes(attributes);
+        self.raw.truncate(end);
+        self.length = (end - MESSAGE_HEADER_SIZE) as u32;
+        self.write_length();
     }
 
     /// WriteType writes m.Type to m.Raw.
@@ -326,14 +346,15 @@ impl Message {
 
     /// Encode re-encodes message into m.Raw.
     pub fn encode(&mut self) {
-        self.raw.clear();
         self.write_header();
-        self.length = 0;
         self.write_attributes();
     }
 
     /// Decode decodes m.Raw into m.
     pub fn decode(&mut self) -> Result<()> {
+        // The attributes point into `raw`, which has just been replaced.
+        self.attributes.0.clear();
+
         // decoding message header
         let buf = &self.raw;
         if buf.len() < MESSAGE_HEADER_SIZE {
@@ -365,9 +386,11 @@ impl Message {
             .0
             .copy_from_slice(&buf[8..MESSAGE_HEADER_SIZE]);
 
-        self.attributes.0.clear();
+        // The attribute list keeps its capacity from the previous decode, so decoding into one
+        // long-lived message allocates nothing in steady state.
         let mut offset = 0;
         let mut b = &buf[MESSAGE_HEADER_SIZE..full_size];
+        let (mut seen_mi, mut seen_mi256) = (false, false);
 
         while offset < size {
             // checking that we have enough bytes to read header
@@ -379,12 +402,9 @@ impl Message {
                 )));
             }
 
-            let mut a = RawAttribute {
-                typ: compat_attr_type(u16::from_be_bytes([b[0], b[1]])), // first 2 bytes
-                length: u16::from_be_bytes([b[2], b[3]]),                // second 2 bytes
-                ..Default::default()
-            };
-            let a_l = a.length as usize; // attribute length
+            let typ = compat_attr_type(u16::from_be_bytes([b[0], b[1]])); // first 2 bytes
+            let length = u16::from_be_bytes([b[2], b[3]]); // second 2 bytes
+            let a_l = length as usize; // attribute length
             let a_buff_l = nearest_padded_value_length(a_l); // expected buffer length (with padding)
 
             b = &b[ATTRIBUTE_HEADER_SIZE..]; // slicing again to simplify value read
@@ -395,14 +415,32 @@ impl Message {
                     "buffer length {} is less than {} (expected value size for {})",
                     b.len(),
                     a_buff_l,
-                    a.typ
+                    typ
                 )));
             }
-            a.value = b[..a_l].to_vec();
+            let value_start = MESSAGE_HEADER_SIZE + offset;
             offset += a_buff_l;
             b = &b[a_buff_l..];
 
-            self.attributes.0.push(a);
+            // RFC 8489 §14.5: after MESSAGE-INTEGRITY only MESSAGE-INTEGRITY-SHA256 and
+            // FINGERPRINT may follow; after MESSAGE-INTEGRITY-SHA256 (with no MESSAGE-INTEGRITY)
+            // only FINGERPRINT. Anything else is not covered by the integrity check and is dropped.
+            let is_mi = typ == ATTR_MESSAGE_INTEGRITY;
+            let is_mi256 = typ == ATTR_MESSAGE_INTEGRITY_SHA256;
+            let is_fingerprint = typ == ATTR_FINGERPRINT;
+            let after_mi = seen_mi && !is_mi256 && !is_fingerprint;
+            let after_mi256_only = !seen_mi && seen_mi256 && !is_fingerprint;
+            if after_mi || after_mi256_only {
+                continue;
+            }
+            seen_mi |= is_mi;
+            seen_mi256 |= is_mi256;
+
+            self.attributes.0.push(Span {
+                typ,
+                start: value_start as u32,
+                len: length,
+            });
         }
 
         Ok(())
@@ -445,26 +483,64 @@ impl Message {
         b.decode()
     }
 
+    /// The bytes of `span`'s value; empty if `raw` was cut short underneath it.
+    fn value_of(&self, span: &Span) -> &[u8] {
+        let start = span.start as usize;
+        self.raw
+            .get(start..start + span.len as usize)
+            .unwrap_or(&[])
+    }
+
+    /// The attributes, in order, with their values borrowed from the message.
+    pub fn iter_attributes(&self) -> impl ExactSizeIterator<Item = AttributeRef<'_>> + '_ {
+        self.attributes.0.iter().map(|span| AttributeRef {
+            typ: span.typ,
+            value: self.value_of(span),
+        })
+    }
+
+    /// The first attribute of type `t`, borrowed from the message.
+    pub fn find_attribute(&self, t: AttrType) -> Option<AttributeRef<'_>> {
+        self.attributes
+            .0
+            .iter()
+            .find(|span| span.typ == t)
+            .map(|span| AttributeRef {
+                typ: t,
+                value: self.value_of(span),
+            })
+    }
+
+    /// Removes the last attribute and its bytes, returning its type.
+    pub fn pop_attribute(&mut self) -> Option<AttrType> {
+        let span = self.attributes.0.pop()?;
+        let end = span.start as usize - ATTRIBUTE_HEADER_SIZE;
+        self.raw.truncate(end);
+        self.length = (end - MESSAGE_HEADER_SIZE) as u32;
+        self.write_length();
+        Some(span.typ)
+    }
+
     /// Contains return true if message contain t attribute.
     pub fn contains(&self, t: AttrType) -> bool {
-        for a in &self.attributes.0 {
-            if a.typ == t {
-                return true;
-            }
-        }
-        false
+        self.attributes.0.iter().any(|span| span.typ == t)
     }
 
     /// Get returns byte slice that represents attribute value,
     /// if there is no attribute with such type,
     /// ErrAttributeNotFound is returned.
     pub fn get(&self, t: AttrType) -> Result<Vec<u8>> {
-        let (v, ok) = self.attributes.get(t);
-        if ok {
-            Ok(v.value)
-        } else {
-            Err(Error::ErrAttributeNotFound)
-        }
+        self.get_value(t).map(<[u8]>::to_vec)
+    }
+
+    /// The value of the first attribute of type `t`, borrowed from the message.
+    ///
+    /// What the attribute getters use: [`get`](Self::get) returns an owned copy, which costs an
+    /// allocation per lookup.
+    pub fn get_value(&self, t: AttrType) -> Result<&[u8]> {
+        self.find_attribute(t)
+            .map(|attribute| attribute.value)
+            .ok_or(Error::ErrAttributeNotFound)
     }
 
     /// Resets the message and applies `setters` to it in order, returning on the first
@@ -494,6 +570,26 @@ impl Message {
     /// # }
     /// ```
     pub fn build(&mut self, setters: &[Box<dyn Setter + '_>]) -> Result<()> {
+        self.reset();
+        self.write_header();
+        for s in setters {
+            s.add_to(self)?;
+        }
+        Ok(())
+    }
+
+    /// [`build`](Self::build) for setters the caller already holds, which need no boxing:
+    ///
+    /// ```
+    /// use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut m = Message::new();
+    /// m.build_with(&[&BINDING_REQUEST, &TransactionId::new()])?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn build_with(&mut self, setters: &[&dyn Setter]) -> Result<()> {
         self.reset();
         self.write_header();
         for s in setters {
@@ -664,12 +760,12 @@ impl MessageType {
 
     /// Value returns bit representation of messageType.
     pub fn value(&self) -> u16 {
-        //	 0                 1
-        //	 2  3  4 5 6 7 8 9 0 1 2 3 4 5
-        //	+--+--+-+-+-+-+-+-+-+-+-+-+-+-+
-        //	|M |M |M|M|M|C|M|M|M|C|M|M|M|M|
-        //	|11|10|9|8|7|1|6|5|4|0|3|2|1|0|
-        //	+--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+        //       0                 1
+        //       2  3  4 5 6 7 8 9 0 1 2 3 4 5
+        //      +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
+        //      |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
+        //      |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
+        //      +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
         // Figure 3: Format of STUN Message Type Field
 
         // Warning: Abandon all hope ye who enter here.

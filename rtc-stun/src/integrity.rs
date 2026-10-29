@@ -44,7 +44,7 @@ impl<'a> Setter for MessageIntegrity<'a> {
     //
     // CPU costly, see BenchmarkMessageIntegrity_AddTo.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        for a in &m.attributes.0 {
+        for a in m.iter_attributes() {
             // Message should not contain FINGERPRINT attribute
             // before MESSAGE-INTEGRITY.
             if a.typ == ATTR_FINGERPRINT {
@@ -134,35 +134,32 @@ impl<'a> MessageIntegrity<'a> {
     ///
     /// CPU costly, see BenchmarkMessageIntegrity_Check.
     pub fn check(m: &mut Message, key: &[u8], crypto: &dyn RTCCrypto) -> Result<()> {
-        let v = m.get(ATTR_MESSAGE_INTEGRITY)?;
+        let v = m.get_value(ATTR_MESSAGE_INTEGRITY)?;
 
-        // Adjusting length in header to match m.Raw that was
-        // used when computing HMAC.
-
-        let length = m.length as usize;
-        let mut after_integrity = false;
-        let mut size_reduced = 0;
-
-        for a in &m.attributes.0 {
-            if after_integrity {
-                size_reduced += nearest_padded_value_length(a.length as usize);
-                size_reduced += ATTRIBUTE_HEADER_SIZE;
-            }
+        // The HMAC covers the message as it was when MESSAGE-INTEGRITY was added, so the header
+        // length is the size of the attributes up to and including MESSAGE-INTEGRITY. Attributes
+        // after it (FINGERPRINT, or ones decode dropped) are not part of it.
+        let mut covered = 0;
+        for a in m.iter_attributes() {
+            covered += ATTRIBUTE_HEADER_SIZE + nearest_padded_value_length(a.value.len());
             if a.typ == ATTR_MESSAGE_INTEGRITY {
-                after_integrity = true;
+                break;
             }
         }
-        m.length -= size_reduced as u32;
-        m.write_length();
         // start_of_hmac should be first byte of integrity attribute.
-        let start_of_hmac = MESSAGE_HEADER_SIZE + m.length as usize
-            - (ATTRIBUTE_HEADER_SIZE + MESSAGE_INTEGRITY_SIZE);
-        let b = &m.raw[..start_of_hmac]; // data before integrity attribute
+        let start_of_hmac = (MESSAGE_HEADER_SIZE + covered)
+            .saturating_sub(ATTRIBUTE_HEADER_SIZE + MESSAGE_INTEGRITY_SIZE);
+
+        // The MAC input is the raw message up to the integrity attribute with the header's length
+        // field replaced by `covered`. Feeding it in three pieces avoids rewriting the message's
+        // own header and restoring it afterwards.
+        let (Some(head), Some(tail)) = (m.raw.get(..2), m.raw.get(4..start_of_hmac)) else {
+            return Err(Error::ErrIntegrityMismatch);
+        };
+        let length = (covered as u16).to_be_bytes();
         let result = crypto
             .new_hmac(HmacAlgorithm::Sha1, key)
-            .and_then(|mut mac| mac.verify(&[b], &v));
-        m.length = length as u32;
-        m.write_length(); // writing length back
+            .and_then(|mut mac| mac.verify(&[head, &length, tail], v));
         match result {
             Ok(()) => Ok(()),
             Err(CryptoError::AuthenticationFailed | CryptoError::InvalidTagLength { .. }) => {

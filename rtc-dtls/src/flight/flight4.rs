@@ -8,7 +8,7 @@ use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
 use crate::curve::*;
-use crate::extension::extension_supported_elliptic_curves::*;
+use crate::extension::extension_alpn::*;
 use crate::extension::extension_supported_point_formats::*;
 use crate::extension::extension_use_extended_master_secret::*;
 use crate::extension::extension_use_srtp::*;
@@ -29,7 +29,6 @@ use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 
 use log::*;
 use std::fmt;
-use std::io::BufWriter;
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -280,12 +279,12 @@ impl Flight for Flight4 {
             {
                 let mut server_random = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+                    let mut writer = &mut server_random;
                     let _ = state.local_random.marshal(&mut writer);
                 }
                 let mut client_random = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+                    let mut writer = &mut client_random;
                     let _ = state.remote_random.marshal(&mut writer);
                 }
 
@@ -396,6 +395,11 @@ impl Flight for Flight4 {
                     };
                 }
 
+                // Report the session keys to the key logger, if one is configured. Emitted
+                // here — after either master-secret derivation path, before the suite is
+                // initialized — so the logged secret is the final one.
+                log_master_secret(cfg, &client_random, &state.master_secret);
+
                 if let Some(cipher_suite) = &mut state.cipher_suite
                     && let Err(err) = cipher_suite.init(
                         cfg.provider().clone(),
@@ -460,8 +464,20 @@ impl Flight for Flight4 {
         };
 
         // A psk suite is sent no CertificateRequest (see `generate`), so skip `client_auth`
-        // rather than fail it for a certificate it was never asked for.
+        // rather than fail it for a certificate it was never asked for. `verify_connection`
+        // still runs, as in pion.
         if state.is_cipher_suite_psk() {
+            if let Some(verify_connection) = &cfg.verify_connection
+                && let Err(err) = verify_connection(state)
+            {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::BadCertificate,
+                    }),
+                    Some(err),
+                ));
+            }
             return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
         }
 
@@ -513,9 +529,20 @@ impl Flight for Flight4 {
                     ));
                 }
             }
-            ClientAuthType::NoClientCert | ClientAuthType::RequestClientCert => {
-                return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
-            }
+            ClientAuthType::NoClientCert | ClientAuthType::RequestClientCert => {}
+        }
+
+        // Once the peer's Finished checks out, the application gets the final say, as in pion.
+        if let Some(verify_connection) = &cfg.verify_connection
+            && let Err(err) = verify_connection(state)
+        {
+            return Err((
+                Some(Alert {
+                    alert_level: AlertLevel::Fatal,
+                    alert_description: AlertDescription::BadCertificate,
+                }),
+                Some(err),
+            ));
         }
 
         Ok(Box::new(Flight6 {}) as Box<dyn Flight>)
@@ -527,9 +554,12 @@ impl Flight for Flight4 {
         _cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Vec<Packet>, (Option<Alert>, Option<Error>)> {
-        let mut extensions = vec![Extension::RenegotiationInfo(ExtensionRenegotiationInfo {
-            renegotiated_connection: 0,
-        })];
+        let mut extensions = vec![];
+        if state.peer_renegotiation_info {
+            extensions.push(Extension::RenegotiationInfo(ExtensionRenegotiationInfo {
+                renegotiated_connection: 0,
+            }));
+        }
         if (cfg.extended_master_secret == ExtendedMasterSecretType::Request
             || cfg.extended_master_secret == ExtendedMasterSecretType::Require)
             && state.extended_master_secret
@@ -545,52 +575,87 @@ impl Flight for Flight4 {
             }));
         }
 
-        if !state.is_cipher_suite_psk() {
-            extensions.extend_from_slice(&[
-                Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: cfg.local_named_curves.clone(),
-                }),
-                Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
-                    point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
-                }),
-            ]);
+        match alpn_protocol_selection(
+            &cfg.local_supported_protocols,
+            &state.peer_supported_protocols,
+        ) {
+            Ok(Some(selected)) => {
+                extensions.push(Extension::Alpn(ExtensionAlpn {
+                    protocols: vec![selected.to_owned()],
+                }));
+                state.negotiated_protocol = selected.to_owned();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::NoApplicationProtocol,
+                    }),
+                    Some(err),
+                ));
+            }
         }
+
+        // Only the point formats: a server does not answer with supported_groups (pion drops
+        // it too, `TestSupportedGroupsExtension`).
+        if !state.is_cipher_suite_psk() {
+            extensions.push(Extension::SupportedPointFormats(
+                ExtensionSupportedPointFormats {
+                    point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
+                },
+            ));
+        }
+
+        let server_hello = HandshakeMessageServerHello {
+            version: PROTOCOL_VERSION1_2,
+            random: state.local_random.clone(),
+            session_id: vec![],
+            cipher_suite: {
+                if let Some(cipher_suite) = &state.cipher_suite {
+                    cipher_suite.id()
+                } else {
+                    CipherSuiteId::Unsupported(0)
+                }
+            },
+            compression_method: default_compression_methods().ids[0],
+            extensions,
+        };
+        // The hook may replace the message entirely; its replacement is what is sent and
+        // hashed into the transcript, as in pion.
+        let server_hello_message = match &cfg.server_hello_message_hook {
+            Some(hook) => hook(server_hello),
+            None => HandshakeMessage::ServerHello(server_hello),
+        };
 
         let mut pkts = vec![Packet {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
                 0,
-                Content::Handshake(Handshake::new(HandshakeMessage::ServerHello(
-                    HandshakeMessageServerHello {
-                        version: PROTOCOL_VERSION1_2,
-                        random: state.local_random.clone(),
-                        cipher_suite: {
-                            if let Some(cipher_suite) = &state.cipher_suite {
-                                cipher_suite.id()
-                            } else {
-                                CipherSuiteId::Unsupported
-                            }
-                        },
-                        compression_method: default_compression_methods().ids[0],
-                        extensions,
-                    },
-                ))),
+                Content::Handshake(Handshake::new(server_hello_message)),
             ),
             should_encrypt: false,
             reset_local_sequence_number: false,
         }];
 
         if !state.is_cipher_suite_psk() {
-            let certificate = match cfg.get_certificate(&cfg.server_name) {
-                Ok(cert) => cert,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::HandshakeFailure,
-                        }),
-                        Some(err),
-                    ));
+            // The name the client asked for in its SNI, not this server's own configuration.
+            // The certificate was picked while negotiating the hello; the fallback covers a
+            // handshake driven directly through a `HandshakeConfig` without that step.
+            let certificate = if let Some(certificate) = &state.server_certificate {
+                certificate.clone()
+            } else {
+                match cfg.get_certificate(&state.server_name) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::HandshakeFailure,
+                            }),
+                            Some(err),
+                        ));
+                    }
                 }
             };
 
@@ -614,12 +679,12 @@ impl Flight for Flight4 {
 
             let mut server_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+                let mut writer = &mut server_random;
                 let _ = state.local_random.marshal(&mut writer);
             }
             let mut client_random = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+                let mut writer = &mut client_random;
                 let _ = state.remote_random.marshal(&mut writer);
             }
 
@@ -687,19 +752,24 @@ impl Flight for Flight4 {
             }
 
             if cfg.client_auth as u8 > ClientAuthType::NoClientCert as u8 {
+                let request = HandshakeMessageCertificateRequest {
+                    certificate_types: vec![
+                        ClientCertificateType::RsaSign,
+                        ClientCertificateType::EcdsaSign,
+                    ],
+                    signature_hash_algorithms: cfg.local_signature_schemes.clone(),
+                    certificate_authorities_names: vec![],
+                };
+                // The hook may rewrite the request — pion uses this to test scheme selection.
+                let request_message = match &cfg.certificate_request_message_hook {
+                    Some(hook) => hook(request),
+                    None => HandshakeMessage::CertificateRequest(request),
+                };
                 pkts.push(Packet {
                     record: RecordLayer::new(
                         PROTOCOL_VERSION1_2,
                         0,
-                        Content::Handshake(Handshake::new(HandshakeMessage::CertificateRequest(
-                            HandshakeMessageCertificateRequest {
-                                certificate_types: vec![
-                                    ClientCertificateType::RsaSign,
-                                    ClientCertificateType::EcdsaSign,
-                                ],
-                                signature_hash_algorithms: cfg.local_signature_schemes.clone(),
-                            },
-                        ))),
+                        Content::Handshake(Handshake::new(request_message)),
                     ),
                     should_encrypt: false,
                     reset_local_sequence_number: false,
@@ -851,14 +921,18 @@ mod tests {
         ];
 
         let mut cache = HandshakeCache::new();
-        cache.push(raw_certificate, 0, 0, HandshakeType::Certificate, true);
-        cache.push(
-            raw_client_key_exchange,
-            0,
-            1,
-            HandshakeType::ClientKeyExchange,
-            true,
-        );
+        cache
+            .push(raw_certificate, 0, 0, HandshakeType::Certificate, true)
+            .unwrap();
+        cache
+            .push(
+                raw_client_key_exchange,
+                0,
+                1,
+                HandshakeType::ClientKeyExchange,
+                true,
+            )
+            .unwrap();
 
         let cfg = HandshakeConfig::new(
             crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),

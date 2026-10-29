@@ -5,7 +5,6 @@ use crate::cipher_suite::*;
 use crate::handshake::*;
 
 use std::collections::HashMap;
-use std::io::BufReader;
 
 #[derive(Clone, Debug)]
 pub(crate) struct HandshakeCacheItem {
@@ -27,13 +26,34 @@ pub(crate) struct HandshakeCachePullRule {
 #[derive(Clone)]
 pub(crate) struct HandshakeCache {
     cache: Vec<HandshakeCacheItem>,
+    // Payload bytes held in `cache`.
+    size: usize,
+    // Set once the handshake has finished: the transcript is kept for retransmissions, but no
+    // new message is added to it.
+    complete: bool,
 }
+
+// Bound payload storage and metadata, including empty messages. Room for both peers'
+// certificate flights and the remaining transcript.
+pub(crate) const HANDSHAKE_CACHE_MAX_SIZE: usize = 4 * 2_000_000;
+pub(crate) const HANDSHAKE_CACHE_MAX_COUNT: usize = 1000;
 
 impl HandshakeCache {
     pub(crate) fn new() -> Self {
-        HandshakeCache { cache: vec![] }
+        HandshakeCache {
+            cache: vec![],
+            size: 0,
+            complete: false,
+        }
     }
 
+    /// Adds a message to the transcript, returning whether it was new. A message already held
+    /// (same epoch, sequence and direction) keeps its original bytes.
+    ///
+    /// # Errors
+    ///
+    /// Fails once the cache holds as many messages or bytes as it may: a peer must not be able to
+    /// grow it without bound by sending messages the handshake never asked for.
     pub(crate) fn push(
         &mut self,
         data: Vec<u8>,
@@ -41,13 +61,25 @@ impl HandshakeCache {
         message_sequence: u16,
         typ: HandshakeType,
         is_client: bool,
-    ) -> bool {
+    ) -> Result<bool> {
+        if self.complete {
+            return Ok(false);
+        }
         for i in &self.cache {
-            if i.message_sequence == message_sequence && i.is_client == is_client {
-                return false;
+            if i.epoch == epoch
+                && i.message_sequence == message_sequence
+                && i.is_client == is_client
+            {
+                return Ok(false);
             }
         }
+        if self.cache.len() >= HANDSHAKE_CACHE_MAX_COUNT
+            || data.len() > HANDSHAKE_CACHE_MAX_SIZE - self.size
+        {
+            return Err(Error::ErrHandshakeCacheOverflow);
+        }
 
+        self.size += data.len();
         self.cache.push(HandshakeCacheItem {
             typ,
             is_client,
@@ -56,7 +88,12 @@ impl HandshakeCache {
             data,
         });
 
-        true
+        Ok(true)
+    }
+
+    /// Keeps the transcript for retransmissions without retaining any new message.
+    pub(crate) fn finish(&mut self) {
+        self.complete = true;
     }
 
     // The caller authenticates the record first. Recognize the complete Finished or
@@ -163,7 +200,7 @@ impl HandshakeCache {
         for r in rules {
             let t = r.typ;
             if let Some(i) = ci.get(&t) {
-                let mut reader = BufReader::new(i.data.as_slice());
+                let mut reader = i.data.as_slice();
                 let raw_handshake = Handshake::unmarshal(&mut reader)?;
                 if seq as u16 != raw_handshake.handshake_header.message_sequence {
                     // There is a gap. Some messages are not arrived.

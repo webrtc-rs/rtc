@@ -6,6 +6,15 @@ use crate::integrity::MessageIntegrity;
 use crate::textattrs::TextAttribute;
 use std::io::{BufReader, BufWriter};
 
+/// A message holding `attrs`, in order, encoded the usual way.
+fn message_of(attrs: &[(u16, &[u8])]) -> Message {
+    let mut m = Message::default();
+    for (typ, value) in attrs {
+        m.add(AttrType(*typ), value);
+    }
+    m
+}
+
 #[test]
 fn test_message_buffer() -> Result<()> {
     let mut m = Message::new();
@@ -208,18 +217,9 @@ fn test_message_attr_length_less_than_header() -> Result<()> {
         method: METHOD_BINDING,
         class: CLASS_REQUEST,
     };
-    let message_attribute = RawAttribute {
-        length: 2,
-        value: vec![1, 2],
-        typ: AttrType(0x1),
-    };
-    let message_attributes = Attributes(vec![message_attribute]);
-    let mut m = Message {
-        typ: m_type,
-        transaction_id: TransactionId::new(),
-        attributes: message_attributes,
-        ..Default::default()
-    };
+    let mut m = message_of(&[(0x1, &[1, 2])]);
+    m.typ = m_type;
+    m.transaction_id = TransactionId::new();
     m.encode();
 
     let mut m_decoded = Message::new();
@@ -238,18 +238,9 @@ fn test_message_attr_size_less_than_length() -> Result<()> {
         method: METHOD_BINDING,
         class: CLASS_REQUEST,
     };
-    let message_attribute = RawAttribute {
-        length: 4,
-        value: vec![1, 2, 3, 4],
-        typ: AttrType(0x1),
-    };
-    let message_attributes = Attributes(vec![message_attribute]);
-    let mut m = Message {
-        typ: m_type,
-        transaction_id: TransactionId::new(),
-        attributes: message_attributes,
-        ..Default::default()
-    };
+    let mut m = message_of(&[(0x1, &[1, 2, 3, 4])]);
+    m.typ = m_type;
+    m.transaction_id = TransactionId::new();
     m.write_attributes();
     m.write_header();
     m.raw[3] = 5; // rewrite to bad length
@@ -393,22 +384,8 @@ fn test_attribute_equal() -> Result<()> {
 
 #[test]
 fn test_message_equal() -> Result<()> {
-    let attr = RawAttribute {
-        length: 2,
-        value: vec![0x1, 0x2],
-        typ: AttrType(0x1),
-    };
-    let attrs = Attributes(vec![attr]);
-    let a = Message {
-        attributes: attrs.clone(),
-        length: 4 + 2,
-        ..Default::default()
-    };
-    let b = Message {
-        attributes: attrs.clone(),
-        length: 4 + 2,
-        ..Default::default()
-    };
+    let a = message_of(&[(0x1, &[0x1, 0x2])]);
+    let b = message_of(&[(0x1, &[0x1, 0x2])]);
     assert_eq!(a, b, "should equal");
     assert_ne!(
         a,
@@ -441,102 +418,45 @@ fn test_message_equal() -> Result<()> {
         "should not equal"
     );
 
-    let t_attrs = Attributes(vec![RawAttribute {
-        length: 1,
-        value: vec![0x1],
-        typ: AttrType(0x1),
-    }]);
-    assert_ne!(
-        a,
-        Message {
-            attributes: t_attrs,
-            length: 4 + 2,
-            ..Default::default()
-        },
-        "should not equal"
-    );
-
-    let t_attrs = Attributes(vec![RawAttribute {
-        length: 2,
-        value: vec![0x1, 0x1],
-        typ: AttrType(0x2),
-    }]);
-    assert_ne!(
-        a,
-        Message {
-            attributes: t_attrs,
-            length: 4 + 2,
-            ..Default::default()
-        },
-        "should not equal"
-    );
+    assert_ne!(a, message_of(&[(0x1, &[0x1])]), "a shorter value");
+    assert_ne!(a, message_of(&[(0x2, &[0x1, 0x1])]), "another type");
+    assert_ne!(a, message_of(&[(0x1, &[0x1, 0x3])]), "another value");
 
     //"Nil attributes"
     {
-        let a = Message {
-            length: 4 + 2,
+        let none = Message {
+            length: a.length,
             ..Default::default()
         };
-        let mut b = Message {
-            attributes: attrs,
-            length: 4 + 2,
-            ..Default::default()
-        };
+        let mut b = a.clone();
 
-        assert_ne!(a, b, "should not equal");
-        assert_ne!(b, a, "should not equal");
+        assert_ne!(none, b, "should not equal");
+        assert_ne!(b, none, "should not equal");
         b.attributes = Attributes::default();
-        assert_eq!(a, b, "should equal");
+        assert_eq!(none, b, "should equal");
     }
 
     //"Attributes length"
     {
-        let attr = RawAttribute {
-            length: 2,
-            value: vec![0x1, 0x2],
-            typ: AttrType(0x1),
-        };
-        let attr1 = RawAttribute {
-            length: 2,
-            value: vec![0x1, 0x2],
-            typ: AttrType(0x1),
-        };
-        let a = Message {
-            attributes: Attributes(vec![attr.clone()]),
-            length: 4 + 2,
-            ..Default::default()
-        };
-        let b = Message {
-            attributes: Attributes(vec![attr, attr1]),
-            length: 4 + 2,
-            ..Default::default()
-        };
-        assert_ne!(a, b, "should not equal");
+        let one = message_of(&[(0x1, &[0x1, 0x2])]);
+        let two = message_of(&[(0x1, &[0x1, 0x2]), (0x1, &[0x1, 0x2])]);
+        assert_ne!(one, two, "should not equal");
     }
 
     //"Attributes values"
     {
-        let attr = RawAttribute {
-            length: 2,
-            value: vec![0x1, 0x2],
-            typ: AttrType(0x1),
-        };
-        let attr1 = RawAttribute {
-            length: 2,
-            value: vec![0x1, 0x1],
-            typ: AttrType(0x1),
-        };
-        let a = Message {
-            attributes: Attributes(vec![attr.clone(), attr.clone()]),
-            length: 4 + 2,
-            ..Default::default()
-        };
-        let b = Message {
-            attributes: Attributes(vec![attr, attr1]),
-            length: 4 + 2,
-            ..Default::default()
-        };
+        let a = message_of(&[(0x1, &[0x1, 0x2]), (0x1, &[0x1, 0x2])]);
+        let b = message_of(&[(0x1, &[0x1, 0x2]), (0x1, &[0x1, 0x1])]);
         assert_ne!(a, b, "should not equal");
+    }
+
+    //"Same attributes at other offsets"
+    {
+        let mut b = message_of(&[(0x7, &[9]), (0x1, &[0x1, 0x2])]);
+        b.pop_attribute();
+        b.pop_attribute();
+        b.add(AttrType(0x1), &[0x1, 0x2]);
+        assert_eq!(a, b, "equality reads the values, not where they sit");
     }
 
     Ok(())
@@ -752,5 +672,156 @@ fn test_message_marshal_binary() -> Result<()> {
 
     m.decode()?;
 
+    Ok(())
+}
+
+/// Decoding into a long-lived message reuses its attribute slots; whatever was in them before
+/// must never leak into the next message.
+#[test]
+fn test_decode_into_reused_message_never_leaks_previous_attributes() -> Result<()> {
+    let build = |attrs: Vec<(AttrType, &str)>| -> Result<Vec<u8>> {
+        let mut m = Message::default();
+        let mut setters: Vec<Box<dyn Setter>> =
+            vec![Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)];
+        for (typ, text) in attrs {
+            setters.push(Box::new(TextAttribute::new(typ, text.to_owned())));
+        }
+        m.build(&setters)?;
+        Ok(m.raw.clone())
+    };
+    let three = build(vec![
+        (ATTR_USERNAME, "alice:bob"),
+        (ATTR_REALM, "example.org"),
+        (ATTR_SOFTWARE, "a long software string"),
+    ])?;
+    let one = build(vec![(ATTR_USERNAME, "x")])?;
+    let none = build(vec![])?;
+
+    let mut reused = Message::default();
+    for raw in [&three, &one, &none, &three, &one] {
+        reused.write(raw)?;
+        let mut fresh = Message::default();
+        fresh.write(raw)?;
+        assert_eq!(reused.attributes, fresh.attributes);
+        assert_eq!(reused.length, fresh.length);
+    }
+    assert_eq!(reused.get_value(ATTR_USERNAME)?, b"x");
+    assert!(reused.get_value(ATTR_REALM).is_err());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Attribute value buffers are recycled across `reset`; none of that may show.
+
+fn build(m: &mut Message, attrs: &[(u16, &[u8])]) {
+    for (typ, value) in attrs {
+        m.add(AttrType(*typ), value);
+    }
+    m.write_header();
+}
+
+#[test]
+fn test_reset_recycles_value_buffers_without_leaking_old_bytes() {
+    let mut reused = Message::new();
+    // A long value first, so the buffer it leaves behind is bigger than what follows.
+    build(
+        &mut reused,
+        &[(0x0006, b"a-rather-long-username"), (0x0014, b"realm")],
+    );
+    reused.reset();
+    build(&mut reused, &[(0x0006, b"ab"), (0x0015, b"n")]);
+
+    let mut fresh = Message::new();
+    build(&mut fresh, &[(0x0006, b"ab"), (0x0015, b"n")]);
+
+    assert_eq!(reused.attributes.len(), 2);
+    let found: Vec<_> = reused
+        .iter_attributes()
+        .map(|a| (a.typ.0, a.value))
+        .collect();
+    assert_eq!(found, [(0x0006, &b"ab"[..]), (0x0015, &b"n"[..])]);
+    assert_eq!(
+        reused.raw[..],
+        fresh.raw[..],
+        "the encoding is the same bytes"
+    );
+    assert_eq!(reused, fresh);
+}
+
+#[test]
+fn test_padding_after_a_reset_is_zero() {
+    // The encoding's padding bytes must not be whatever the buffer held before.
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, &[0xff; 9])]);
+    m.reset();
+    build(&mut m, &[(0x0006, &[0xaa; 5])]);
+    let value_start = MESSAGE_HEADER_SIZE + ATTRIBUTE_HEADER_SIZE;
+    assert_eq!(&m.raw[value_start..value_start + 5], &[0xaa; 5]);
+    assert_eq!(&m.raw[value_start + 5..value_start + 8], &[0, 0, 0]);
+    assert_eq!(m.length, (ATTRIBUTE_HEADER_SIZE + 8) as u32);
+}
+
+#[test]
+fn test_reset_keeps_the_buffers_for_the_next_message() {
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, b"u"), (0x0014, b"r"), (0x0015, b"n")]);
+    let (raw, spans) = (m.raw.capacity(), m.attributes.0.capacity());
+    for _ in 0..100 {
+        m.reset();
+        build(&mut m, &[(0x0006, b"u"), (0x0014, b"r"), (0x0015, b"n")]);
+    }
+    assert_eq!((m.raw.capacity(), m.attributes.0.capacity()), (raw, spans));
+}
+
+#[test]
+fn test_pop_attribute_takes_back_the_last_one() -> Result<()> {
+    let mut m = message_of(&[(0x0006, b"user"), (0x0014, b"odd")]);
+    m.write_header();
+    let one = message_of(&[(0x0006, b"user")]);
+    assert_eq!(m.pop_attribute(), Some(AttrType(0x0014)));
+    assert_eq!(m.length, one.length);
+    assert_eq!(m.raw.len(), MESSAGE_HEADER_SIZE + m.length as usize);
+    assert_eq!(m.raw[2..4], (m.length as u16).to_be_bytes());
+    assert_eq!(m.get_value(AttrType(0x0006))?, b"user");
+    assert!(!m.contains(AttrType(0x0014)));
+    assert_eq!(m.pop_attribute(), Some(AttrType(0x0006)));
+    assert_eq!(m.pop_attribute(), None);
+    assert_eq!(m.length, 0);
+    Ok(())
+}
+
+#[test]
+fn test_encode_closes_the_gaps_decode_left() -> Result<()> {
+    // MESSAGE-INTEGRITY, then a USERNAME that decode drops, then FINGERPRINT.
+    let mut m = Message::new();
+    m.add(ATTR_MESSAGE_INTEGRITY, &[7; 20]);
+    m.add(ATTR_USERNAME, b"dropped");
+    m.add(ATTR_FINGERPRINT, &[1, 2, 3, 4]);
+    m.write_header();
+    let mut decoded = Message::new();
+    decoded.unmarshal_binary(&m.raw)?;
+    assert_eq!(decoded.attributes.len(), 2);
+
+    decoded.encode();
+    let mut again = Message::new();
+    again.unmarshal_binary(&decoded.raw)?;
+    assert_eq!(again, decoded);
+    assert_eq!(again.get_value(ATTR_FINGERPRINT)?, [1, 2, 3, 4]);
+    assert_eq!(decoded.raw.len(), MESSAGE_HEADER_SIZE + 24 + 8);
+    Ok(())
+}
+
+#[test]
+fn test_decode_after_a_build_cycle_is_unaffected() -> Result<()> {
+    let mut m = Message::new();
+    build(&mut m, &[(0x0006, b"user"), (0x0014, b"realm")]);
+    m.reset();
+    build(&mut m, &[(0x0015, b"nonce")]);
+
+    let mut decoded = Message::new();
+    decoded.raw = m.raw.clone();
+    decoded.decode()?;
+    assert_eq!(decoded.attributes.0.len(), 1);
+    assert_eq!(decoded.get_value(AttrType(0x0015))?, b"nonce");
     Ok(())
 }

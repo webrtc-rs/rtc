@@ -31,11 +31,13 @@ fn assert_basic_capabilities(crypto: &dyn RTCCrypto) {
         CryptoAlgorithm::BlockCipher(BlockCipherAlgorithm::Aes256),
         CryptoAlgorithm::StreamCipher(StreamCipherAlgorithm::Aes128Ctr),
         CryptoAlgorithm::StreamCipher(StreamCipherAlgorithm::Aes256Ctr),
+        CryptoAlgorithm::Cbc(CbcAlgorithm::Aes128Cbc),
         CryptoAlgorithm::Cbc(CbcAlgorithm::Aes256Cbc),
         CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Gcm),
         CryptoAlgorithm::Aead(AeadAlgorithm::Aes256Gcm),
         CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Ccm),
         CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Ccm8),
+        CryptoAlgorithm::Aead(AeadAlgorithm::Aes256Ccm8),
         CryptoAlgorithm::Aead(AeadAlgorithm::ChaCha20Poly1305),
         CryptoAlgorithm::KeyExchange(KeyExchangeAlgorithm::P256),
         CryptoAlgorithm::KeyExchange(KeyExchangeAlgorithm::P384),
@@ -204,7 +206,7 @@ pub fn assert_block_and_stream_ciphers(crypto: &dyn RTCCrypto) {
 
 /// Checks AES-CBC known-answer vectors and malformed inputs.
 pub fn assert_cbc(crypto: &dyn RTCCrypto) {
-    // NIST SP 800-38A F.2.5.
+    // NIST SP 800-38A F.2.5 (AES-256) and F.2.1 (AES-128).
     let key = bytes("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
     let iv = bytes("000102030405060708090a0b0c0d0e0f");
     let plaintext = bytes("6bc1bee22e409f96e93d7e117393172a");
@@ -216,8 +218,35 @@ pub fn assert_cbc(crypto: &dyn RTCCrypto) {
     cipher.decrypt_blocks(&iv, &mut blocks).unwrap();
     assert_eq!(blocks, plaintext);
 
+    let key128 = bytes("2b7e151628aed2a6abf7158809cf4f3c");
+    let plaintext128 = bytes(concat!(
+        "6bc1bee22e409f96e93d7e117393172a",
+        "ae2d8a571e03ac9c9eb76fac45af8e51",
+        "30c81c46a35ce411e5fbc1191a0a52ef",
+        "f69f2445df4f9b17ad2b417be66c3710"
+    ));
+    let mut blocks128 = plaintext128.clone();
+    let mut cipher128 = crypto.new_cbc(CbcAlgorithm::Aes128Cbc, &key128).unwrap();
+    assert_eq!(cipher128.block_len(), 16);
+    cipher128.encrypt_blocks(&iv, &mut blocks128).unwrap();
+    assert_eq!(
+        blocks128,
+        bytes(concat!(
+            "7649abac8119b246cee98e9b12e9197d",
+            "5086cb9b507219ee95db113a917678b2",
+            "73bed6b8e3c1743b7116e69e22229516",
+            "3ff1caa1681fac09120eca307586e1a7"
+        ))
+    );
+    cipher128.decrypt_blocks(&iv, &mut blocks128).unwrap();
+    assert_eq!(blocks128, plaintext128);
+
     assert!(matches!(
         crypto.new_cbc(CbcAlgorithm::Aes256Cbc, &[0; 31]),
+        Err(CryptoError::InvalidKeyLength { .. })
+    ));
+    assert!(matches!(
+        crypto.new_cbc(CbcAlgorithm::Aes128Cbc, &[0; 17]),
         Err(CryptoError::InvalidKeyLength { .. })
     ));
     assert!(matches!(
@@ -276,6 +305,32 @@ pub fn assert_aead(crypto: &dyn RTCCrypto) {
     );
     assert_eq!(ccm8_tag, bytes("484392fbc1b09951"));
 
+    // AES-256-CCM-8: same construction as the NIST SP 800-38C C.3 vector above
+    // with a 32-byte key. Independently cross-checked against pion/dtls's Go
+    // `ccm` package and a pure-Python RFC 3610 implementation while producing
+    // it (iamleson98/rtc#23).
+    let mut ccm8_256 = crypto
+        .new_aead(
+            AeadAlgorithm::Aes256Ccm8,
+            &bytes("404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"),
+        )
+        .unwrap();
+    let mut ccm8_256_buffer = bytes("202122232425262728292a2b2c2d2e2f3031323334353637");
+    let mut ccm8_256_tag = vec![0; ccm8_256.tag_len()];
+    ccm8_256
+        .seal_in_place(
+            &bytes("101112131415161718191a1b"),
+            &bytes("000102030405060708090a0b0c0d0e0f10111213"),
+            &mut ccm8_256_buffer,
+            &mut ccm8_256_tag,
+        )
+        .unwrap();
+    assert_eq!(
+        ccm8_256_buffer,
+        bytes("04f883aeb3bd0730eaf50bb6de4fa2212034e4e41b0e75e5")
+    );
+    assert_eq!(ccm8_256_tag, bytes("2b48c8766f7e7649"));
+
     let mut chacha = crypto
         .new_aead(
             AeadAlgorithm::ChaCha20Poly1305,
@@ -322,6 +377,7 @@ pub fn assert_aead(crypto: &dyn RTCCrypto) {
         (AeadAlgorithm::Aes256Gcm, 32),
         (AeadAlgorithm::Aes128Ccm, 16),
         (AeadAlgorithm::Aes128Ccm8, 16),
+        (AeadAlgorithm::Aes256Ccm8, 32),
         (AeadAlgorithm::ChaCha20Poly1305, 32),
     ];
     for (algorithm, key_len) in cases {

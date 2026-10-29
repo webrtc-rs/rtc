@@ -46,6 +46,12 @@ pub(crate) struct DtlsTransport {
     pub(crate) state: RTCDtlsTransportState,
     pub(crate) certificates: Vec<RTCCertificate>,
 
+    /// Cryptex (RFC 9335) for the SRTP contexts: `send` is how outgoing RTP is protected (decided
+    /// by what the peer can receive), `receive` what incoming RTP may be (decided by what we
+    /// declared we can receive).
+    pub(crate) cryptex_send_mode: ::srtp::context::cryptex::CryptexMode,
+    pub(crate) cryptex_receive_mode: ::srtp::context::cryptex::CryptexMode,
+
     // The peer's certificate chain in DER form, retained at handshake completion so
     // `get_remote_certificates()` has something to return. Previously the bytes reached
     // `update_dtls_stats_from_profile`, were hex-encoded into `RTCCertificateStats`, and then
@@ -59,9 +65,13 @@ pub(crate) struct DtlsTransport {
     /// Empty means "use the `dtls` crate's default set" (see
     /// [`SettingEngineBuilder::with_dtls_cipher_suites`](crate::peer_connection::configuration::setting_engine::SettingEngineBuilder::with_dtls_cipher_suites)).
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    pub(crate) dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType,
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
+    /// Where DTLS session key material is reported, from SettingEngine.
+    pub(crate) dtls_key_logger: Option<Arc<dyn ::dtls::config::KeyLogger>>,
 }
 
 pub(crate) struct RTCDtlsTransportConfig {
@@ -71,9 +81,12 @@ pub(crate) struct RTCDtlsTransportConfig {
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    pub(crate) dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType,
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
+    pub(crate) dtls_key_logger: Option<Arc<dyn ::dtls::config::KeyLogger>>,
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
 }
 
@@ -86,9 +99,12 @@ impl DtlsTransport {
             answering_dtls_role,
             srtp_protection_profiles,
             dtls_cipher_suites,
+            dtls_extended_master_secret,
+            dtls_retransmission_interval,
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
+            dtls_key_logger,
             crypto_provider,
         } = config;
         if !certificates.is_empty() {
@@ -117,14 +133,19 @@ impl DtlsTransport {
             dtls_endpoint: None,
             state: RTCDtlsTransportState::New,
             certificates,
+            cryptex_send_mode: Default::default(),
+            cryptex_receive_mode: Default::default(),
             remote_certificates: vec![],
 
             answering_dtls_role,
             srtp_protection_profiles,
             dtls_cipher_suites,
+            dtls_extended_master_secret,
+            dtls_retransmission_interval,
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
+            dtls_key_logger,
             crypto_provider,
         })
     }
@@ -219,7 +240,7 @@ impl DtlsTransport {
                                 .hash(HashAlgorithm::Sha256, &certs[0])
                                 .map_err(|error| Error::Crypto(error.to_string()))?;
                             let values: Vec<String> =
-                                hashed.iter().map(|x| format! {"{x:02x}"}).collect();
+                                hashed.iter().map(|x| format!("{x:02x}")).collect();
                             let remote_value = values.join(":").to_lowercase();
 
                             if remote_value == fp.value.to_lowercase() {
@@ -254,8 +275,13 @@ impl DtlsTransport {
                 .with_insecure_skip_verify(true)
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
                 .with_verify_peer_certificate(verify_peer_certificate)
-                .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
+                .with_key_logger(self.dtls_key_logger.clone())
+                .with_extended_master_secret(self.dtls_extended_master_secret)
                 .with_replay_protection_window(self.replay_protection.dtls)
+                .with_flight_interval(
+                    self.dtls_retransmission_interval
+                        .unwrap_or(std::time::Duration::from_secs(1)),
+                )
                 .build(self.dtls_role == RTCDtlsRole::Client, None)?,
         ))
     }
@@ -392,9 +418,12 @@ mod tests {
             answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
             srtp_protection_profiles: vec![],
             dtls_cipher_suites,
+            dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType::Require,
+            dtls_retransmission_interval: None,
             allow_insecure_verification_algorithm: false,
             disable_certificate_fingerprint_verification: false,
             replay_protection: ReplayProtection::default(),
+            dtls_key_logger: None,
             crypto_provider: crypto::default_provider().expect("test crypto provider"),
         })
         .expect("a self-signed ECDSA certificate is generated when none is supplied")
@@ -500,9 +529,12 @@ mod tests {
                 answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
                 srtp_protection_profiles: profiles,
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: ::dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: ReplayProtection::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider.clone(),
             })
         };

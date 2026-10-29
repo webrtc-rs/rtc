@@ -1,4 +1,6 @@
 use std::net::IpAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use super::*;
@@ -14,6 +16,10 @@ pub(crate) const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The default time till an Agent transitions disconnected.
 pub(crate) const DEFAULT_DISCONNECTED_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The default time till a lite Agent transitions disconnected: the consent-expiry period of
+/// RFC 7675, since a lite agent has no checks of its own to learn the path died sooner.
+pub(crate) const DEFAULT_LITE_DISCONNECTED_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The default time till an Agent transitions to failed after disconnected.
 pub(crate) const DEFAULT_FAILED_TIMEOUT: Duration = Duration::from_secs(25);
@@ -38,6 +44,106 @@ pub(crate) const MAX_BUFFER_SIZE: usize = 1000 * 1000; // 1MB
 
 /// Wait time before binding requests can be deleted.
 pub(crate) const MAX_BINDING_REQUEST_TIMEOUT: Duration = Duration::from_millis(4000);
+
+/// How long to wait between automatic renomination evaluations unless configured otherwise
+/// (pion's default, matching libwebrtc).
+pub(crate) const DEFAULT_RENOMINATION_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Produces the values the controlling agent stamps on renomination requests.
+///
+/// Each call must return a larger value than the one before it: the controlled agent keeps only
+/// the nomination with the highest value ("last nomination wins"). Zero means "no renomination
+/// value" and is never sent, so generators should start at 1.
+#[derive(Clone)]
+pub struct NominationValueGenerator(Arc<dyn Fn() -> u32 + Send + Sync>);
+
+impl NominationValueGenerator {
+    /// A generator backed by `f`.
+    pub fn new(f: impl Fn() -> u32 + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+
+    /// A generator that starts at 1 and increments on every call (pion's
+    /// `DefaultNominationValueGenerator`).
+    pub fn incrementing() -> Self {
+        let counter = AtomicU32::new(0);
+        Self::new(move || counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1))
+    }
+
+    /// The next nomination value.
+    pub fn generate(&self) -> u32 {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for NominationValueGenerator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NominationValueGenerator")
+    }
+}
+
+/// Decides which IP addresses an agent may use (pion's `IPFilter` / `RemoteIPFilter`): `true`
+/// keeps the address.
+#[derive(Clone)]
+pub struct IpFilter(Arc<dyn Fn(&IpAddr) -> bool + Send + Sync>);
+
+impl IpFilter {
+    /// A filter backed by `f`.
+    pub fn new(f: impl Fn(&IpAddr) -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+
+    pub(crate) fn allows(&self, ip: &IpAddr) -> bool {
+        (self.0)(ip)
+    }
+}
+
+impl std::fmt::Debug for IpFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IpFilter")
+    }
+}
+
+type BindingRequestFn =
+    dyn Fn(&stun::message::Message, &Candidate, &Candidate, &CandidatePair) -> bool + Send + Sync;
+
+/// A hook run for every Binding request an agent answers (pion's `BindingRequestHandler`): it
+/// sees the request, the candidates it travelled between and the pair, and returns `true` to
+/// make that pair the selected one.
+///
+/// This lets an application take over selection, for example to move to a pair its own
+/// signaling or policy prefers. A lite agent has no checks of its own, so a pair the handler
+/// approves is taken as valid straight away.
+#[derive(Clone)]
+pub struct BindingRequestHandler(Arc<BindingRequestFn>);
+
+impl BindingRequestHandler {
+    /// A handler backed by `f`.
+    pub fn new(
+        f: impl Fn(&stun::message::Message, &Candidate, &Candidate, &CandidatePair) -> bool
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(f))
+    }
+
+    pub(crate) fn call(
+        &self,
+        request: &stun::message::Message,
+        local: &Candidate,
+        remote: &Candidate,
+        pair: &CandidatePair,
+    ) -> bool {
+        (self.0)(request, local, remote, pair)
+    }
+}
+
+impl std::fmt::Debug for BindingRequestHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BindingRequestHandler")
+    }
+}
 
 pub(crate) fn default_candidate_types() -> Vec<CandidateType> {
     vec![
@@ -123,4 +229,52 @@ pub struct AgentConfig {
     /// Controls if self-signed certificates are accepted when connecting to TURN servers via TLS or
     /// DTLS.
     pub insecure_skip_verify: bool,
+
+    /// Enables ICE renomination (draft-thatcher-ice-renomination-01) with this value generator
+    /// (pion's `WithRenomination`). Without it the agent nominates once, as RFC 8445 describes.
+    pub renomination: Option<NominationValueGenerator>,
+
+    /// The STUN attribute type that carries the nomination value; `0xC001` when `None`
+    /// (pion's `WithNominationAttribute`). Zero is rejected.
+    pub nomination_attribute: Option<u16>,
+
+    /// Lets a controlling agent renominate by itself when a clearly better pair appears,
+    /// checking at this interval (pion's `WithAutomaticRenomination`; zero means 3 seconds).
+    /// Requires [`AgentConfig::renomination`].
+    pub automatic_renomination: Option<Duration>,
+
+    /// Makes a lite controlled agent also apply the priority rule when a nomination arrives
+    /// for a pair other than the selected one (pion's `WithEnableUseCandidateCheckPriority`).
+    /// Full agents always apply it.
+    pub enable_use_candidate_check_priority: bool,
+
+    /// Drops local candidates whose address the filter rejects (pion's `WithIPFilter`).
+    pub ip_filter: Option<IpFilter>,
+
+    /// Drops remote candidates whose address the filter rejects, including peer-reflexive
+    /// addresses learned from incoming checks (pion's `WithRemoteIPFilter`).
+    pub remote_ip_filter: Option<IpFilter>,
+
+    /// Runs for every Binding request the agent answers and may select the pair it came in on
+    /// (pion's `WithBindingRequestHandler`).
+    pub binding_request_handler: Option<BindingRequestHandler>,
+
+    /// Subtracted from the type preference of TCP candidates, so UDP is preferred over TCP;
+    /// 27 when `None` (pion's `WithTCPPriorityOffset`).
+    pub tcp_priority_offset: Option<u16>,
+}
+
+/// Deduplicates the configured network types and rejects values that are neither UDP nor TCP
+/// (pion's `sanitizeTransportNetworkTypes`).
+pub(crate) fn sanitize_network_types(types: &[NetworkType]) -> Result<Vec<NetworkType>> {
+    let mut seen = Vec::with_capacity(types.len());
+    for network_type in types {
+        if !network_type.is_udp() && !network_type.is_tcp() {
+            return Err(Error::ErrProtoType);
+        }
+        if !seen.contains(network_type) {
+            seen.push(*network_type);
+        }
+    }
+    Ok(seen)
 }

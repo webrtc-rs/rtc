@@ -4,7 +4,7 @@ mod vp8_test;
 use crate::packetizer::{Depacketizer, Payloader};
 use shared::error::{Error, Result};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// Bytes of mandatory VP8 payload descriptor prefixed to each payload.
 pub const VP8_HEADER_SIZE: usize = 1;
@@ -46,12 +46,10 @@ impl Payloader for Vp8Payloader {
          *     and MUST NOT be 1 otherwise.  The S bit MUST be set to 1 for the
          *     first packet of each encoded frame.
          */
+        // Like libwebrtc, always use the 15-bit PictureID so the descriptor size does not change
+        // mid-stream and SFUs can rewrite the PictureID in place.
         let using_header_size = if self.enable_picture_id {
-            if self.picture_id == 0 || self.picture_id < 128 {
-                VP8_HEADER_SIZE + 2
-            } else {
-                VP8_HEADER_SIZE + 3
-            }
+            VP8_HEADER_SIZE + 3
         } else {
             VP8_HEADER_SIZE
         };
@@ -78,16 +76,10 @@ impl Payloader for Vp8Payloader {
             }
 
             if self.enable_picture_id {
-                if using_header_size == VP8_HEADER_SIZE + 2 {
-                    buf[0] |= 0x80;
-                    buf[1] |= 0x80;
-                    buf[2] |= (self.picture_id & 0x7F) as u8;
-                } else if using_header_size == VP8_HEADER_SIZE + 3 {
-                    buf[0] |= 0x80;
-                    buf[1] |= 0x80;
-                    buf[2] |= 0x80 | ((self.picture_id >> 8) & 0x7F) as u8;
-                    buf[3] |= (self.picture_id & 0xFF) as u8;
-                }
+                buf[0] |= 0x80;
+                buf[1] |= 0x80;
+                buf[2] |= 0x80 | ((self.picture_id >> 8) & 0x7F) as u8;
+                buf[3] |= (self.picture_id & 0xFF) as u8;
             }
 
             out.put(&buf[..using_header_size]);
@@ -151,10 +143,6 @@ pub struct Vp8Packet {
 impl Depacketizer for Vp8Packet {
     /// depacketize parses the passed byte slice and stores the result in the VP8Packet this method is called upon
     fn depacketize(&mut self, packet: &Bytes) -> Result<Bytes> {
-        let payload_len = packet.len();
-        if payload_len < 4 {
-            return Err(Error::ErrShortPacket);
-        }
         //    0 1 2 3 4 5 6 7                      0 1 2 3 4 5 6 7
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //    |X|R|N|S|R| PID | (REQUIRED)        |X|R|N|S|R| PID | (REQUIRED)
@@ -169,70 +157,74 @@ impl Depacketizer for Vp8Packet {
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //T/K:|tid|Y| KEYIDX  | (OPTIONAL)
         //    +-+-+-+-+-+-+-+-+
+        let payload_len = packet.len();
+        let mut i = 0;
+        if i >= payload_len {
+            return Err(Error::ErrShortPacket);
+        }
+        self.x = (packet[i] & 0x80) >> 7;
+        self.n = (packet[i] & 0x20) >> 5;
+        self.s = (packet[i] & 0x10) >> 4;
+        self.pid = packet[i] & 0x07;
+        i += 1;
 
-        let reader = &mut packet.clone();
-        let mut payload_index = 0;
-
-        let mut b = reader.get_u8();
-        payload_index += 1;
-
-        self.x = (b & 0x80) >> 7;
-        self.n = (b & 0x20) >> 5;
-        self.s = (b & 0x10) >> 4;
-        self.pid = b & 0x07;
-
+        // Every optional field is reset when absent, so a reused `Vp8Packet` never reports a
+        // previous packet's descriptor.
+        (self.i, self.l, self.t, self.k) = (0, 0, 0, 0);
         if self.x == 1 {
-            b = reader.get_u8();
-            payload_index += 1;
-            self.i = (b & 0x80) >> 7;
-            self.l = (b & 0x40) >> 6;
-            self.t = (b & 0x20) >> 5;
-            self.k = (b & 0x10) >> 4;
+            if i >= payload_len {
+                return Err(Error::ErrShortPacket);
+            }
+            self.i = (packet[i] & 0x80) >> 7;
+            self.l = (packet[i] & 0x40) >> 6;
+            self.t = (packet[i] & 0x20) >> 5;
+            self.k = (packet[i] & 0x10) >> 4;
+            i += 1;
         }
 
+        self.picture_id = 0;
         if self.i == 1 {
-            b = reader.get_u8();
-            payload_index += 1;
-            // PID present?
-            if b & 0x80 > 0 {
-                // M == 1, PID is 16bit
-                self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
-                payload_index += 1;
+            if i >= payload_len {
+                return Err(Error::ErrShortPacket);
+            }
+            if packet[i] & 0x80 > 0 {
+                // M == 1, PictureID is 15 bits
+                if i + 1 >= payload_len {
+                    return Err(Error::ErrShortPacket);
+                }
+                self.picture_id = (((packet[i] & 0x7f) as u16) << 8) | packet[i + 1] as u16;
+                i += 2;
             } else {
-                self.picture_id = b as u16;
+                self.picture_id = packet[i] as u16;
+                i += 1;
             }
         }
 
-        if payload_index >= payload_len {
-            return Err(Error::ErrShortPacket);
-        }
-
+        self.tl0_pic_idx = 0;
         if self.l == 1 {
-            self.tl0_pic_idx = reader.get_u8();
-            payload_index += 1;
+            if i >= payload_len {
+                return Err(Error::ErrShortPacket);
+            }
+            self.tl0_pic_idx = packet[i];
+            i += 1;
         }
 
-        if payload_index >= payload_len {
-            return Err(Error::ErrShortPacket);
-        }
-
+        (self.tid, self.y, self.key_idx) = (0, 0, 0);
         if self.t == 1 || self.k == 1 {
-            let b = reader.get_u8();
+            if i >= payload_len {
+                return Err(Error::ErrShortPacket);
+            }
             if self.t == 1 {
-                self.tid = b >> 6;
-                self.y = (b >> 5) & 0x1;
+                self.tid = packet[i] >> 6;
+                self.y = (packet[i] >> 5) & 0x1;
             }
             if self.k == 1 {
-                self.key_idx = b & 0x1F;
+                self.key_idx = packet[i] & 0x1F;
             }
-            payload_index += 1;
+            i += 1;
         }
 
-        if payload_index >= packet.len() {
-            return Err(Error::ErrShortPacket);
-        }
-
-        Ok(packet.slice(payload_index..))
+        Ok(packet.slice(i..))
     }
 
     /// is_partition_head checks whether if this is a head of the VP8 partition

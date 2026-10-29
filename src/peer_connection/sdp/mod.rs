@@ -147,6 +147,7 @@
 //TODO: #[cfg(test)]
 //TODO: mod sdp_test;
 
+pub(crate) mod cryptex;
 pub(crate) mod sdp_type;
 pub(crate) mod session_description;
 
@@ -456,7 +457,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
         if attr.key.as_str() == SDP_ATTRIBUTE_RID {
             if let Err(err) = attr
                 .value
-                .as_ref()
+                .as_deref()
                 .ok_or(Error::SimulcastRidParseErrorSyntaxIdDirSplit)
                 .and_then(SimulcastRid::try_from)
                 .map(|rid| rids.push(rid))
@@ -464,7 +465,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
                 log::warn!("Failed to parse RID: {err}");
             }
         } else if attr.key.as_str() == SDP_ATTRIBUTE_SIMULCAST {
-            simulcast_attr.clone_from(&attr.value);
+            simulcast_attr = attr.value.as_ref().map(|value| value.to_string());
         }
     }
 
@@ -574,20 +575,20 @@ pub(crate) fn add_data_media_section(
 ) -> Result<SessionDescription> {
     let mut media = MediaDescription {
         media_name: MediaName {
-            media: MEDIA_SECTION_APPLICATION.to_owned(),
+            media: MEDIA_SECTION_APPLICATION.into(),
             port: RangedPort {
                 value: 9,
                 range: None,
             },
-            protos: vec!["UDP".to_owned(), "DTLS".to_owned(), "SCTP".to_owned()],
-            formats: vec!["webrtc-datachannel".to_owned()],
+            protos: vec!["UDP".into(), "DTLS".into(), "SCTP".into()],
+            formats: vec!["webrtc-datachannel".into()],
         },
         media_title: None,
         connection_information: Some(ConnectionInformation {
-            network_type: "IN".to_owned(),
-            address_type: "IP4".to_owned(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             address: Some(Address {
-                address: "0.0.0.0".to_owned(),
+                address: "0.0.0.0".into(),
                 ttl: None,
                 range: None,
             }),
@@ -662,6 +663,7 @@ impl RTCPeerConnection {
         );
 
         let transceiver = &mut transceivers[media_section.transceiver_index];
+        let cryptex = media_section.cryptex;
         let mut media =
             MediaDescription::new_jsep_media_description(transceiver.kind().to_string(), vec![])
                 .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
@@ -716,18 +718,13 @@ impl RTCPeerConnection {
             d = d.with_media(
                 MediaDescription {
                     media_name: MediaName {
-                        media: transceiver.kind().to_string(),
+                        media: transceiver.kind().to_string().into(),
                         port: RangedPort {
                             value: 0,
                             range: None,
                         },
-                        protos: vec![
-                            "UDP".to_owned(),
-                            "TLS".to_owned(),
-                            "RTP".to_owned(),
-                            "SAVPF".to_owned(),
-                        ],
-                        formats: vec!["0".to_owned()],
+                        protos: vec!["UDP".into(), "TLS".into(), "RTP".into(), "SAVPF".into()],
+                        formats: vec!["0".into()],
                     },
                     media_title: None,
                     // We need to include connection information even if we're rejecting a track, otherwise Firefox will fail to
@@ -735,10 +732,10 @@ impl RTCPeerConnection {
                     // SIPCC Failed to parse SDP: SDP Parse Error on line 50:  c= connection line not specified for every media level, validation failed.
                     // In addition this makes our SDP compliant with RFC 4566 Section 5.7: https://datatracker.ietf.org/doc/html/rfc4566#section-5.7
                     connection_information: Some(ConnectionInformation {
-                        network_type: "IN".to_owned(),
-                        address_type: "IP4".to_owned(),
+                        network_type: "IN".into(),
+                        address_type: "IP4".into(),
                         address: Some(Address {
-                            address: "0.0.0.0".to_owned(),
+                            address: "0.0.0.0".into(),
                             ttl: None,
                             range: None,
                         }),
@@ -835,6 +832,10 @@ impl RTCPeerConnection {
                 media
             }
         };
+
+        if cryptex {
+            media = media.with_property_attribute(ATTR_KEY_CRYPTEX.to_owned());
+        }
 
         media = media.with_property_attribute(transceiver.direction().to_string());
 
@@ -978,9 +979,9 @@ pub(crate) struct SimulcastRid {
     pub(crate) paused: bool,
 }
 
-impl TryFrom<&String> for SimulcastRid {
+impl TryFrom<&str> for SimulcastRid {
     type Error = Error;
-    fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         let mut split = value.split(' ');
         let id = split
             .next()
@@ -1016,6 +1017,9 @@ pub(crate) struct MediaSection {
     pub(crate) data: bool,
     pub(crate) match_extensions: HashMap<String, u16>,
     pub(crate) rid_map: Vec<SimulcastRid>,
+    /// Whether to write `a=cryptex` on this section (RFC 9335), for answers that must mirror a
+    /// media-level attribute in the offer.
+    pub(crate) cryptex: bool,
 }
 
 pub(crate) struct PopulateSdpParams {
@@ -1028,17 +1032,19 @@ pub(crate) struct PopulateSdpParams {
     pub(crate) sctp_max_message_size: usize,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
+    /// Whether to write `a=cryptex` at the session level (RFC 9335), if any section is active RTP.
+    pub(crate) cryptex_at_session_level: bool,
 }
 
 impl RTCPeerConnection {
     pub(crate) fn find_by_mid(
-        mid: &String,
+        mid: &str,
         local_transceivers: &[RTCRtpTransceiverInternal],
     ) -> Option<usize> {
         local_transceivers
             .iter()
             .enumerate()
-            .find(|(_i, t)| t.mid().as_ref() == Some(mid))
+            .find(|(_i, t)| t.mid().as_deref() == Some(mid))
             .map(|(i, _v)| i)
     }
 
@@ -1055,6 +1061,9 @@ impl RTCPeerConnection {
                 RTCRtpTransceiverDirection::Sendrecv => vec![
                     RTCRtpTransceiverDirection::Recvonly,
                     RTCRtpTransceiverDirection::Sendrecv,
+                    // A local sender-only transceiver can still carry what a sendrecv remote
+                    // offers: it becomes sendrecv (pion `satisfyTypeAndDirection`).
+                    RTCRtpTransceiverDirection::Sendonly,
                 ],
                 RTCRtpTransceiverDirection::Sendonly => vec![RTCRtpTransceiverDirection::Recvonly],
                 RTCRtpTransceiverDirection::Recvonly => vec![
@@ -1097,6 +1106,7 @@ impl RTCPeerConnection {
 
         let mut bundle_value = "BUNDLE".to_owned();
         let mut bundle_count = 0;
+        let mut have_active_rtp_media = false;
         let append_bundle = |mid_value: &str, value: &mut String, count: &mut i32| {
             *value = value.clone() + " " + mid_value;
             *count += 1;
@@ -1155,6 +1165,15 @@ impl RTCPeerConnection {
                     }
                 }
             }
+
+            // Session-level Cryptex is only worth writing if some RTP section is in use.
+            if !m.data
+                && let Some(desc) = d.media_descriptions.last()
+                && desc.media_name.port.value != 0
+                && desc.media_name.media != "application"
+            {
+                have_active_rtp_media = true;
+            }
         }
 
         if !params.media_description_fingerprint {
@@ -1176,6 +1195,11 @@ impl RTCPeerConnection {
             d = d.with_property_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED.to_owned());
         }
 
+        if params.cryptex_at_session_level && have_active_rtp_media {
+            // RFC 9335 §4
+            d = d.with_property_attribute(ATTR_KEY_CRYPTEX.to_owned());
+        }
+
         if bundle_count > 0 {
             d = d.with_value_attribute(ATTR_KEY_GROUP.to_owned(), bundle_value);
         }
@@ -1184,10 +1208,10 @@ impl RTCPeerConnection {
     }
 }
 
-pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&String> {
+pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&str> {
     for attr in &media.attributes {
         if attr.key == "mid" {
-            return attr.value.as_ref();
+            return attr.value.as_deref();
         }
     }
     None
@@ -1207,12 +1231,12 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
     let mut fingerprints = vec![];
 
     if let Some(fingerprint) = desc.attribute("fingerprint") {
-        fingerprints.push(fingerprint.clone());
+        fingerprints.push(fingerprint);
     }
 
     for m in &desc.media_descriptions {
         if let Some(fingerprint) = m.attribute("fingerprint").and_then(|o| o) {
-            fingerprints.push(fingerprint.to_owned());
+            fingerprints.push(fingerprint);
         }
     }
 
@@ -1238,6 +1262,7 @@ pub(crate) fn extract_ice_details(
     desc: &SessionDescription,
 ) -> Result<(String, String, Vec<Candidate>)> {
     let mut candidates = vec![];
+    let mut last_candidate_error = None;
 
     // Backup ufrag/pwd is the first inactive credentials found.
     // We will return the backup credentials to solve the corner case where
@@ -1247,8 +1272,8 @@ pub(crate) fn extract_ice_details(
     let mut backup_ufrag = None;
     let mut backup_pwd = None;
 
-    let mut remote_ufrag = desc.attribute("ice-ufrag").map(|s| s.as_str());
-    let mut remote_pwd = desc.attribute("ice-pwd").map(|s| s.as_str());
+    let mut remote_ufrag = desc.attribute("ice-ufrag");
+    let mut remote_pwd = desc.attribute("ice-pwd");
 
     for m in &desc.media_descriptions {
         let ufrag = m.attribute("ice-ufrag").and_then(|o| o);
@@ -1282,11 +1307,31 @@ pub(crate) fn extract_ice_details(
             if a.is_ice_candidate()
                 && let Some(value) = &a.value
             {
-                let c: Candidate = unmarshal_candidate(value)?;
-                //let candidate = RTCIceCandidate::from(&c);
-                candidates.push(c);
+                match unmarshal_candidate(value) {
+                    Ok(c) => candidates.push(c),
+                    // An unknown type or transport (legacy Chrome's `ssltcp`) is dropped, as
+                    // when it arrives through `add_remote_candidate`.
+                    Err(
+                        err @ (Error::ErrUnknownCandidateType | Error::ErrDetermineNetworkType),
+                    ) => {
+                        log::warn!("Discarding remote candidate: {err}");
+                    }
+                    // Any other bad candidate is skipped too; the description only fails if
+                    // nothing usable is left (pion `extractICEDetails`).
+                    Err(err) => {
+                        log::warn!("Failed to parse remote candidate {value:?}: {err}");
+                        last_candidate_error = Some(err);
+                    }
+                }
             }
         }
+    }
+
+    // Only invalid candidates were offered: surface the last error.
+    if candidates.is_empty()
+        && let Some(err) = last_candidate_error
+    {
+        return Err(err);
     }
 
     let remote_ufrag = remote_ufrag
@@ -1316,8 +1361,12 @@ pub(crate) trait MediaDescriptionExt {
 
 impl MediaDescriptionExt for MediaDescription {
     fn is_webrtc_datachannel(&self) -> bool {
+        // `UDP/DTLS/SCTP webrtc-datachannel` (RFC 8841) and the legacy `DTLS/SCTP 5000` with
+        // `a=sctpmap` (draft-ietf-mmusic-sctp-sdp-05) are both data channels; an application
+        // section carried over RTP (e.g. SMPTE 336M) is not.
         self.media_name.media == MEDIA_SECTION_APPLICATION
-            && self.media_name.formats == ["webrtc-datachannel"]
+            && (self.media_name.formats == ["webrtc-datachannel"]
+                || self.media_name.protos.iter().any(|proto| proto == "SCTP"))
     }
 }
 
@@ -1440,7 +1489,7 @@ pub(crate) fn codecs_from_media_description(
 
         out.push(RTCRtpCodecParameters {
             rtp_codec: RTCRtpCodec {
-                mime_type: m.media_name.media.clone() + "/" + codec.name.as_str(),
+                mime_type: format!("{}/{}", m.media_name.media, codec.name),
                 clock_rate: codec.clock_rate,
                 channels,
                 sdp_fmtp_line: codec.fmtp.clone(),
@@ -1494,8 +1543,9 @@ pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription)
         d.origin.session_id = origin.session_id;
 
         //d.Origin.SessionVersion = atomic.AddUint64(&origin.SessionVersion, 1)
+        // The description's own version is a fresh value; it must continue the saved one.
         origin.session_version += 1;
-        d.origin.session_version += 1;
+        d.origin.session_version = origin.session_version;
     }
 }
 
@@ -1522,6 +1572,43 @@ pub(crate) fn is_ext_map_allow_mixed_set(
 /// # Returns
 ///
 /// `true` if trickle ICE is supported, `false` otherwise
+/// Whether `ufrag` is the `ice-ufrag` of the session or of any of its media sections.
+pub(crate) fn description_contains_ufrag(desc: &SessionDescription, ufrag: &str) -> bool {
+    if desc
+        .attribute("ice-ufrag")
+        .is_some_and(|value| value == ufrag)
+    {
+        return true;
+    }
+
+    desc.media_descriptions.iter().any(|media| {
+        media
+            .attribute("ice-ufrag")
+            .and_then(|value| value)
+            .is_some_and(|value| value == ufrag)
+    })
+}
+
+/// Adds `value` to the session-level `ice-options` attribute, creating the attribute when there is
+/// none (pion's `addOrUpdateICEOption`). An option already listed is not repeated.
+pub(crate) fn add_ice_option(desc: &mut SessionDescription, value: &str) {
+    for attribute in &mut desc.attributes {
+        if attribute.key == "ice-options" {
+            match &mut attribute.value {
+                Some(existing) if !existing.is_empty() => {
+                    if !existing.split_whitespace().any(|option| option == value) {
+                        *existing = format!("{existing} {value}").into();
+                    }
+                }
+                other => *other = Some(value.into()),
+            }
+            return;
+        }
+    }
+
+    *desc = std::mem::take(desc).with_value_attribute("ice-options".to_owned(), value.to_owned());
+}
+
 pub(crate) fn has_ice_trickle_option(desc: &SessionDescription) -> bool {
     // Check session-level ice-options attribute
     if let Some(value) = desc.attribute("ice-options")

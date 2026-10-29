@@ -5,7 +5,10 @@ use super::bit_array::BitArray;
 /// The most media packets one FEC block can protect.
 ///
 /// The three packet masks describe 110 positions between them, so this is a property of the wire
-/// format rather than a tuning choice.
+/// format rather than a tuning choice. Note the draft-03 header's third mask is one bit narrower
+/// than the RFC's (see [`BitArray::mask3_draft03`]), so the 110th media packet's coverage bit
+/// falls off the written header — a quirk pion shares (`MaxMediaPackets = 110` while its own
+/// encoder tests cap at 109). Callers that need every packet describable should stay at 109.
 pub const MAX_MEDIA_PACKETS: u32 = 110;
 
 /// The most repair packets one block can produce.

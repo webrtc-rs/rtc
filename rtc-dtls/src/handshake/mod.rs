@@ -17,8 +17,16 @@ pub mod handshake_cache;
 pub mod handshake_header;
 /// Certificate: the sender's certificate chain.
 pub mod handshake_message_certificate;
+/// Certificate (TLS 1.3 body): the sender's certificate chain with per-certificate extensions.
+/// A standalone type — the 1.2 dispatch in [`HandshakeMessage`] is untouched, since both
+/// bodies share the type code and which one a record carries is decided by the negotiated
+/// version.
+pub mod handshake_message_certificate_13;
 /// CertificateRequest: the server asks the client to authenticate.
 pub mod handshake_message_certificate_request;
+/// CertificateRequest (TLS 1.3 body): the server asks the client to authenticate. A standalone
+/// type for the same reason as [`handshake_message_certificate_13`].
+pub mod handshake_message_certificate_request_13;
 /// CertificateVerify: proves possession of the certificate's private key.
 pub mod handshake_message_certificate_verify;
 /// ClientHello: opens the handshake with the client's offers.
@@ -43,6 +51,21 @@ mod handshake_test;
 
 use std::fmt;
 use std::io::{Read, Write};
+
+/// Reads a big-endian `u16` that may be absent: `None` at a clean end of input, an error when
+/// only one byte of it is there. For the extension block of a hello, which is optional.
+pub(crate) fn read_optional_u16<R: Read>(reader: &mut R) -> Result<Option<u16>> {
+    let mut buf = [0u8; 2];
+    let mut read = 0;
+    while read < 2 {
+        match reader.read(&mut buf[read..])? {
+            0 if read == 0 => return Ok(None),
+            0 => return Err(Error::ErrBufferTooSmall),
+            n => read += n,
+        }
+    }
+    Ok(Some(u16::from_be_bytes(buf)))
+}
 
 use super::content::*;
 use shared::error::*;

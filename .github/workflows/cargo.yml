@@ -18,23 +18,26 @@ jobs:
     name: Build
     strategy:
       matrix:
-        os: [ 'ubuntu-latest', 'macos-latest', 'windows-latest' ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build
-        run: cargo build --verbose
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo build --verbose
 
   test:
     name: Test (default backend)
     strategy:
       matrix:
-        os: [ 'ubuntu-latest' ] #, 'macos-latest', 'windows-latest' ]
+        os: [ 'ubuntu-latest' ] # Only Linux x64 runs in CI; macOS arm64 is tested on the developer's Mac
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Run tests
-        run: cargo test --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --verbose
 
   crypto_backend_baseline:
     name: Crypto baseline (${{ matrix.backend }})
@@ -48,9 +51,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test workspace
-        run: cargo test --workspace --no-fail-fast --lib --bins --examples --tests --no-default-features --features rtc/${{ matrix.backend }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast --lib --bins --examples --tests --no-default-features --features rtc/${{ matrix.backend }} --verbose
       - name: Test workspace documentation
-        run: cargo test --workspace --doc --no-default-features --features rtc/${{ matrix.backend }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --doc --no-default-features --features rtc/${{ matrix.backend }} --verbose
       - name: Build standalone crypto consumers
         shell: bash
         run: |
@@ -78,7 +81,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test provider configuration
-        run: cargo test --package rtc-crypto ${{ matrix.args }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --package rtc-crypto ${{ matrix.args }} --verbose
 
   rtc_crypto_custom_provider:
     name: rtc-crypto (no built-in, custom provider)
@@ -88,9 +91,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test downstream-style provider
-        run: cargo test --package rtc-crypto --no-default-features --features test-support --test custom_provider --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --package rtc-crypto --no-default-features --features test-support --test custom_provider --verbose
       - name: Verify publishable package
-        run: cargo package --package rtc-crypto --no-default-features
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo package --package rtc-crypto --no-default-features
 
   workspace_provider_matrix:
     name: Workspace (${{ matrix.name }})
@@ -118,11 +121,11 @@ jobs:
       # set. `Arc<dyn RTCCryptoProvider>` is load-bearing for the whole design, and object
       # safety is lost silently by adding one generic method — possibly behind a feature flag.
       - name: Build workspace and dyn-compatibility guard
-        run: cargo build --workspace --all-targets ${{ matrix.args }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo build --workspace --all-targets ${{ matrix.args }} --verbose
       - name: Test workspace
-        run: cargo test --workspace --no-fail-fast ${{ matrix.args }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast ${{ matrix.args }} --verbose
       - name: Doctests
-        run: cargo test --workspace --doc ${{ matrix.args }} --verbose
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --doc ${{ matrix.args }} --verbose
 
   standalone_crate_checks:
     name: Standalone crates (${{ matrix.backend }})
@@ -203,9 +206,9 @@ jobs:
       # first crate in publication order and the only one whose packaging can be verified from
       # a clean checkout today.
       - name: Package rtc-crypto first
-        run: cargo package --package rtc-crypto --allow-dirty
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo package --package rtc-crypto --allow-dirty
       - name: Package crates with no rtc-crypto dependency
-        run: cargo package --package rtc-shared --allow-dirty
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo package --package rtc-shared --allow-dirty
       # Crates depending on rtc-crypto cannot be packaged until rtc-crypto 0.21.0 exists on
       # crates.io: `cargo package` resolves the dependency graph against the registry and the
       # path dependency is stripped from the published manifest. This is expected for a newly
@@ -231,24 +234,12 @@ jobs:
     name: Check rustfmt style && run clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
           components: clippy, rustfmt
-          override: true
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-      - name: Check formating
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo clippy
+      - name: Check formatting
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo fmt --all -- --check

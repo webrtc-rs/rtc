@@ -23,7 +23,7 @@ impl CandidatePeerReflexiveConfig {
             candidate_id = generate_cand_id();
         }
 
-        let ip: IpAddr = match self.base_config.address.parse() {
+        let ip: IpAddr = match parse_candidate_ip(&self.base_config.address) {
             Ok(ip) => ip,
             Err(_) => return Err(Error::ErrAddressParseFailed),
         };

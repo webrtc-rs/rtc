@@ -103,7 +103,7 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.ctx.event_outs.pop_front()
+        super::pop_event(&mut self.ctx.event_outs)
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
@@ -176,6 +176,21 @@ impl<'a> EndpointHandler<'a> {
         let ssrc = rtp_packet.header.ssrc;
 
         if let Some(track_id) = self.find_track_id(ssrc, Some(&rtp_packet.header)) {
+            // Record the packet's sources on the receiver that owns this stream, so the
+            // W3C `getContributingSources` / `getSynchronizationSources` lists are live.
+            // Mirrors the lookup in `find_track_id`: the receiver whose track carries
+            // this SSRC.
+            if let Some(receiver) = self.rtp_transceivers.iter_mut().find_map(|transceiver| {
+                let receiver = transceiver.receiver_mut().as_mut()?;
+                let owns_ssrc = receiver
+                    .track()
+                    .ssrcs()
+                    .any(|track_ssrc| track_ssrc == ssrc);
+                owns_ssrc.then_some(receiver)
+            }) {
+                receiver.on_rtp_packet(now, &rtp_packet.header);
+            }
+
             // Track RTP stats if accumulator exists (created when OnOpen event is fired)
             if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&ssrc) {
                 stream.on_rtp_received(

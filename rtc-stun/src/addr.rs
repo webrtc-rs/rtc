@@ -61,7 +61,7 @@ impl Getter for MappedAddress {
 impl MappedAddress {
     /// get_from_as decodes MAPPED-ADDRESS value in message m as an attribute of type t.
     pub fn get_from_as(&mut self, m: &Message, t: AttrType) -> Result<()> {
-        let v = m.get(t)?;
+        let v = m.get_value(t)?;
         if v.len() <= 4 {
             return Err(Error::ErrUnexpectedEof);
         }

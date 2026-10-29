@@ -29,7 +29,7 @@ impl ResourceBody for MxResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = pack_uint16(msg, self.pref);
@@ -41,6 +41,10 @@ impl ResourceBody for MxResource {
         let (pref, off) = unpack_uint16(msg, off)?;
         self.pref = pref;
         self.mx.unpack(msg, off)
+    }
+
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -39,6 +39,7 @@ use crate::tcp_type::TcpType;
 use crc::{CRC_32_ISCSI, Crc};
 use serde::{Deserialize, Serialize};
 use shared::error::*;
+use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
@@ -51,6 +52,21 @@ use crate::network_type::determine_network_type;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
+
+/// The amount a TCP candidate's type preference is lowered by, relative to the same candidate
+/// type over UDP (pion's `defaultTCPPriorityOffset`, from libwebrtc).
+pub const DEFAULT_TCP_PRIORITY_OFFSET: u16 = 27;
+
+/// The local preference a relay candidate gets for its relay protocol, from libwebrtc's
+/// `RELAY_PROTOCOL_PREFERENCE` ordering: TLS < TCP < DTLS < UDP.
+pub(crate) fn relay_protocol_preference(relay_protocol: &str) -> u16 {
+    match relay_protocol {
+        "tls" => 0,
+        "tcp" => 1,
+        "dtls" => 2,
+        _ => 3,
+    }
+}
 
 /// Indicates that the candidate is used for RTP.
 pub(crate) const COMPONENT_RTP: u16 = 1;
@@ -133,6 +149,26 @@ pub(crate) fn contains_candidate_type(
     false
 }
 
+/// One `a=candidate` extension attribute: a key/value pair after the `rport` field, such as
+/// `generation 0` or `network-id 2` (RFC 5245 §15.1 `extension-att-name/extension-att-value`).
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
+pub struct CandidateExtension {
+    /// The extension's name.
+    pub key: String,
+    /// The extension's value; empty values are tolerated (seen in the wild).
+    pub value: String,
+}
+
+impl CandidateExtension {
+    /// Builds an extension from a key/value pair.
+    pub fn new(key: &str, value: &str) -> Self {
+        CandidateExtension {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+}
+
 /// Convey transport addresses related to the candidate, useful for diagnostics and other purposes.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CandidateRelatedAddress {
@@ -195,10 +231,24 @@ pub struct Candidate {
 
     pub(crate) foundation_override: String,
     pub(crate) priority_override: u32,
+    /// The transport between this agent and the relay server (`udp`, `tcp`, `tls`, `dtls`);
+    /// empty for candidates that are not relayed.
+    pub(crate) relay_protocol: String,
 
     pub(crate) network: String,
 
     pub(crate) url: Option<String>,
+
+    /// Extension attributes carried on this candidate (`generation`, `network-id`, ...).
+    pub(crate) extensions: Vec<CandidateExtension>,
+
+    /// How much a TCP candidate's type preference is lowered relative to UDP. Stamped by the
+    /// agent from its configuration; standalone candidates use the default of 27.
+    pub(crate) tcp_priority_offset: u16,
+
+    /// The local preference of a relay candidate, derived from its relay protocol. Only read
+    /// for relay candidates.
+    pub(crate) relay_local_preference: u16,
 }
 
 impl Default for Candidate {
@@ -221,9 +271,14 @@ impl Default for Candidate {
 
             foundation_override: String::new(),
             priority_override: 0,
+            relay_protocol: String::new(),
             network: String::new(),
 
             url: None,
+
+            extensions: vec![],
+            tcp_priority_offset: DEFAULT_TCP_PRIORITY_OFFSET,
+            relay_local_preference: DEFAULT_LOCAL_PREFERENCE,
         }
     }
 }
@@ -318,6 +373,12 @@ impl Candidate {
         self.port
     }
 
+    /// The type preference of this candidate on its transport: the RFC 8445 §5.1.2.2 value,
+    /// lowered by the agent's TCP priority offset for TCP candidates.
+    pub fn type_preference(&self) -> u16 {
+        self.type_preference_for(self.candidate_type())
+    }
+
     /// Computes the priority for this ICE Candidate.
     pub fn priority(&self) -> u32 {
         if self.priority_override != 0 {
@@ -330,9 +391,40 @@ impl Candidate {
         // candidates for a particular component for a particular data stream
         // that have the same type, the local preference MUST be unique for each
         // one.
-        (1 << 24) * u32::from(self.candidate_type().preference())
+        //
+        // `256 - component` wraps in 16 bits, as in pion: a component above 256 (the field is
+        // remote-supplied) must not overflow.
+        (1 << 24) * u32::from(self.type_preference())
             + (1 << 8) * u32::from(self.local_preference())
-            + (256 - u32::from(self.component()))
+            + u32::from(256u16.wrapping_sub(self.component()))
+    }
+
+    /// The type preference a candidate of `candidate_type` has on this candidate's transport:
+    /// the RFC 8445 §5.1.2.2 value, lowered by the TCP priority offset for TCP candidates.
+    /// Relay candidates (preference 0) are unaffected.
+    pub(crate) fn type_preference_for(&self, candidate_type: CandidateType) -> u16 {
+        let pref = candidate_type.preference();
+        if pref == 0 {
+            return 0;
+        }
+
+        if self.network_type.is_tcp() {
+            pref.saturating_sub(self.tcp_priority_offset)
+        } else {
+            pref
+        }
+    }
+
+    /// The value a Binding request sent from this candidate carries in its `PRIORITY`
+    /// attribute: the candidate's priority recomputed with the type preference of a
+    /// peer-reflexive candidate (RFC 8445 §7.1.1).
+    ///
+    /// The remote agent gives this priority to the peer-reflexive candidate it learns from the
+    /// request (§7.3.1.3); sending the candidate's own type preference would let that candidate
+    /// rank equal to the host candidate it was discovered through.
+    pub(crate) fn prflx_priority(&self) -> u32 {
+        (1 << 24) * u32::from(self.type_preference_for(CandidateType::PeerReflexive))
+            + self.priority() % (1 << 24)
     }
 
     /// Returns `Option<CandidateRelatedAddress>`.
@@ -357,27 +449,38 @@ impl Candidate {
 
     /// Returns the string representation of the ICECandidate.
     pub fn marshal(&self) -> String {
+        // An empty foundation round-trips through parsing as a single space; emit it empty.
+        let foundation = if self.foundation() == " " {
+            String::new()
+        } else {
+            self.foundation()
+        };
+
         let mut val = format!(
             "{} {} {} {} {} {} typ {}",
-            self.foundation(),
+            foundation,
             self.component(),
             self.network_type().network_short(),
             self.priority(),
-            self.address(),
+            remove_zone_id_from_address(self.address()),
             self.port(),
             self.candidate_type()
         );
 
-        if self.tcp_type != TcpType::Unspecified {
-            val += format!(" tcptype {}", self.tcp_type()).as_str();
-        }
-
-        if let Some(related_address) = self.related_address() {
+        if let Some(related_address) = self.related_address()
+            && !related_address.address.is_empty()
+            && related_address.port != 0
+        {
             val += format!(
                 " raddr {} rport {}",
                 related_address.address, related_address.port,
             )
             .as_str();
+        }
+
+        let extensions = self.marshal_extensions();
+        if !extensions.is_empty() {
+            val += format!(" {extensions}").as_str();
         }
 
         val
@@ -432,6 +535,21 @@ impl Candidate {
             && self.related_address() == other.related_address()
     }
 
+    /// Whether both candidates name the same transport address: the same network type, address
+    /// and port, and TCP type (pion's `transportAddressEqual`). Unlike [`Candidate::equal`] the
+    /// candidate type does not matter, which is what finds a signaled candidate that a
+    /// peer-reflexive one already stands in for.
+    pub(crate) fn transport_address_equal(&self, other: &Candidate) -> bool {
+        self.network_type() == other.network_type()
+            && self.tcp_type() == other.tcp_type()
+            && self.addr() == other.addr()
+    }
+
+    /// Same as [`Self::equal`], but also compares the extension attributes.
+    pub fn deep_equal(&self, other: &Candidate) -> bool {
+        self.equal(other) && self.extensions_equal(&other.extensions)
+    }
+
     /// Returns true if this candidate can be paired with `other` according to
     /// ICE candidate pairing rules.
     ///
@@ -475,8 +593,20 @@ impl Candidate {
         self.last_sent = Some(now);
     }
 
+    /// The transport between this agent and the relay server, for a relay candidate
+    /// (`udp`, `tcp`, `tls` or `dtls`); empty for any other kind.
+    pub fn relay_protocol(&self) -> &str {
+        &self.relay_protocol
+    }
+
     /// Returns the local preference for this candidate.
     pub fn local_preference(&self) -> u16 {
+        if self.candidate_type == CandidateType::Relay {
+            // libwebrtc orders relay protocols: TLS < TCP < DTLS < UDP. The value feeds the
+            // priority formula's local-preference field for relay candidates.
+            return self.relay_local_preference;
+        }
+
         if self.network_type().is_tcp() {
             // RFC 6544, section 4.2
             //
@@ -538,142 +668,519 @@ impl Candidate {
             DEFAULT_LOCAL_PREFERENCE
         }
     }
+
+    /// The candidate's extension attributes, with a manually-set TCP type reported first as a
+    /// `tcptype` extension (the stored form and the wire form of the same information).
+    pub fn extensions(&self) -> Vec<CandidateExtension> {
+        let mut extensions = Vec::with_capacity(self.extensions.len() + 1);
+        if self.tcp_type != TcpType::Unspecified {
+            extensions.push(CandidateExtension {
+                key: "tcptype".to_owned(),
+                value: self.tcp_type.to_string(),
+            });
+        }
+        extensions.extend(self.extensions.iter().cloned());
+        extensions
+    }
+
+    /// Replaces the candidate's extension attributes.
+    pub fn set_extensions(&mut self, extensions: Vec<CandidateExtension>) {
+        self.extensions = extensions;
+    }
+
+    /// Returns the extension stored under `key`, if any. A manually-set TCP type answers for
+    /// `tcptype` even when no stored extension carries it.
+    pub fn get_extension(&self, key: &str) -> Option<CandidateExtension> {
+        for extension in &self.extensions {
+            if extension.key == key {
+                return Some(extension.clone());
+            }
+        }
+
+        if key == "tcptype" && self.tcp_type != TcpType::Unspecified {
+            return Some(CandidateExtension {
+                key: key.to_owned(),
+                value: self.tcp_type.to_string(),
+            });
+        }
+
+        None
+    }
+
+    /// Adds (or replaces the first) extension attribute. `tcptype` writes the candidate's TCP
+    /// type instead of being stored; an empty key is an error.
+    pub fn add_extension(&mut self, ext: CandidateExtension) -> Result<()> {
+        if ext.key == "tcptype" {
+            let tcp_type = TcpType::from(ext.value.as_str());
+            if tcp_type == TcpType::Unspecified {
+                return Err(Error::Other(format!(
+                    "{:?}: invalid or unsupported TCPtype {}",
+                    Error::ErrParseTcpType,
+                    ext.value
+                )));
+            }
+            self.tcp_type = tcp_type;
+            return Ok(());
+        }
+
+        if ext.key.is_empty() {
+            return Err(Error::Other(format!(
+                "{:?}: key is empty",
+                Error::ErrParseExtension
+            )));
+        }
+
+        // Per spec extensions are not explicitly unique; setting one twice replaces the first.
+        for existing in self.extensions.iter_mut() {
+            if existing.key == ext.key {
+                *existing = ext;
+                return Ok(());
+            }
+        }
+        self.extensions.push(ext);
+        Ok(())
+    }
+
+    /// Removes the extension stored under `key`. Removing `tcptype` also clears a manually-set
+    /// TCP type. Returns whether anything was removed.
+    pub fn remove_extension(&mut self, key: &str) -> bool {
+        let mut removed = false;
+        if key == "tcptype" && self.tcp_type != TcpType::Unspecified {
+            self.tcp_type = TcpType::Unspecified;
+            removed = true;
+        }
+
+        if let Some(index) = self.extensions.iter().position(|ext| ext.key == key) {
+            self.extensions.remove(index);
+            removed = true;
+        }
+
+        removed
+    }
+
+    /// The wire form of the extension attributes: `key value key value ...`.
+    pub fn marshal_extensions(&self) -> String {
+        self.extensions()
+            .iter()
+            .map(|ext| format!("{} {}", ext.key, ext.value))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Whether this candidate's stored extensions equal `other` as a multiset (order-insensitive).
+    pub fn extensions_equal(&self, other: &[CandidateExtension]) -> bool {
+        if self.extensions.len() != other.len() {
+            return false;
+        }
+        if self.extensions.is_empty() {
+            return true;
+        }
+        if self.extensions.len() == 1 {
+            return self.extensions[0] == other[0];
+        }
+
+        let mut freq: HashMap<&CandidateExtension, usize> = HashMap::new();
+        for ext in &self.extensions {
+            *freq.entry(ext).or_default() += 1;
+        }
+        for ext in other {
+            match freq.get_mut(ext) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
-/// Creates a Candidate from its string representation.
-pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
-    let split: Vec<&str> = raw.split_whitespace().collect();
-    if split.len() < 8 {
+/// Strips an IPv6 zone ID (`%eth0`) from an address: it identifies a local interface, which
+/// does not survive into a candidate (pion ice#704).
+fn remove_zone_id_from_address(addr: &str) -> &str {
+    match addr.split_once('%') {
+        Some((before, _)) => before,
+        None => addr,
+    }
+}
+
+/// Parses a candidate address into an IP, ignoring any IPv6 zone ID: Go's `netip.ParseAddr`
+/// accepts zones (even with spaces) but Rust's `IpAddr` has nowhere to carry one, and a zone
+/// never survives into a candidate anyway.
+pub(crate) fn parse_candidate_ip(address: &str) -> Result<IpAddr> {
+    match remove_zone_id_from_address(address).parse() {
+        Ok(ip) => Ok(ip),
+        Err(_) => Err(Error::ErrAddressParseFailed),
+    }
+}
+
+/// Reads an ice-char token: ALPHA / DIGIT / "+" / "/", stopping at a space or the end of the
+/// string, and enforcing a length limit (RFC 8839 grammar).
+fn read_candidate_char_token(raw: &str, start: usize, limit: usize) -> Result<(&str, usize)> {
+    for (i, char) in raw[start..].char_indices() {
+        if char == ' ' {
+            return Ok((&raw[start..start + i], start + i + 1));
+        }
+
+        if i >= limit {
+            return Err(Error::Other(format!(
+                "token too long: {} expected 1x{limit}",
+                &raw[start..start + i]
+            )));
+        }
+
+        if !char.is_ascii_alphanumeric() && char != '+' && char != '/' {
+            return Err(Error::Other(format!("invalid ice-char token: {char}")));
+        }
+    }
+
+    Ok((&raw[start..], raw.len()))
+}
+
+/// Reads a token until a space or the end of the string (no character validation).
+fn read_candidate_string_token(raw: &str, start: usize) -> (&str, usize) {
+    match raw[start..].find(' ') {
+        Some(i) => (&raw[start..start + i], start + i + 1),
+        None => (&raw[start..], raw.len()),
+    }
+}
+
+/// Reads a digit token, stopping at a space or the end of the string, enforcing a length limit.
+/// The value accumulates in a u64 so a 10-digit token cannot overflow before the range check.
+fn read_candidate_digit_token(raw: &str, start: usize, limit: usize) -> Result<(u64, usize)> {
+    let mut val: u64 = 0;
+    for (i, char) in raw[start..].char_indices() {
+        if char == ' ' {
+            return Ok((val, start + i + 1));
+        }
+
+        if i >= limit {
+            return Err(Error::Other(format!(
+                "token too long: {} expected 1x{limit}",
+                &raw[start..start + i]
+            )));
+        }
+
+        if !char.is_ascii_digit() {
+            return Err(Error::Other(format!("invalid digit token: {char}")));
+        }
+
+        val = val * 10 + u64::from(char as u8 - b'0');
+    }
+
+    Ok((val, raw.len()))
+}
+
+/// Reads and validates an RFC 4566 port (1*5DIGIT, at most 65535).
+fn read_candidate_port(raw: &str, start: usize) -> Result<(u16, usize)> {
+    let (port, pos) = read_candidate_digit_token(raw, start, 5)?;
+    if port > u16::MAX as u64 {
+        return Err(Error::Other(format!("invalid RFC 4566 port {port}")));
+    }
+    Ok((port as u16, pos))
+}
+
+/// Reads an RFC 8445 component-id (1*5DIGIT, at most 65535).
+fn read_candidate_component(raw: &str, start: usize) -> Result<(u16, usize)> {
+    let (component, pos) = read_candidate_digit_token(raw, start, 5)?;
+    if component > u16::MAX as u64 {
         return Err(Error::Other(format!(
-            "{:?} ({})",
-            Error::ErrAttributeTooShortIceCandidate,
-            split.len()
+            "invalid RFC 8445 component-id {component}"
+        )));
+    }
+    Ok((component as u16, pos))
+}
+
+/// Reads an RFC 8445 priority (1*10DIGIT, at most 2^32-1).
+fn read_candidate_priority(raw: &str, start: usize) -> Result<(u32, usize)> {
+    let (priority, pos) = read_candidate_digit_token(raw, start, 10)?;
+    if priority > u32::MAX as u64 {
+        return Err(Error::Other(format!(
+            "invalid RFC 8445 priority {priority}"
+        )));
+    }
+    Ok((priority as u32, pos))
+}
+
+/// Reads an RFC 4566 byte-string token: any byte except NUL, CR or LF, stopping at a space.
+fn read_candidate_byte_string(raw: &str, start: usize) -> Result<(&str, usize)> {
+    for (i, char) in raw[start..].char_indices() {
+        if char == ' ' {
+            return Ok((&raw[start..start + i], start + i + 1));
+        }
+
+        // 1*(%x01-09/%x0B-0C/%x0E-FF)
+        if char != '\u{01}' {
+            let code = char as u32;
+            if !((0x01..=0x09).contains(&code)
+                || (0x0B..=0x0C).contains(&code)
+                || (0x0E..=0xFF).contains(&code))
+            {
+                return Err(Error::Other(format!(
+                    "invalid byte-string character: {char:?}"
+                )));
+            }
+        }
+    }
+
+    Ok((&raw[start..], raw.len()))
+}
+
+/// Reads and validates `raddr`/`rport` when present (RFC 5245 §15.1).
+fn try_read_relative_addrs(raw: &str, start: usize) -> Result<(String, u16, usize)> {
+    let (key, mut pos) = read_candidate_string_token(raw, start);
+    if key != "raddr" {
+        return Ok((String::new(), 0, start));
+    }
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected raddr value in {raw}",
+            Error::ErrParseRelatedAddr
         )));
     }
 
-    // Foundation
-    let foundation = split[0].to_owned();
+    let (raddr, new_pos) = read_candidate_string_token(raw, pos);
+    pos = new_pos;
 
-    // Component
-    let component: u16 = split[1].parse()?;
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected rport in {raw}",
+            Error::ErrParseRelatedAddr
+        )));
+    }
 
-    // Network
-    let network = split[2].to_owned();
+    let (key, new_pos) = read_candidate_string_token(raw, pos);
+    pos = new_pos;
+    if key != "rport" {
+        return Err(Error::Other(format!(
+            "{:?}: expected rport in {raw}",
+            Error::ErrParseRelatedAddr
+        )));
+    }
 
-    // Priority
-    let priority: u32 = split[3].parse()?;
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected rport value in {raw}",
+            Error::ErrParseRelatedAddr
+        )));
+    }
 
-    // Address
-    let address = split[4].to_owned();
+    let (rport, pos) = read_candidate_port(raw, pos)?;
 
-    // Port
-    let port: u16 = split[5].parse()?;
+    Ok((raddr.to_owned(), rport, pos))
+}
 
-    let typ = split[7];
+/// Parses the candidate extensions: `*(SP extension-att-name SP extension-att-value)` where both
+/// are byte-strings. A `tcptype` extension is extracted separately instead of being stored.
+fn unmarshal_candidate_extensions(raw: &str) -> Result<(Vec<CandidateExtension>, Option<String>)> {
+    let mut extensions = vec![];
+    let mut tcp_type_raw: Option<String> = None;
 
-    let mut rel_addr = String::new();
-    let mut rel_port = 0;
+    if raw.is_empty() {
+        return Ok((extensions, tcp_type_raw));
+    }
+
+    if raw.starts_with(' ') {
+        return Err(Error::Other(format!(
+            "{:?}: unexpected space {raw}",
+            Error::ErrParseExtension
+        )));
+    }
+
+    let mut i = 0;
+    while i < raw.len() {
+        let (key, next) = read_candidate_byte_string(raw, i)?;
+        i = next;
+
+        // Not spec-compliant, but empty values are seen in the wild: a trailing key with no
+        // value keeps an empty value.
+        let mut value = "";
+        if i < raw.len() {
+            let (v, next) = read_candidate_byte_string(raw, i)?;
+            value = v;
+            i = next;
+        }
+
+        if key == "tcptype" {
+            tcp_type_raw = Some(value.to_owned());
+            continue;
+        }
+
+        extensions.push(CandidateExtension {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        });
+    }
+
+    Ok((extensions, tcp_type_raw))
+}
+
+/// Creates a Candidate from its string representation (RFC 5245 §15.1).
+pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
+    // Handle candidates with the "candidate:" prefix as defined in RFC 5245 section 15.1.
+    let raw = raw.strip_prefix("candidate:").unwrap_or(raw);
+
+    // foundation ( 1*32ice-char ); an empty one is not compliant but seen in the wild.
+    let (foundation, mut pos) = read_candidate_char_token(raw, 0, 32)
+        .map_err(|err| Error::Other(format!("{:?}: {err} in {raw}", Error::ErrParseFoundation)))?;
+    let foundation = foundation.to_owned();
+
+    // Empty foundation, not RFC 8445 compliant but seen in the wild
+    let foundation = if foundation.is_empty() {
+        " ".to_owned()
+    } else {
+        foundation
+    };
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected component in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // component-id ( 1*5DIGIT )
+    let (component, new_pos) = read_candidate_component(raw, pos)
+        .map_err(|err| Error::Other(format!("{:?}: {err} in {raw}", Error::ErrParseComponent)))?;
+    pos = new_pos;
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected transport in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // transport ( "UDP" / transport-extension ; from RFC 3261 )
+    let (protocol, new_pos) = read_candidate_string_token(raw, pos);
+    let protocol = protocol.to_owned();
+    pos = new_pos;
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected priority in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // priority ( 1*10DIGIT )
+    let (priority, new_pos) = read_candidate_priority(raw, pos)
+        .map_err(|err| Error::Other(format!("{:?}: {err} in {raw}", Error::ErrParsePriority)))?;
+    pos = new_pos;
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected address in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // connection-address, from RFC 4566
+    let (address, new_pos) = read_candidate_string_token(raw, pos);
+    let address = remove_zone_id_from_address(address).to_owned();
+    pos = new_pos;
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected port in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // port from RFC 4566
+    let (port, new_pos) = read_candidate_port(raw, pos)
+        .map_err(|err| Error::Other(format!("{:?}: {err} in {raw}", Error::ErrParsePort)))?;
+    pos = new_pos;
+
+    // "typ"
+    let (type_key, new_pos) = read_candidate_string_token(raw, pos);
+    pos = new_pos;
+    if type_key != "typ" {
+        return Err(Error::Other(format!(
+            "{:?} ({type_key})",
+            Error::ErrUnknownCandidateType
+        )));
+    }
+
+    if pos >= raw.len() {
+        return Err(Error::Other(format!(
+            "{:?}: expected candidate type in {raw}",
+            Error::ErrAttributeTooShortIceCandidate
+        )));
+    }
+
+    // cand-type ( "host" / "srflx" / "prflx" / "relay" )
+    let (typ, new_pos) = read_candidate_string_token(raw, pos);
+    let typ = typ.to_owned();
+    pos = new_pos;
+
+    let (raddr, rport, pos) = try_read_relative_addrs(raw, pos)?;
+
     let mut tcp_type = TcpType::Unspecified;
+    let mut extensions = vec![];
 
-    if split.len() > 8 {
-        let split2 = &split[8..];
+    if pos < raw.len() {
+        let (parsed_extensions, tcp_type_raw) = unmarshal_candidate_extensions(&raw[pos..])?;
+        extensions = parsed_extensions;
 
-        if split2[0] == "raddr" {
-            if split2.len() < 4 {
+        if let Some(tcp_type_raw) = tcp_type_raw
+            && !tcp_type_raw.is_empty()
+        {
+            tcp_type = TcpType::from(tcp_type_raw.as_str());
+            if tcp_type == TcpType::Unspecified {
                 return Err(Error::Other(format!(
-                    "{:?}: incorrect length",
-                    Error::ErrParseRelatedAddr
+                    "{:?}: invalid or unsupported TCPtype {tcp_type_raw}",
+                    Error::ErrParseTcpType
                 )));
             }
-
-            // RelatedAddress
-            split2[1].clone_into(&mut rel_addr);
-
-            // RelatedPort
-            rel_port = split2[3].parse()?;
-        } else if split2[0] == "tcptype" {
-            if split2.len() < 2 {
-                return Err(Error::Other(format!(
-                    "{:?}: incorrect length",
-                    Error::ErrParseType
-                )));
-            }
-
-            tcp_type = TcpType::from(split2[1]);
         }
     }
 
-    match typ {
-        "host" => {
-            let config = CandidateHostConfig {
-                base_config: CandidateConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateConfig::default()
-                },
-                tcp_type,
-            };
-            config.new_candidate_host()
-        }
-        "srflx" => {
-            let config = CandidateServerReflexiveConfig {
-                base_config: CandidateConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateConfig::default()
-                },
-                rel_addr,
-                rel_port,
-                url: None,
-            };
-            config.new_candidate_server_reflexive()
-        }
-        "prflx" => {
-            let config = CandidatePeerReflexiveConfig {
-                base_config: CandidateConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateConfig::default()
-                },
-                rel_addr,
-                rel_port,
-            };
+    let base_config = CandidateConfig {
+        network: protocol,
+        address,
+        port,
+        component,
+        priority,
+        foundation,
+        ..CandidateConfig::default()
+    };
 
-            config.new_candidate_peer_reflexive()
+    let candidate = match typ.as_str() {
+        "host" => CandidateHostConfig {
+            base_config,
+            tcp_type,
         }
-        "relay" => {
-            let config = CandidateRelayConfig {
-                base_config: CandidateConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateConfig::default()
-                },
-                rel_addr,
-                rel_port,
-                url: None,
-            };
-            config.new_candidate_relay()
+        .new_candidate_host()?,
+        "srflx" => CandidateServerReflexiveConfig {
+            base_config,
+            rel_addr: raddr,
+            rel_port: rport,
+            url: None,
         }
-        _ => Err(Error::Other(format!(
-            "{:?} ({})",
-            Error::ErrUnknownCandidateType,
-            typ
-        ))),
-    }
+        .new_candidate_server_reflexive()?,
+        "prflx" => CandidatePeerReflexiveConfig {
+            base_config,
+            rel_addr: raddr,
+            rel_port: rport,
+        }
+        .new_candidate_peer_reflexive()?,
+        "relay" => CandidateRelayConfig {
+            base_config,
+            rel_addr: raddr,
+            rel_port: rport,
+            url: None,
+            relay_protocol: String::new(),
+        }
+        .new_candidate_relay()?,
+        _ => {
+            return Err(Error::Other(format!(
+                "{:?} ({typ})",
+                Error::ErrUnknownCandidateType
+            )));
+        }
+    };
+
+    let mut candidate = candidate;
+    candidate.set_extensions(extensions);
+    Ok(candidate)
 }

@@ -204,8 +204,8 @@ mod tests {
         let Packet::Rtp(rtp) = &msg.message.packet else {
             return None;
         };
-        let data = rtp.header.get_extension(ext_id)?;
-        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(&mut data.as_ref())
+        let mut data = rtp.header.get_extension_payload(ext_id)?;
+        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(&mut data)
             .ok()
             .map(|e| e.transport_sequence)
     }

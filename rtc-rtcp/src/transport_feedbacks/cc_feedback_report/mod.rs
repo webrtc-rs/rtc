@@ -351,6 +351,7 @@ impl MarshalSize for CcFeedbackReport {
 
 impl Marshal for CcFeedbackReport {
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
+        crate::header::length_field(self.marshal_size())?;
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
         }

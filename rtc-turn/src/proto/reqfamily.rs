@@ -36,7 +36,7 @@ const REQUESTED_FAMILY_SIZE: usize = 4;
 impl Setter for RequestedAddressFamily {
     /// Adds `REQUESTED-ADDRESS-FAMILY` to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        let mut v = vec![0; REQUESTED_FAMILY_SIZE];
+        let mut v = [0u8; REQUESTED_FAMILY_SIZE];
         v[0] = self.0;
         // b[1:4] is RFFU = 0.
         // The RFFU field MUST be set to zero on transmission and MUST be
@@ -49,7 +49,7 @@ impl Setter for RequestedAddressFamily {
 impl Getter for RequestedAddressFamily {
     /// Decodes `REQUESTED-ADDRESS-FAMILY` from message.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let v = m.get(ATTR_REQUESTED_ADDRESS_FAMILY)?;
+        let v = m.get_value(ATTR_REQUESTED_ADDRESS_FAMILY)?;
         check_size(
             ATTR_REQUESTED_ADDRESS_FAMILY,
             v.len(),

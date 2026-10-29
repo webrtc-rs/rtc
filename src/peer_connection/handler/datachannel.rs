@@ -66,6 +66,35 @@ pub(crate) struct DataChannelHandler<'a> {
     max_channels: Option<u16>,
 }
 
+impl super::WriteBypass for DataChannelHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        if !self.ctx.write_outs.is_empty()
+            || !pending.iter().all(|msg| {
+                !matches!(
+                    msg.message,
+                    RTCMessageInternal::Dtls(DTLSMessage::DataChannel(_))
+                )
+            })
+            || self.data_channels.values().any(|internal| {
+                internal
+                    .data_channel
+                    .as_ref()
+                    .is_some_and(|dc| dc.has_pending_writes())
+            })
+        {
+            return false;
+        }
+        // `handle_write` notes the time of every message it is given.
+        if let Some(latest) = pending.iter().map(|msg| msg.now).max() {
+            self.ctx.observe(latest);
+        }
+        true
+    }
+}
+
 impl<'a> DataChannelHandler<'a> {
     pub(crate) fn new(
         ctx: &'a mut DataChannelHandlerContext,
@@ -474,8 +503,8 @@ impl<'a>
                 // Pure accounting: SCTP released (acked or abandoned) `n_bytes` of
                 // this channel's outgoing buffer. Decrement the synchronous send
                 // back-pressure counter; do NOT forward the event further.
-                if let Some(dc) = self.data_channels.get_by_stream_mut(&stream_id) {
-                    dc.outstanding_bytes = dc.outstanding_bytes.saturating_sub(n_bytes);
+                if let Some(dc) = self.data_channels.get_by_stream(&stream_id) {
+                    dc.outstanding_bytes.release(n_bytes);
                 }
             }
             // The SCTP layer knows only stream ids; the application-facing events name the
@@ -519,7 +548,7 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.ctx.event_outs.pop_front()
+        super::pop_event(&mut self.ctx.event_outs)
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {

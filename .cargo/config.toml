@@ -1,25 +1,16 @@
-# Enable RustCrypto's hardware-accelerated AES + GHASH backends on aarch64.
+# aarch64 build flags.
 #
-# The `aes` and `polyval` (GHASH) crates gate their ARMv8 AES / PMULL intrinsics
-# behind these `--cfg` flags. Both autodetect the CPU features at runtime on
-# macOS and Linux and fall back to the software backend on cores without the
-# extensions, so enabling them unconditionally on aarch64 is safe (no illegal
-# instruction on older CPUs). Without these flags a default build uses the
-# pure-software constant-time backends, which measured ~13x slower for AES-GCM /
-# AES-CM on Apple silicon locally.
+# rtc's own crypto no longer needs any: `aes` 0.9 and `sha1` 0.11 detect the ARMv8 AES and SHA-1
+# instructions at run time (and fall back to software on cores without them), and AES-GCM runs
+# on `ring`/`aws-lc-rs`. A downstream user building rtc as a dependency gets the hardware paths
+# with no configuration, which is the point: this file is not inherited by dependents.
 #
-# The AES-GCM AEAD itself now runs on `ring` (see rtc-srtp/.../cipher_aead_aes_gcm.rs
-# and rtc-dtls/src/crypto/crypto_gcm.rs) and is unaffected by these flags; they
-# accelerate the paths that stay on RustCrypto: SRTP AES-CM-HMAC-SHA1, DTLS
-# AES-CCM / AES-CBC, and the SRTP key-derivation AES.
+# The flags below remain only because the *old* `webrtc` 0.14 crate, pulled in as a
+# dev-dependency for cross-version interop tests, still uses `aes` 0.8 / `polyval` 0.6, whose
+# ARMv8 backends are opt-in via `--cfg`. They keep those tests quick on Apple silicon and affect
+# nothing that ships.
 #
-# x86_64 needs no flag: `aes` and `polyval` autodetect AES-NI / CLMUL at runtime
-# by default. Flag names verified against aes-0.8.4 (src/lib.rs, `aes_armv8`) and
-# polyval-0.6.2 (src/lib.rs, `polyval_armv8`).
-#
-# Caveat: an exported RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS env var replaces (does
-# not merge with) these config rustflags, so a build that sets RUSTFLAGS drops
-# them and silently falls back to the software backends — a performance-only
-# regression, never a correctness one.
+# Caveat: an exported RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS env var replaces (does not merge with)
+# these config rustflags. That is harmless now.
 [target.'cfg(target_arch = "aarch64")']
 rustflags = ["--cfg", "aes_armv8", "--cfg", "polyval_armv8"]

@@ -28,3 +28,20 @@
 <p align="center">
  RTC TURN Protocol in Rust With Sans-IO
 </p>
+
+## Server
+
+`rtc_turn::server::Server` is a TURN server without sockets or a clock: feed it datagrams (from the
+listening socket and from each relay socket), time, and the result of binding relay sockets, and
+send what it produces. See `examples/turn_server_udp.rs` for a complete tokio server and
+`examples/turn_echo_check.rs` for a client that checks a relay end to end; `interop/run-turn.sh`
+runs both against pion's TURN server and client.
+
+### TCP allocations (RFC 6062)
+
+A client that asks for a TCP allocation (`Client::allocate_tcp`) gets a relay that speaks TCP to its
+peers. The server asks the application to listen on the relay address (`BindRelayTcp`), to connect to
+a peer from it (`ConnectPeer`), and to splice a client's second connection to a peer connection
+(`BindData`), and is told how it went (`peer_connected`, `peer_connect_failed`, `peer_accepted`).
+`examples/turn_server_tcp.rs` is a complete tokio host; `interop/run-turn.sh` runs pion's
+`AllocateTCP` client against it: outbound connections, a peer connecting in, and data both ways.

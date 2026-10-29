@@ -1,0 +1,48 @@
+[package]
+name = "rtc-ice-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.11.0"
+sansio = "1"
+
+[dependencies.rtc-ice]
+path = ".."
+
+[dependencies.shared]
+path = "../../rtc-shared"
+package = "rtc-shared"
+default-features = false
+
+[dependencies.crypto]
+path = "../../rtc-crypto"
+package = "rtc-crypto"
+features = ["crypto-ring"]
+
+[dependencies.stun]
+path = "../../rtc-stun"
+package = "rtc-stun"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "candidate_unmarshal"
+path = "fuzz_targets/candidate_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_handle_read"
+path = "fuzz_targets/agent_handle_read.rs"
+test = false
+doc = false
+bench = false

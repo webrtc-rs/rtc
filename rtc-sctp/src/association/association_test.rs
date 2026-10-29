@@ -26,10 +26,11 @@ fn create_association(config: TransportConfig) -> Association {
 // `test_assoc_unreliable_rexmit_*` suite.
 #[test]
 fn test_create_forward_tsn_forward_one_abandoned() -> Result<()> {
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 10;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 10,
+        ..Default::default()
+    };
     // tsn=10, ordered, si=1, ssn=2
     a.note_abandoned_for_forward_tsn(false, 1, 2);
 
@@ -45,10 +46,11 @@ fn test_create_forward_tsn_forward_one_abandoned() -> Result<()> {
 
 #[test]
 fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()> {
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 12;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 12,
+        ..Default::default()
+    };
     a.note_abandoned_for_forward_tsn(false, 1, 2); // tsn=10
     a.note_abandoned_for_forward_tsn(false, 1, 3); // tsn=11 -> greatest SSN for si=1
     a.note_abandoned_for_forward_tsn(false, 2, 1); // tsn=12
@@ -70,7 +72,7 @@ fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()
                 assert_eq!(1, s.sequence, "ssn should be 1");
                 si2ok = true;
             }
-            _ => assert!(false, "unexpected stream indentifier"),
+            _ => panic!("unexpected stream indentifier"),
         }
     }
     assert!(si1ok, "si=1 should be present");
@@ -85,10 +87,11 @@ fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
     // advances unordered streams purely by `new_cumulative_tsn` and ignores the
     // per-stream list (see handle_forward_tsn), so create_forward_tsn must not
     // report them — only ordered streams contribute.
-    let mut a = Association::default();
-
-    a.cumulative_tsn_ack_point = 9;
-    a.advanced_peer_tsn_ack_point = 11;
+    let mut a = Association {
+        cumulative_tsn_ack_point: 9,
+        advanced_peer_tsn_ack_point: 11,
+        ..Default::default()
+    };
     a.note_abandoned_for_forward_tsn(true, 1, 5); // unordered -> omitted
     a.note_abandoned_for_forward_tsn(false, 2, 7); // ordered   -> reported
 
@@ -112,10 +115,12 @@ fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
 // SACK covers the other call site.
 #[test]
 fn test_marshal_control_chunk_byte_identical_to_create_packet() -> Result<()> {
-    let mut a = Association::default();
-    a.peer_verification_tag = 0x1234_5678;
-    a.source_port = 5000;
-    a.destination_port = 5001;
+    let mut a = Association {
+        peer_verification_tag: 0x1234_5678,
+        source_port: 5000,
+        destination_port: 5001,
+        ..Default::default()
+    };
 
     let fwd_tsn = ChunkForwardTsn {
         new_cumulative_tsn: 42,
@@ -151,9 +156,10 @@ fn test_marshal_control_chunk_byte_identical_to_create_packet() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_3unreceived_chunks() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     let fwdtsn = ChunkForwardTsn {
@@ -185,9 +191,10 @@ fn test_handle_forward_tsn_forward_3unreceived_chunks() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_1for1_missing() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
@@ -233,9 +240,10 @@ fn test_handle_forward_tsn_forward_1for1_missing() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_forward_1for2_missing() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
@@ -279,9 +287,10 @@ fn test_handle_forward_tsn_forward_1for2_missing() -> Result<()> {
 
 #[test]
 fn test_handle_forward_tsn_dup_forward_tsn_chunk_should_generate_sack() -> Result<()> {
-    let mut a = Association::default();
-
-    a.use_forward_tsn = true;
+    let mut a = Association {
+        use_forward_tsn: true,
+        ..Default::default()
+    };
     let prev_tsn = a.peer_last_tsn;
 
     let fwdtsn = ChunkForwardTsn {
@@ -302,6 +311,89 @@ fn test_handle_forward_tsn_dup_forward_tsn_chunk_should_generate_sack() -> Resul
     Ok(())
 }
 
+/// Port of pion's `TestReceivePayloadQueueAdvanceCumulativeTSN`
+/// (receive_payload_queue_test.go).
+///
+/// rtc-sctp's receive queue does not own the cumulative TSN — the association
+/// does (`peer_last_tsn`), and its FORWARD-TSN handler is what advances it —
+/// so the pion queue-level scenario is driven through `handle_forward_tsn`,
+/// which now clears every covered TSN like pion's `advanceCumulativeTSN`.
+#[test]
+fn receive_payload_queue_advance_cumulative_tsn() -> Result<()> {
+    let init_tsn = u32::MAX - 10;
+    let mut a = Association {
+        use_forward_tsn: true,
+        peer_last_tsn: init_tsn,
+        ..Default::default()
+    };
+
+    for tsn in [init_tsn + 3, init_tsn + 5, init_tsn.wrapping_add(20)] {
+        assert!(a.payload_queue.push(payload_chunk(tsn, 1), a.peer_last_tsn));
+    }
+
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn + 5,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn + 5, a.peer_last_tsn);
+    assert_eq!(1, a.payload_queue.len());
+    assert!(a.payload_queue.get(init_tsn + 3).is_none());
+    assert!(a.payload_queue.get(init_tsn + 5).is_none());
+    assert!(a.payload_queue.get(init_tsn.wrapping_add(20)).is_some());
+    let gaps = a.payload_queue.get_gap_ack_blocks(a.peer_last_tsn);
+    assert_eq!(1, gaps.len());
+    assert_eq!(15, gaps[0].start);
+    assert_eq!(15, gaps[0].end);
+
+    // A forward point behind the current cumulative point is out of date and
+    // must not move anything.
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn + 4,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn + 5, a.peer_last_tsn);
+    assert_eq!(1, a.payload_queue.len());
+    assert!(a.payload_queue.get(init_tsn.wrapping_add(20)).is_some());
+
+    // A far forward jump acknowledges everything queued.
+    let new_cumulative_tsn = init_tsn.wrapping_add((1 << 31) - 1);
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn,
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(new_cumulative_tsn, a.peer_last_tsn);
+    assert_eq!(0, a.payload_queue.len());
+    assert!(a.payload_queue.get_last_tsn_received().is_none());
+    assert!(
+        a.payload_queue
+            .get_gap_ack_blocks(a.peer_last_tsn)
+            .is_empty()
+    );
+
+    // Exactly 2^31 ahead is the RFC 1982 ambiguity point: not "less than",
+    // so the cumulative point must not move (pion's sna32LT guard).
+    let mut a = Association {
+        use_forward_tsn: true,
+        peer_last_tsn: init_tsn,
+        ..Default::default()
+    };
+    let fwdtsn = ChunkForwardTsn {
+        new_cumulative_tsn: init_tsn.wrapping_add(1 << 31),
+        streams: vec![],
+    };
+    a.handle_forward_tsn(&fwdtsn)?;
+
+    assert_eq!(init_tsn, a.peer_last_tsn);
+
+    Ok(())
+}
+
 #[test]
 fn test_assoc_create_new_stream() -> Result<()> {
     let mut a = Association::default();
@@ -311,8 +403,7 @@ fn test_assoc_create_new_stream() -> Result<()> {
             if let Some(s) = a.create_stream(i as u16, true, PayloadProtocolIdentifier::Unknown) {
                 s.stream_identifier
             } else {
-                assert!(false, "{} should success", i);
-                0
+                panic!("{} should success", i);
             };
         let result = a.streams.get(&stream_identifier);
         assert!(result.is_some(), "should be in a.streams map");
@@ -356,7 +447,7 @@ fn handle_init_test(name: &str, initial_state: AssociationState, expect_err: boo
         advertised_receiver_window_credit: 512 * 1024,
         ..Default::default()
     };
-    init.set_supported_extensions();
+    init.set_supported_extensions(false);
 
     let result = a.handle_init(&pkt, &init);
     if expect_err {
@@ -467,7 +558,7 @@ fn test_assoc_negotiated_max_streams() -> Result<()> {
         advertised_receiver_window_credit: 512 * 1024,
         ..Default::default()
     };
-    init.set_supported_extensions();
+    init.set_supported_extensions(false);
     a.handle_init(&pkt, &init)?;
 
     // `handle_init` narrowed the counts to 1001 outbound / 1002 inbound (see
@@ -544,7 +635,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
                 "should be not Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
 
         if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..65537), ppi) {
@@ -554,7 +645,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
                 "should be Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
     }
 
@@ -581,7 +672,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
                 "should be not Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
 
         if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..30001), ppi) {
@@ -591,7 +682,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
                 "should be Error::ErrOutboundPacketTooLarge"
             );
         } else {
-            assert!(false, "should be error");
+            panic!("should be error");
         }
     }
 
@@ -755,7 +846,10 @@ fn many_small_chunks_bundle_within_mtu() {
 }
 
 fn timed_test_association() -> Association {
-    let mut a = create_association(TransportConfig::default());
+    // These tests drive the classic mechanisms — fast retransmit and T3-rtx — by hand, jumping to
+    // `poll_timeout()`. RACK's earlier timers would be what they jump to instead, so it is off
+    // here; RACK has its own tests (`rack_test`).
+    let mut a = create_association(TransportConfig::default().with_enable_rack(false));
     a.control_queue.clear();
     a.timers.stop(Timer::T1Init);
     a.set_state(AssociationState::Established);
@@ -1651,6 +1745,9 @@ fn test_timed_zero_fragment_loss_restores_receive_window() -> Result<()> {
 #[path = "timer_deadline_test.rs"]
 mod timer_deadline_test;
 
+#[path = "rack_test.rs"]
+mod rack_test;
+
 #[path = "retransmission_review_test.rs"]
 mod retransmission_review_test;
 
@@ -1678,3 +1775,492 @@ fn test_reconfig_backoff_must_double_once() -> Result<()> {
 
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
+
+/// A receiver whose buffer filled up and then drained must tell the sender straight away. Without
+/// that, the sender (which stopped on a zero window and so has nothing in flight to be SACKed)
+/// finds out only from its next zero-window probe — a retransmission timeout, one second at
+/// minimum — and every transfer that starts with a slow reader loses a second.
+#[test]
+fn test_reopened_receive_window_is_announced_without_waiting_for_a_probe() -> Result<()> {
+    let mut sender = timed_test_association();
+    let mut receiver = timed_test_association();
+    // A small buffer so a handful of messages fills it.
+    receiver.max_receive_buffer_size = 8 * 1024;
+    receiver.last_advertised_credit = receiver.max_receive_buffer_size;
+    receiver.peer_last_tsn = sender.my_next_tsn - 1;
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    sender.open_stream(1, ppi)?;
+    receiver.open_stream(1, ppi)?;
+
+    // The sender writes until the receiver has no window left; the receiver acknowledges.
+    for _ in 0..16 {
+        sender
+            .stream(1)?
+            .write_sctp(now, &Bytes::from(vec![0xAB; 1000]), ppi)?;
+    }
+    sender.cwnd = 1 << 20;
+    for raw in sender.gather_outbound(now).0 {
+        for c in Packet::unmarshal(&raw)?.chunks {
+            if let Some(c) = c.as_any().downcast_ref::<ChunkPayloadData>() {
+                receiver.handle_data(c)?;
+            }
+        }
+    }
+    assert_eq!(
+        0,
+        receiver.get_my_receiver_window_credit(),
+        "the test needs a full receive buffer"
+    );
+    // The SACK that reports the closed window.
+    let closed = receiver.create_selective_ack_chunk();
+    assert_eq!(0, closed.advertised_receiver_window_credit);
+    assert!(receiver.last_advertised_credit < receiver.mtu * 2);
+    receiver.ack_state = AckState::Idle;
+
+    // The application reads: the window reopens, and the receiver must say so unprompted.
+    while receiver.stream(1)?.read_sctp()?.is_some() {}
+    assert!(receiver.get_my_receiver_window_credit() >= receiver.mtu * 2);
+    assert_eq!(
+        receiver.ack_state,
+        AckState::Immediate,
+        "draining a closed window must schedule an immediate SACK"
+    );
+
+    let packets = receiver.gather_outbound(now).0;
+    let reopened = packets
+        .iter()
+        .flat_map(|raw| Packet::unmarshal(raw).unwrap().chunks)
+        .filter_map(|c| {
+            c.as_any()
+                .downcast_ref::<ChunkSelectiveAck>()
+                .map(|sack| sack.advertised_receiver_window_credit)
+        })
+        .next()
+        .expect("a window-update SACK");
+    assert!(
+        reopened >= receiver.mtu * 2,
+        "the SACK must carry the reopened window, not {reopened}"
+    );
+
+    // Reading when the sender already knows of plenty of window sends nothing.
+    sender.open_stream(2, ppi)?;
+    receiver.open_stream(2, ppi)?;
+    let before = receiver.ack_state;
+    receiver.stream(2)?.read_sctp()?;
+    assert_eq!(before, receiver.ack_state);
+    Ok(())
+}
+
+/// pion `TestAssociationMaxTSNOffset`: a DATA chunk far ahead of the cumulative TSN is not
+/// queued, so a peer cannot make the receive queue (and each insert into it) grow without bound.
+#[test]
+fn test_association_max_tsn_offset() -> Result<()> {
+    let mut a = create_association(TransportConfig::default());
+    a.set_state(AssociationState::Established);
+    let chunk_at = |a: &Association, offset: u32| ChunkPayloadData {
+        beginning_fragment: true,
+        ending_fragment: true,
+        tsn: a.peer_last_tsn.wrapping_add(offset),
+        stream_identifier: 1,
+        user_data: Bytes::from(vec![0u8; 1000]),
+        ..Default::default()
+    };
+    let limit = max_tsn_offset(a.max_receive_buffer_size);
+    assert!((2000..=40000).contains(&limit));
+
+    for offset in [100_000, limit + 1] {
+        let c = chunk_at(&a, offset);
+        a.handle_data(&c)?;
+        assert_eq!(
+            a.payload_queue.len(),
+            0,
+            "offset {offset} must not be queued"
+        );
+    }
+
+    let c = chunk_at(&a, limit);
+    a.handle_data(&c)?;
+    assert_eq!(
+        a.payload_queue.len(),
+        1,
+        "the last acceptable offset is queued"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_max_tsn_offset_scales_with_the_receive_buffer_within_bounds() {
+    assert_eq!(max_tsn_offset(0), 2000);
+    assert_eq!(max_tsn_offset(100 * 1024), 2000); // 819 chunks, raised to the floor
+    assert_eq!(max_tsn_offset(512 * 1024), 512 * 1024 * 4 / 500);
+    assert_eq!(max_tsn_offset(u32::MAX), 40000);
+}
+
+// ---------------------------------------------------------------------------
+// pion SettingEngine SCTP tuning knobs (issue #2 / pion SetSCTPRTOMax,
+// SetSCTPMinCwnd, SetSCTPFastRtxWnd, SetSCTPCwndCAStep). Each test proves the
+// knob changes behaviour; `sctp_tuning_knobs_default_to_the_previous_behaviour`
+// in config.rs and the tests above pin the defaults.
+// ---------------------------------------------------------------------------
+
+/// A T3-rtx timeout on an association with `min_cwnd` configured must reset
+/// the congestion window to the floor, not to one MTU (pion: `setCWND(MTU)`
+/// with the minCwnd clamp). The default association keeps `cwnd == mtu`.
+#[test]
+fn sctp_min_cwnd_floors_the_t3_timeout_reset() -> Result<()> {
+    let mut a = timed_test_association();
+    let mtu = a.mtu;
+    assert_eq!(
+        a.cwnd,
+        mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4))
+    );
+
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"x"), ppi)?;
+    a.gather_outbound(now);
+    let due = a.poll_timeout().unwrap(); // T3 armed by the in-flight chunk
+    a.handle_timeout(due);
+    assert_eq!(a.cwnd, mtu, "default: T3 resets cwnd to one MTU");
+
+    let floor = 8 * mtu;
+    let mut tuned = create_association(
+        TransportConfig::default()
+            .with_enable_rack(false)
+            .with_min_cwnd(floor),
+    );
+    tuned.control_queue.clear();
+    tuned.timers.stop(Timer::T1Init);
+    tuned.set_state(AssociationState::Established);
+    tuned.rwnd = 65536;
+    tuned.rto_mgr.set_rto(1000, true);
+    assert_eq!(tuned.cwnd, floor, "the initial window is clamped up too");
+    tuned
+        .open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"x"), ppi)?;
+    tuned.gather_outbound(now);
+    let due = tuned.poll_timeout().unwrap();
+    tuned.handle_timeout(due);
+    assert_eq!(tuned.cwnd, floor, "T3 reset must respect the floor");
+    Ok(())
+}
+
+/// Fast recovery's `cwnd = ssthresh` reset is floored as well: with
+/// `min_cwnd > ssthresh` the window stays at the floor when three gap reports
+/// trigger fast retransmission.
+#[test]
+fn sctp_min_cwnd_floors_the_fast_recovery_reset() -> Result<()> {
+    let mut a = timed_test_association();
+    let floor = 16 * a.mtu;
+    a.min_cwnd = floor;
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from_static(b"lost"), ppi)?;
+    let old = transmitted_data(&a.gather_outbound(now).0).remove(0);
+    // Three later chunks, then three gap ACK reports marking `old` missing
+    // three times — the classic fast-retransmit trigger.
+    for _ in 0..3 {
+        a.stream(1)?
+            .write_sctp(now, &Bytes::from_static(b"recv"), ppi)?;
+    }
+    a.gather_outbound(now);
+    for end in 2..=4u16 {
+        a.handle_sack(
+            &ChunkSelectiveAck {
+                cumulative_tsn_ack: old.tsn - 1,
+                advertised_receiver_window_credit: 1 << 20,
+                gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                    start: 2,
+                    end,
+                }],
+                ..Default::default()
+            },
+            now + Duration::from_millis(50),
+        )?;
+    }
+    assert!(a.in_fast_recovery, "three gap reports enter fast recovery");
+    assert!(
+        a.ssthresh < floor,
+        "the floor must exceed the computed ssthresh"
+    );
+    assert_eq!(a.cwnd, floor, "fast recovery's cwnd = ssthresh is floored");
+    Ok(())
+}
+
+/// `cwnd_ca_step` grows the window by `max(MTU, step)` per congestion-avoidance
+/// round instead of one MTU (pion: `step := max(a.MTU(), a.cwndCAStep)`).
+#[test]
+fn sctp_cwnd_ca_step_grows_the_window_in_congestion_avoidance() -> Result<()> {
+    let now = Instant::now();
+    let ppi = PayloadProtocolIdentifier::Binary;
+
+    let mut a = timed_test_association();
+    let mtu = a.mtu;
+    a.cwnd_ca_step = 4 * mtu;
+    // Congestion avoidance: ssthresh below cwnd, partial bytes already at the
+    // window, more data pending.
+    a.ssthresh = mtu;
+    a.cwnd = 2 * mtu;
+    a.partial_bytes_acked = 2 * mtu;
+    let first_tsn = a.my_next_tsn;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from(vec![0u8; 4 * mtu as usize]), ppi)?;
+    a.gather_outbound(now);
+    assert!(!a.pending_queue.is_empty(), "data remains pending");
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: first_tsn,
+            advertised_receiver_window_credit: 1 << 20,
+            ..Default::default()
+        },
+        now + Duration::from_millis(50),
+    )?;
+    assert_eq!(a.cwnd, 6 * mtu, "CA growth must use max(MTU, cwnd_ca_step)");
+
+    // Default: step 0 keeps the classic cwnd += MTU.
+    let mut a = timed_test_association();
+    a.ssthresh = mtu;
+    a.cwnd = 2 * mtu;
+    a.partial_bytes_acked = 2 * mtu;
+    let first_tsn = a.my_next_tsn;
+    a.open_stream(1, ppi)?
+        .write_sctp(now, &Bytes::from(vec![0u8; 4 * mtu as usize]), ppi)?;
+    a.gather_outbound(now);
+    a.handle_sack(
+        &ChunkSelectiveAck {
+            cumulative_tsn_ack: first_tsn,
+            advertised_receiver_window_credit: 1 << 20,
+            ..Default::default()
+        },
+        now + Duration::from_millis(60),
+    )?;
+    assert_eq!(a.cwnd, 3 * mtu, "default CA growth is one MTU");
+    Ok(())
+}
+
+/// `fast_rtx_wnd` lifts the total bundling budget of a fast-retransmit burst
+/// from one MTU to `max(MTU, fast_rtx_wnd)` (pion:
+/// `fastRetransWnd := int(max(a.MTU(), a.fastRtxWnd))` — the burst budget;
+/// each packet inside the burst is still MTU-bounded, exactly as pion's
+/// MTU-bundling tracker and our `bundle_data_chunks_into_packets` do).
+#[test]
+fn sctp_fast_rtx_wnd_widens_the_fast_retransmission_bundle() -> Result<()> {
+    // Three missing chunks (sent once, three gap reports each): the flight
+    // retransmits as many of them as the budget allows.
+    let run = |fast_rtx_wnd: u32| -> Result<Vec<u32>> {
+        let mut a = timed_test_association();
+        a.fast_rtx_wnd = fast_rtx_wnd;
+        let now = Instant::now();
+        let ppi = PayloadProtocolIdentifier::Binary;
+        a.open_stream(1, ppi)?
+            .write_sctp(now, &Bytes::from(vec![0u8; 500]), ppi)?;
+        for _ in 0..7 {
+            a.stream(1)?
+                .write_sctp(now, &Bytes::from(vec![0u8; 500]), ppi)?;
+        }
+        let sent = transmitted_data(&a.gather_outbound(now).0);
+        assert_eq!(8, sent.len(), "cwnd admits the whole flight");
+        // The first three chunks go missing; three SACKs, each newly
+        // acknowledging one more of the landed chunks (only a SACK that
+        // newly acks something increments the miss indications), drive the
+        // missing chunks' miss count to three.
+        for end in 4..=6u16 {
+            a.handle_sack(
+                &ChunkSelectiveAck {
+                    cumulative_tsn_ack: sent[0].tsn - 1,
+                    advertised_receiver_window_credit: 1 << 20,
+                    gap_ack_blocks: vec![crate::chunk::chunk_selective_ack::GapAckBlock {
+                        start: 4,
+                        end,
+                    }],
+                    ..Default::default()
+                },
+                now + Duration::from_millis(50),
+            )?;
+        }
+        assert!(a.in_fast_recovery, "three gap reports enter fast recovery");
+        let flight = a.gather_outbound(now + Duration::from_millis(60));
+        Ok(transmitted_data(&flight.0).iter().map(|c| c.tsn).collect())
+    };
+
+    let mtu = create_association(TransportConfig::default().with_enable_rack(false)).mtu;
+    // Default budget = one MTU: 12 (common header) + 2 * 516 fits, the third
+    // chunk (1560 total) does not.
+    let retransmitted = run(0)?;
+    assert_eq!(
+        retransmitted.len(),
+        2,
+        "the default MTU budget admits only two of the three missing chunks"
+    );
+
+    // A four-MTU budget carries all three in the same burst.
+    let retransmitted = run(4 * mtu)?;
+    assert_eq!(
+        retransmitted.len(),
+        3,
+        "a 4*MTU budget bundles all three missing chunks into one burst"
+    );
+    Ok(())
+}
+
+/// `rto_max` caps the association's retransmission machinery: with a 2 s
+/// ceiling the RTO manager's backoff pins at 2 s and an armed T3 deadline is
+/// never more than 2 s out, while the default association keeps the RFC 60 s
+/// cap.
+#[test]
+fn sctp_rto_max_caps_association_timers() {
+    let mut a = create_association(
+        TransportConfig::default()
+            .with_enable_rack(false)
+            .with_rto_max(Duration::from_secs(2)),
+    );
+    a.control_queue.clear();
+    a.timers.stop(Timer::T1Init);
+    a.set_state(AssociationState::Established);
+    a.rwnd = 65536;
+    assert_eq!(a.rto_mgr.rto_max(), 2000);
+    assert_eq!(a.rto_mgr.get_rto(), 1000, "RTO.Initial before any RTT");
+
+    // Repeated T3 backoffs double the RTO up to the configured ceiling and
+    // never past it, however many timeouts pile up.
+    for expected in [2000, 2000, 2000, 2000, 2000] {
+        a.rto_mgr.backoff();
+        assert_eq!(expected, a.rto_mgr.get_rto());
+        let now = Instant::now();
+        a.timers.start(Timer::T3RTX, now, a.rto_mgr.get_rto());
+        assert!(
+            a.timers.get(Timer::T3RTX).unwrap() <= now + Duration::from_secs(2),
+            "the armed T3 deadline respects the 2 s ceiling"
+        );
+    }
+
+    // Default: the ceiling is the RFC 60 s, reached by enough backoffs.
+    let mut a = create_association(TransportConfig::default().with_enable_rack(false));
+    assert_eq!(a.rto_mgr.rto_max(), 60000);
+    for _ in 0..6 {
+        a.rto_mgr.backoff();
+    }
+    assert_eq!(60000, a.rto_mgr.get_rto());
+}
+
+/// Port of pion's `TestAssociationOptions_DefaultMTU`
+/// (association_options_test.go).
+///
+/// pion builds a client config with defaults, checks `Config.MTU` is
+/// `initialMTU` (1191), then that an association built from it keeps that MTU
+/// and derives its DATA-chunk payload budget with `maxPayloadSizeForMTU`.
+/// rtc-sctp has no MTU field on the transport config — the endpoint owns the
+/// payload budget, `EndpointConfig::default()` deriving it from `INITIAL_MTU`
+/// — so the same guarantees are asserted against the default budget.
+///
+/// One deliberate difference: rtc-sctp's `Association` reconstructs its MTU
+/// from the payload budget (`budget + COMMON_HEADER_SIZE +
+/// DATA_CHUNK_HEADER_SIZE`, see `Association::new`) instead of storing the
+/// configured MTU, so `mtu()` is the *effective* DATA-packet MTU. The up to
+/// `PADDING_MULTIPLE - 1` bytes a budget rounded down to the 4-byte chunk
+/// boundary gives up can never carry DATA: 1188 for the 1191 default, not
+/// 1191.
+#[test]
+fn association_options_default_mtu() {
+    assert_eq!(1191, INITIAL_MTU, "pion's initialMTU default");
+    let budget = EndpointConfig::default().get_max_payload_size();
+    assert_eq!(
+        max_payload_size_for_mtu(INITIAL_MTU),
+        budget,
+        "the default endpoint budget derives from INITIAL_MTU"
+    );
+
+    let a = Association::new(
+        None,
+        Arc::new(TransportConfig::default()),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+    assert_eq!(
+        budget, a.max_payload_size,
+        "the association keeps the endpoint's payload budget"
+    );
+    assert_eq!(
+        budget + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE,
+        a.mtu(),
+        "the association's MTU is the effective DATA-packet budget"
+    );
+}
+
+/// Port of pion's `TestAssociationOptions_ClientAndServer`
+/// (association_options_test.go).
+///
+/// pion dials a live client/server pair over a UDP pipe with every option set
+/// and asserts the values landed on both associations. rtc-sctp is sans-I/O,
+/// so both sides are constructed directly from one `TransportConfig` — the
+/// option-application scenario is identical, minus the network plumbing pion
+/// needs only to create the pair.
+///
+/// Every option rtc-sctp supports is asserted (the MTU-derived payload
+/// budget, receive buffer, max message size, RTO ceiling, the
+/// congestion-control knobs, zero-checksum acceptance). pion's `WithName`,
+/// `WithLoggerFactory`, `WithBlockWrite`, `WithMaxReassemblyQueueEntries` and
+/// `WithEnableInterleaving` have no rtc-sctp counterpart: name and logger are
+/// Go-runtime concerns, block-write belongs to pion's blocking async API, and
+/// the reassembly descriptor limit and message interleaving (RFC 8260) are
+/// not implemented.
+#[test]
+fn association_options_client_and_server() {
+    let transport = TransportConfig::default()
+        .with_max_receive_buffer_size(7777)
+        .with_max_message_size(30000)
+        .with_rto_max(Duration::from_millis(1000))
+        .with_min_cwnd(5000)
+        .with_fast_rtx_wnd(6000)
+        .with_cwnd_ca_step(7000)
+        .with_enable_zero_checksum(true);
+    // pion: WithMTU(1200)
+    let budget = max_payload_size_for_mtu(1200);
+
+    let client = Association::new(
+        None,
+        Arc::new(transport.clone()),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+    let server = Association::new(
+        Some(Arc::new(ServerConfig::new(transport.clone()))),
+        Arc::new(transport),
+        budget,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+
+    for (name, a) in [("client", &client), ("server", &server)] {
+        assert_eq!(1200, a.mtu(), "{name}: MTU mismatch");
+        assert_eq!(
+            7777, a.max_receive_buffer_size,
+            "{name}: maxReceiveBufferSize mismatch"
+        );
+        assert_eq!(30000, a.max_message_size, "{name}: maxMessageSize mismatch");
+        assert_eq!(5000, a.min_cwnd, "{name}: minCwnd mismatch");
+        assert_eq!(6000, a.fast_rtx_wnd, "{name}: fastRtxWnd mismatch");
+        assert_eq!(7000, a.cwnd_ca_step, "{name}: cwndCAStep mismatch");
+        assert_eq!(1000, a.rto_mgr.rto_max(), "{name}: rtoMax mismatch");
+        assert!(a.recv_zero_checksum, "{name}: recvZeroChecksum mismatch");
+        assert_eq!(
+            max_payload_size_for_mtu(1200),
+            a.max_payload_size,
+            "{name}: maxPayloadSize mismatch"
+        );
+    }
+}

@@ -3,6 +3,7 @@ name = "rtc-crypto"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Provider-neutral cryptography for the webrtc-rs RTC stack"
 license.workspace = true
 documentation = "https://docs.rs/rtc-crypto"

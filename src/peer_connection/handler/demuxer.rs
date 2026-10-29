@@ -69,6 +69,34 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
+impl super::WriteBypass for DemuxerHandler<'_> {
+    fn write_in_place(&mut self, pending: &mut VecDeque<TaggedRTCMessageInternal>) -> bool {
+        if !self.ctx.write_outs.is_empty() {
+            return false;
+        }
+        let stats = &mut *self.stats;
+        pending.retain_mut(|msg| {
+            let bytes = match &mut msg.message {
+                RTCMessageInternal::Raw(message) => {
+                    stats.transport.on_packet_sent(message.len());
+                    return true;
+                }
+                RTCMessageInternal::Stun(STUNMessage::Raw(message))
+                | RTCMessageInternal::Dtls(DTLSMessage::Raw(message))
+                | RTCMessageInternal::Rtp(RTPMessage::Raw(message)) => std::mem::take(message),
+                other => {
+                    debug!("drop non-RAW packet {other:?}");
+                    return false;
+                }
+            };
+            stats.transport.on_packet_sent(bytes.len());
+            msg.message = RTCMessageInternal::Raw(bytes);
+            true
+        });
+        true
+    }
+}
+
 impl<'a>
     sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for DemuxerHandler<'a>
@@ -147,7 +175,7 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.ctx.event_outs.pop_front()
+        super::pop_event(&mut self.ctx.event_outs)
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
@@ -160,5 +188,95 @@ impl<'a>
 
     fn close(&mut self) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer_connection::handler::WriteBypass;
+    use bytes::BytesMut;
+    use interceptor::Packet;
+    use sansio::Protocol;
+
+    fn tagged(message: RTCMessageInternal) -> TaggedRTCMessageInternal {
+        TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: Default::default(),
+            message,
+        }
+    }
+
+    fn mixed() -> VecDeque<TaggedRTCMessageInternal> {
+        let bytes = |b: &[u8]| BytesMut::from(b);
+        [
+            RTCMessageInternal::Raw(bytes(&[1, 2, 3])),
+            RTCMessageInternal::Stun(STUNMessage::Raw(bytes(&[0, 1]))),
+            // Not bytes yet: the demuxer has no use for it and drops it.
+            RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(Default::default()))),
+            RTCMessageInternal::Dtls(DTLSMessage::Raw(bytes(&[22, 254, 253, 9]))),
+            RTCMessageInternal::Rtp(RTPMessage::Raw(bytes(&[128, 96, 0, 1, 7, 7]))),
+        ]
+        .into_iter()
+        .map(tagged)
+        .collect()
+    }
+
+    fn bytes_of(queue: &VecDeque<TaggedRTCMessageInternal>) -> Vec<Vec<u8>> {
+        queue
+            .iter()
+            .map(|m| match &m.message {
+                RTCMessageInternal::Raw(b) => b.to_vec(),
+                other => panic!("the demuxer left {other:?} on the belt"),
+            })
+            .collect()
+    }
+
+    /// Passing the belt through in place leaves what queueing each message and polling the queue
+    /// would have: the same bytes in the same order, the same drops, the same count.
+    #[test]
+    fn writing_in_place_leaves_what_queueing_would() {
+        let mut queued_ctx = DemuxerHandlerContext::default();
+        let mut queued_stats = RTCStatsAccumulator::default();
+        let mut queued = VecDeque::new();
+        {
+            let mut handler = DemuxerHandler::new(&mut queued_ctx, &mut queued_stats);
+            for msg in mixed() {
+                handler.handle_write(msg).unwrap();
+            }
+            while let Some(msg) = handler.poll_write() {
+                queued.push_back(msg);
+            }
+        }
+
+        let mut ctx = DemuxerHandlerContext::default();
+        let mut stats = RTCStatsAccumulator::default();
+        let mut in_place = mixed();
+        assert!(DemuxerHandler::new(&mut ctx, &mut stats).write_in_place(&mut in_place));
+
+        assert_eq!(bytes_of(&in_place), bytes_of(&queued));
+        assert_eq!(in_place.len(), 4);
+        assert_eq!(
+            stats.transport.packets_sent,
+            queued_stats.transport.packets_sent
+        );
+        assert_eq!(
+            stats.transport.bytes_sent,
+            queued_stats.transport.bytes_sent
+        );
+        assert!(ctx.write_outs.is_empty());
+    }
+
+    /// With something already queued in the handler the in-place pass would reorder it, so the
+    /// handler declines and the belt is left as it was.
+    #[test]
+    fn a_handler_with_output_of_its_own_declines() {
+        let mut ctx = DemuxerHandlerContext::default();
+        ctx.write_outs
+            .push_back(tagged(RTCMessageInternal::Raw(BytesMut::from(&[9u8][..]))));
+        let mut stats = RTCStatsAccumulator::default();
+        let mut belt = mixed();
+        assert!(!DemuxerHandler::new(&mut ctx, &mut stats).write_in_place(&mut belt));
+        assert_eq!(belt.len(), 5);
     }
 }

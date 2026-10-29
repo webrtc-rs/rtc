@@ -111,13 +111,12 @@ use std::sync::Arc;
 use crypto::RTCCryptoProvider;
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
-//TODO: use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
-//TODO: use ice::mdns::MulticastDnsMode;
+use ice::agent::agent_config::{BindingRequestHandler, IpFilter, NominationValueGenerator};
+use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
-use ice::mdns::MulticastDnsMode;
 use std::time::Duration;
 
 /// Equal to UDP MTU
@@ -225,8 +224,18 @@ pub struct Candidates {
 
     /// Restrict candidate gathering to specific network types (e.g., UDP4, UDP6, TCP4).
     pub ice_network_types: Vec<NetworkType>,
-    //TODO: pub interface_filter: Arc<Option<InterfaceFilterFn>>,
-    //TODO: pub ip_filter: Arc<Option<IpFilterFn>>,
+    /// Filter for local candidate addresses.
+    pub ip_filter: Option<IpFilter>,
+
+    /// Filter for remote candidate addresses.
+    pub remote_ip_filter: Option<IpFilter>,
+
+    /// Whether a lite agent checks candidate priority on `USE-CANDIDATE` like a full agent.
+    pub ice_use_candidate_check_priority: bool,
+
+    /// Hook that sees every ICE binding request.
+    pub ice_binding_request_handler: Option<BindingRequestHandler>,
+
     /// External IP addresses for 1:1 NAT mappings (e.g., AWS Elastic IP).
     pub nat_1to1_ips: Vec<String>,
 
@@ -246,10 +255,25 @@ pub struct Candidates {
     pub include_loopback_candidate: bool,
 }
 
+/// ICE renomination (draft-thatcher-ice-renomination-01): lets the controlling agent move a call
+/// to a better candidate pair while it runs, and advertises `a=ice-options:renomination`.
+///
+/// Mirrors pion's `SetICERenomination`: renominating automatically is always on once enabled.
+#[derive(Default, Clone)]
+pub struct IceRenomination {
+    /// Produces the increasing nomination values; counts 1, 2, 3... when `None`.
+    pub generator: Option<NominationValueGenerator>,
+    /// How often the controlling agent re-evaluates the pairs; 3 seconds when `None` or zero.
+    pub interval: Option<Duration>,
+    /// The STUN attribute type carrying the nomination value; `0xC001` when `None`.
+    pub nomination_attribute: Option<u16>,
+}
+
 /// Replay attack protection window sizes.
 ///
 /// Larger windows provide better protection against packet reordering
-/// but consume more memory. Set to 0 to disable replay protection (not recommended).
+/// but consume more memory. A window of 0 selects the default (64 packets); to turn replay
+/// protection off for SRTP or SRTCP use the `disable_*` flags (not recommended).
 #[derive(Default, Copy, Clone)]
 pub struct ReplayProtection {
     /// DTLS replay protection window size (in packets).
@@ -260,6 +284,12 @@ pub struct ReplayProtection {
 
     /// SRTCP replay protection window size (in packets).
     pub srtcp: usize,
+
+    /// Turns SRTP replay protection off entirely.
+    pub srtp_disabled: bool,
+
+    /// Turns SRTCP replay protection off entirely.
+    pub srtcp_disabled: bool,
 }
 
 /// Maximum message size for SCTP data channels.
@@ -353,6 +383,8 @@ pub struct SettingEngine {
     pub(crate) data_channel: DataChannel,
     pub(crate) turn_allocation_refresh_interval_cap: Option<Duration>,
     pub(crate) candidates: Candidates,
+    pub(crate) ice_renomination: Option<IceRenomination>,
+    pub(crate) ice_trickle_advertised: bool,
     pub(crate) multicast_dns: MulticastDNS,
     pub(crate) replay_protection: ReplayProtection,
     pub(crate) sdp_media_level_fingerprints: bool,
@@ -363,6 +395,16 @@ pub struct SettingEngine {
     pub(crate) disable_media_engine_multiple_codecs: bool,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
+    /// How strictly the DTLS handshake insists on the extended master secret (RFC 7627).
+    pub(crate) dtls_extended_master_secret: Option<::dtls::config::ExtendedMasterSecretType>,
+    /// How often unanswered DTLS handshake flights are retransmitted; `None` is the default, 1 s.
+    pub(crate) dtls_retransmission_interval: Option<std::time::Duration>,
+    /// Where DTLS session key material is reported, for decrypting captured traffic.
+    ///
+    /// Set from [`with_dtls_key_logger`](SettingEngineBuilder::with_dtls_key_logger); a
+    /// debugging facility, so `None` is the default and shipping it enabled discloses
+    /// session secrets.
+    pub(crate) dtls_key_logger: Option<std::sync::Arc<dyn ::dtls::config::KeyLogger>>,
     pub(crate) receive_mtu: usize,
     pub(crate) mid_generator: Option<Arc<dyn Fn(isize) -> String + Send + Sync>>,
     /// Determines the max size of any message that may be sent through an SCTP transport.
@@ -374,6 +416,27 @@ pub struct SettingEngine {
     /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
     /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
+
+    /// Whether SCTP packets may carry a zero checksum, per [RFC 9653]. Off by default.
+    ///
+    /// Only sound on a DTLS-protected association, which every WebRTC data channel is.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) sctp_enable_zero_checksum: bool,
+    /// Upper bound of the SCTP retransmission timeout, as pion's
+    /// `SettingEngine.SetSCTPRTOMax`. `None` keeps the RFC 9260 default (60 s).
+    pub(crate) sctp_rto_max: Option<Duration>,
+    /// SCTP congestion-window floor in bytes, as pion's `SettingEngine.SetSCTPMinCwnd`.
+    /// `None` keeps the RFC 9260 congestion-control resets.
+    pub(crate) sctp_min_cwnd: Option<u32>,
+    /// SCTP fast-retransmission burst budget in bytes, as pion's
+    /// `SettingEngine.SetSCTPFastRtxWnd`; the effective budget is `max(MTU, n)`.
+    /// `None` keeps the one-MTU default.
+    pub(crate) sctp_fast_rtx_wnd: Option<u32>,
+    /// SCTP congestion-avoidance growth step in bytes, as pion's
+    /// `SettingEngine.SetSCTPCwndCAStep`; the effective step is `max(MTU, n)`.
+    /// `None` keeps the one-MTU default.
+    pub(crate) sctp_cwnd_ca_step: Option<u32>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -462,6 +525,26 @@ impl SettingEngineBuilder {
         Self::default()
     }
 
+    /// Advertises trickle ICE: offers and answers carry `a=ice-options:trickle`
+    /// (RFC 9429 §5.2.1 / §5.3.1; pion's `ICETricklingSupported` offer/answer option).
+    ///
+    /// A browser reads the attribute as permission to send its candidates as they are found
+    /// instead of waiting for gathering to finish.
+    pub fn with_ice_trickle_advertised(mut self, advertised: bool) -> Self {
+        self.0.ice_trickle_advertised = advertised;
+        self
+    }
+
+    /// Enables ICE renomination for peer connections built with this setting engine.
+    ///
+    /// The controlling agent then re-evaluates its candidate pairs periodically and moves the
+    /// call to a clearly better one (a direct path instead of a relay, a lower round-trip time),
+    /// and offers and answers carry `a=ice-options:renomination` so the peer knows.
+    pub fn with_ice_renomination(mut self, renomination: IceRenomination) -> Self {
+        self.0.ice_renomination = Some(renomination);
+        self
+    }
+
     /// Selects the cryptographic provider used by peer connections built with this setting engine.
     ///
     /// The provider is resolved once at peer-connection construction and shared with ICE, DTLS,
@@ -533,6 +616,44 @@ impl SettingEngineBuilder {
     /// that filters down to nothing usable fails with `ErrNoAvailableCipherSuites`.
     pub fn with_dtls_cipher_suites(mut self, cipher_suites: Vec<CipherSuiteId>) -> Self {
         self.0.dtls_cipher_suites = cipher_suites;
+        self
+    }
+
+    /// Sets how strictly the DTLS handshake insists on the extended master secret ([RFC 7627]).
+    ///
+    /// The default is `Require`, which is what browsers do. `Request` and `Disable` exist for
+    /// peers that predate the extension; both weaken the handshake against triple-handshake
+    /// attacks.
+    ///
+    /// [RFC 7627]: https://www.rfc-editor.org/rfc/rfc7627
+    pub fn with_dtls_extended_master_secret(
+        mut self,
+        policy: ::dtls::config::ExtendedMasterSecretType,
+    ) -> Self {
+        self.0.dtls_extended_master_secret = Some(policy);
+        self
+    }
+
+    /// Sets how often an unanswered DTLS handshake flight is retransmitted (default 1 second).
+    pub fn with_dtls_retransmission_interval(mut self, interval: std::time::Duration) -> Self {
+        self.0.dtls_retransmission_interval = Some(interval);
+        self
+    }
+
+    /// Receives DTLS session key material in the NSS key log format, once per handshake.
+    ///
+    /// The lines are what `SSLKEYLOGFILE` expects, so the usual implementation appends them
+    /// to a file Wireshark is pointed at, which is how you decrypt a capture's DTLS handshake
+    /// and the SRTP derived from it. Emitted on both ends of a connection: the client's and
+    /// the server's line for the same association are identical.
+    ///
+    /// A debugging facility: enabling it writes session secrets somewhere. Gate it behind an
+    /// opt-in flag, and leave it unset in production.
+    pub fn with_dtls_key_logger(
+        mut self,
+        key_logger: Option<std::sync::Arc<dyn ::dtls::config::KeyLogger>>,
+    ) -> Self {
+        self.0.dtls_key_logger = key_logger;
         self
     }
 
@@ -744,24 +865,44 @@ impl SettingEngineBuilder {
         self
     }
 
-    /*todo:
-    /// set_interface_filter sets the filtering functions when gathering ICE candidates
-    /// This can be used to exclude certain network interfaces from ICE. Which may be
-    /// useful if you know a certain interface will never succeed, or if you wish to reduce
-    /// the amount of information you wish to expose to the remote peer
-    pub fn with_interface_filter(mut self, filter: InterfaceFilterFn) -> Self {
-        self.0.candidates.interface_filter = Arc::new(Some(filter));
+    /// Limits which local IP addresses may become candidates.
+    ///
+    /// The filter is asked about every local candidate added to the connection and about the
+    /// peer-reflexive addresses learned from checks; an address it refuses is dropped. Use it to
+    /// keep private or tunnel addresses out of the SDP, or to reduce what is revealed to the
+    /// peer. The sans-I/O connection does not enumerate interfaces itself, so there is no
+    /// interface filter: choose the interfaces when binding.
+    pub fn with_ip_filter(mut self, filter: IpFilter) -> Self {
+        self.0.candidates.ip_filter = Some(filter);
         self
     }
 
+    /// Limits which remote IP addresses candidates may be accepted from.
+    ///
+    /// Remote candidates (signaled or learned from checks) on an address the filter refuses are
+    /// ignored. Useful for a server that must not connect out to private ranges.
+    pub fn with_remote_ip_filter(mut self, filter: IpFilter) -> Self {
+        self.0.candidates.remote_ip_filter = Some(filter);
+        self
+    }
 
-    /// set_ip_filter sets the filtering functions when gathering ICE candidates
-    /// This can be used to exclude certain ip from ICE. Which may be
-    /// useful if you know a certain ip will never succeed, or if you wish to reduce
-    /// the amount of information you wish to expose to the remote peer
-    pub fn with_ip_filter(mut self, filter: IpFilterFn) -> Self {
-        self.0.candidates.ip_filter = Arc::new(Some(filter));
-    }*/
+    /// Makes a lite agent apply the same candidate-priority check as a full agent to
+    /// `USE-CANDIDATE` requests, so a lagging low-priority pair cannot be selected over a better
+    /// one. Off by default, as in pion.
+    pub fn with_ice_use_candidate_check_priority(mut self, enable: bool) -> Self {
+        self.0.candidates.ice_use_candidate_check_priority = enable;
+        self
+    }
+
+    /// Installs a hook that sees every ICE binding request before the agent acts on it.
+    ///
+    /// If the handler returns `true` it has taken over pair selection for that request (the agent
+    /// still answers it); `false` leaves the request to the agent, as pion's
+    /// `SetICEBindingRequestHandler`.
+    pub fn with_ice_binding_request_handler(mut self, handler: BindingRequestHandler) -> Self {
+        self.0.candidates.ice_binding_request_handler = Some(handler);
+        self
+    }
 
     /// Configures 1:1 NAT IP mapping for cloud deployments.
     ///
@@ -1056,6 +1197,21 @@ impl SettingEngineBuilder {
     /// ```
     pub fn with_srtcp_replay_protection_window(mut self, n: usize) -> Self {
         self.0.replay_protection.srtcp = n;
+        self
+    }
+
+    /// Turns SRTP replay protection off. Not recommended: a captured packet can then be replayed.
+    ///
+    /// For when something upstream already guarantees uniqueness, or the stream legitimately
+    /// repeats sequence numbers.
+    pub fn with_disable_srtp_replay_protection(mut self, disabled: bool) -> Self {
+        self.0.replay_protection.srtp_disabled = disabled;
+        self
+    }
+
+    /// Turns SRTCP replay protection off. Not recommended.
+    pub fn with_disable_srtcp_replay_protection(mut self, disabled: bool) -> Self {
+        self.0.replay_protection.srtcp_disabled = disabled;
         self
     }
 
@@ -1421,6 +1577,73 @@ impl SettingEngineBuilder {
         self
     }
 
+    /// Sets the maximum SCTP retransmission timeout (pion's
+    /// `SettingEngine.SetSCTPRTOMax`).
+    ///
+    /// The RTO estimate clamp, the T3-rtx backoff ceiling and the retransmission
+    /// timers' exponential doubling are all capped by this value. The default
+    /// (leave unset) is the RFC 9260 recommendation of 60 s. Tuning this down
+    /// trades resilience on lossy, long-RTT paths for faster failure detection —
+    /// for example a 2 s ceiling fails a dead path after a handful of
+    /// retransmissions instead of backing off toward a minute.
+    pub fn with_sctp_rto_max(mut self, rto_max: Duration) -> Self {
+        self.0.sctp_rto_max = Some(rto_max);
+        self
+    }
+
+    /// Sets the minimum SCTP congestion window (pion's `SettingEngine.SetSCTPMinCwnd`).
+    ///
+    /// The congestion window never drops below this many bytes: the T3-rtx reset
+    /// (`cwnd = MTU`), the fast-recovery reset (`cwnd = ssthresh`) and the initial
+    /// window are all floored here. Leave unset for the RFC 9260 behaviour. Useful
+    /// on paths with a known bandwidth-delay product where collapsing to one MTU
+    /// starves the pipe and slow-start recovery costs seconds.
+    pub fn with_sctp_min_cwnd(mut self, min_cwnd: u32) -> Self {
+        self.0.sctp_min_cwnd = Some(min_cwnd);
+        self
+    }
+
+    /// Sets the SCTP fast-retransmission window (pion's
+    /// `SettingEngine.SetSCTPFastRtxWnd`).
+    ///
+    /// The total byte budget a single fast-retransmit burst may retransmit when
+    /// three gap reports mark chunks missing; the effective budget is
+    /// `max(MTU, fast_rtx_wnd)` and each packet within the burst is still
+    /// MTU-bounded. Leave unset for the one-MTU default, which retransmits at
+    /// most one packet's worth per fast-retransmit event.
+    pub fn with_sctp_fast_rtx_wnd(mut self, fast_rtx_wnd: u32) -> Self {
+        self.0.sctp_fast_rtx_wnd = Some(fast_rtx_wnd);
+        self
+    }
+
+    /// Sets the SCTP congestion-avoidance growth step (pion's
+    /// `SettingEngine.SetSCTPCwndCAStep`).
+    ///
+    /// Each congestion-avoidance round grows the congestion window by
+    /// `max(MTU, cwnd_ca_step)` bytes instead of one MTU. Leave unset for the
+    /// RFC 9260 `cwnd += MTU` growth. Larger steps probe for bandwidth faster
+    /// on high-BDP paths at the cost of being more aggressive toward the
+    /// network.
+    pub fn with_sctp_cwnd_ca_step(mut self, cwnd_ca_step: u32) -> Self {
+        self.0.sctp_cwnd_ca_step = Some(cwnd_ca_step);
+        self
+    }
+
+    /// Enables the [RFC 9653] zero checksum on SCTP, pion's
+    /// `SettingEngine.SetEnableSCTPZeroChecksum`.
+    ///
+    /// The DTLS transport already integrity-protects every SCTP datagram, so once both
+    /// ends opt in, packets drop the redundant CRC-32C: one less pass over every byte of
+    /// every data-channel packet, both sending and receiving. Receiving turns on when this
+    /// is set and the capability is advertised in INIT/INIT-ACK; sending turns on once
+    /// the peer advertises it too.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub fn with_sctp_enable_zero_checksum(mut self, enable: bool) -> Self {
+        self.0.sctp_enable_zero_checksum = enable;
+        self
+    }
+
     /// Controls whether to ignore RID pause signals for receiving transceivers.
     ///
     /// RID (RTP Stream Identifier) can signal pause/resume for individual streams
@@ -1504,5 +1727,39 @@ mod tests {
             setting_engine.ice_credentials(),
             ("other_ufrag", "other_password")
         );
+    }
+
+    #[test]
+    fn dtls_handshake_settings_default_to_the_strict_ones() {
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert!(setting_engine.dtls_extended_master_secret.is_none());
+        assert!(setting_engine.dtls_retransmission_interval.is_none());
+
+        let setting_engine = SettingEngineBuilder::new()
+            .with_dtls_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Request)
+            .with_dtls_retransmission_interval(std::time::Duration::from_millis(250))
+            .build();
+        assert_eq!(
+            setting_engine.dtls_extended_master_secret,
+            Some(::dtls::config::ExtendedMasterSecretType::Request)
+        );
+        assert_eq!(
+            setting_engine.dtls_retransmission_interval,
+            Some(std::time::Duration::from_millis(250))
+        );
+    }
+
+    #[test]
+    fn srtp_replay_protection_can_be_disabled() {
+        let setting_engine = SettingEngineBuilder::new().build();
+        assert!(!setting_engine.replay_protection.srtp_disabled);
+        assert!(!setting_engine.replay_protection.srtcp_disabled);
+
+        let setting_engine = SettingEngineBuilder::new()
+            .with_disable_srtp_replay_protection(true)
+            .with_disable_srtcp_replay_protection(true)
+            .build();
+        assert!(setting_engine.replay_protection.srtp_disabled);
+        assert!(setting_engine.replay_protection.srtcp_disabled);
     }
 }

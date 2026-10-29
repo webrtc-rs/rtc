@@ -116,3 +116,15 @@ fn test_abs_send_time_extension_estimate() -> Result<()> {
 
     Ok(())
 }
+
+// pion TestAbsSendTimeExtensionMarshalTo.
+#[test]
+fn test_abs_send_time_extension_marshal_to() -> Result<()> {
+    let e = AbsSendTimeExtension { timestamp: 123456 };
+    let mut buf = vec![0u8; e.marshal_size()];
+    let n = e.marshal_to(&mut buf)?;
+    assert_eq!(e.marshal_size(), n);
+    assert_eq!(3, n);
+    assert!(e.marshal_to(&mut []).is_err());
+    Ok(())
+}

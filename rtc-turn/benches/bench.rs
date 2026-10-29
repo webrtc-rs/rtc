@@ -39,12 +39,30 @@ fn benchmark_chan_data(c: &mut Criterion) {
             raw: vec![],
         };
         d.encode();
+        let buf = d.raw.clone();
+        // pion's `Decode` aliases its input; `parse` is the like-for-like call.
+        c.bench_function("BenchmarkChannelData_Parse", |b| {
+            b.iter(|| {
+                let (n, p) = ChannelData::parse(std::hint::black_box(&buf)).unwrap();
+                std::hint::black_box((n, p));
+            })
+        });
+    }
+
+    {
+        let mut d = ChannelData {
+            data: vec![1, 2, 3, 4],
+            number: ChannelNumber(MIN_CHANNEL_NUMBER + 1),
+            raw: vec![],
+        };
+        d.encode();
         let mut buf = vec![0u8; d.raw.len()];
         buf.copy_from_slice(&d.raw);
         c.bench_function("BenchmarkChannelData_Decode", |b| {
             b.iter(|| {
+                // pion sets `d.Raw = buf`; reusing the buffer is the like-for-like call here.
                 d.reset();
-                d.raw = buf.clone();
+                d.raw.extend_from_slice(&buf);
                 d.decode().unwrap();
             })
         });

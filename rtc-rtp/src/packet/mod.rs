@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod packet_test;
+mod view;
+
+pub use view::{Extensions, PacketView};
 
 use crate::header::*;
 use shared::{
@@ -43,40 +46,42 @@ impl Unmarshal for Packet {
         Self: Sized,
         B: Buf,
     {
-        let header = Header::unmarshal(raw_packet)?;
-        let payload_len = raw_packet.remaining();
-        let payload = raw_packet.copy_to_bytes(payload_len);
-        if header.padding {
-            if payload_len > 0 {
-                let padding_len = payload[payload_len - 1] as usize;
-                if padding_len <= payload_len {
-                    Ok(Packet {
-                        header,
-                        payload: payload.slice(..payload_len - padding_len),
-                    })
-                } else {
-                    Err(Error::ErrShortPacket)
-                }
-            } else {
-                Err(Error::ErrShortPacket)
-            }
-        } else {
-            Ok(Packet { header, payload })
-        }
+        // One `Bytes` for the whole datagram: for a `Bytes` input taking it is a move, and the
+        // payload below is that same handle with the header cut off, so the only reference
+        // counts touched are the extension elements'. Every count is an atomic read-modify-write.
+        let mut data = raw_packet.copy_to_bytes(raw_packet.remaining());
+        let header_len = Header::wire_len(&data)?;
+        let mut header = Header::parse(&data)?;
+        data.advance(header_len);
+        let payload = strip_padding(&mut header, data)?;
+        Ok(Packet { header, payload })
     }
+}
+
+/// Removes the trailing padding from `payload` when `header` says there is some, recording its
+/// size in the header so the packet marshals back to the same length.
+fn strip_padding(header: &mut Header, mut payload: Bytes) -> Result<Bytes> {
+    if header.padding {
+        let payload_len = payload.len();
+        // The last octet is the padding count, which includes itself and cannot be zero.
+        let padding_size = *payload.last().ok_or(Error::ErrShortPacket)?;
+        if padding_size == 0 {
+            return Err(Error::ErrInvalidRtpPadding);
+        }
+        if padding_size as usize > payload_len {
+            return Err(Error::ErrShortPacket);
+        }
+        payload.truncate(payload_len - padding_size as usize);
+        header.padding_size = padding_size;
+    }
+    Ok(payload)
 }
 
 impl MarshalSize for Packet {
     /// MarshalSize returns the size of the packet once marshaled.
     fn marshal_size(&self) -> usize {
         let payload_len = self.payload.len();
-        let padding_len = if self.header.padding {
-            let padding_len = get_padding(payload_len);
-            if padding_len == 0 { 4 } else { padding_len }
-        } else {
-            0
-        };
-        self.header.marshal_size() + payload_len + padding_len
+        self.header.marshal_size() + payload_len + self.padding_len()
     }
 }
 
@@ -91,10 +96,7 @@ impl Marshal for Packet {
         buf = &mut buf[n..];
         buf.put(&*self.payload);
         let padding_len = if self.header.padding {
-            let mut padding_len = get_padding(self.payload.len());
-            if padding_len == 0 {
-                padding_len = 4;
-            }
+            let padding_len = self.padding_len();
             for i in 0..padding_len {
                 if i != padding_len - 1 {
                     buf.put_u8(0);
@@ -108,6 +110,40 @@ impl Marshal for Packet {
         };
 
         Ok(n + self.payload.len() + padding_len)
+    }
+}
+
+impl Packet {
+    /// Parses the RTP packet in `data` into `self`, exactly as [`Packet::unmarshal`] would, but
+    /// reusing the CSRC list and extension table `self` already owns.
+    ///
+    /// A receive loop that keeps one `Packet` and parses every datagram into it allocates nothing
+    /// per packet (the payload and extension values share `data`'s buffer): this is how to match
+    /// a parser that fills a caller-provided struct. On error `self` is left unspecified.
+    ///
+    /// # Errors
+    ///
+    /// As [`Packet::unmarshal`].
+    pub fn unmarshal_reuse(&mut self, data: &Bytes) -> Result<()> {
+        let header_len = Header::wire_len(data)?;
+        self.header.parse_into(data)?;
+        self.payload = strip_padding(&mut self.header, data.slice(header_len..))?;
+        Ok(())
+    }
+
+    /// The number of padding octets this packet marshals with: the recorded padding size when
+    /// there is one, otherwise whatever pads the payload to a 32-bit boundary (at least one).
+    fn padding_len(&self) -> usize {
+        if !self.header.padding {
+            0
+        } else if self.header.padding_size > 0 {
+            self.header.padding_size as usize
+        } else {
+            match get_padding(self.payload.len()) {
+                0 => 4,
+                n => n,
+            }
+        }
     }
 }
 

@@ -7,7 +7,7 @@ fn test_slice_loss_indication_unmarshal() {
         (
             "valid",
             Bytes::from_static(&[
-                0x82u8, 0xcd, 0x0, 0x3, // SliceLossIndication
+                0x82u8, 0xce, 0x0, 0x3, // SliceLossIndication
                 0x90, 0x2f, 0x9e, 0x2e, // sender=0x902f9e2e
                 0x90, 0x2f, 0x9e, 0x2e, // media=0x902f9e2e
                 0x55, 0x50, 0x00, 0x2C, // nack 0xAAAA, 0x5555
@@ -26,7 +26,7 @@ fn test_slice_loss_indication_unmarshal() {
         (
             "short report",
             Bytes::from_static(&[
-                0x82, 0xcd, 0x0, 0x2, // ssrc=0x902f9e2e
+                0x82, 0xce, 0x0, 0x2, // ssrc=0x902f9e2e
                 0x90, 0x2f, 0x9e, 0x2e,
                 // report ends early
             ]),

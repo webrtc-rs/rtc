@@ -41,3 +41,17 @@ fn test_transport_cc_extension_extra_bytes() -> Result<()> {
 
     Ok(())
 }
+
+// pion TestTransportCCExtensionMarshalTo.
+#[test]
+fn test_transport_cc_extension_marshal_to() -> Result<()> {
+    let t = TransportCcExtension {
+        transport_sequence: 2,
+    };
+    let mut buf = vec![0u8; t.marshal_size()];
+    let n = t.marshal_to(&mut buf)?;
+    assert_eq!(t.marshal_size(), n);
+    assert_eq!(&[0x00, 0x02][..], &buf[..n]);
+    assert!(t.marshal_to(&mut []).is_err());
+    Ok(())
+}

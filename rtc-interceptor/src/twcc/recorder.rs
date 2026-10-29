@@ -506,4 +506,632 @@ mod tests {
         assert_eq!(fb.sequence_number_count, 3); // 0, 1 (not received), 2
         assert_eq!(fb.next_sequence_number, 3);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // pion ports (twcc_test.go, observed at v0.1.49)
+    // ---------------------------------------------------------------------------------------
+
+    const REFERENCE_TIME_SCALE: i64 = 64_000;
+
+    /// pion `addRun`: record (sequence, arrival) pairs, arrivals in microseconds.
+    fn add_run(recorder: &mut Recorder, sequences: &[u16], arrivals: &[i64]) {
+        for (&sequence, &arrival) in sequences.iter().zip(arrivals) {
+            recorder.record(5000, sequence, arrival);
+        }
+    }
+
+    fn single_transport_cc(packets: &[Box<dyn rtcp::Packet>]) -> &TransportLayerCc {
+        assert_eq!(1, packets.len(), "a single feedback packet");
+        packets[0]
+            .as_any()
+            .downcast_ref::<TransportLayerCc>()
+            .expect("a TransportLayerCc")
+    }
+
+    fn small(delta: i64) -> RecvDelta {
+        RecvDelta {
+            type_tcc_packet: SymbolTypeTcc::PacketReceivedSmallDelta,
+            delta,
+        }
+    }
+
+    fn large(delta: i64) -> RecvDelta {
+        RecvDelta {
+            type_tcc_packet: SymbolTypeTcc::PacketReceivedLargeDelta,
+            delta,
+        }
+    }
+
+    fn run_length_chunk(symbol: SymbolTypeTcc, run: u16) -> PacketStatusChunk {
+        PacketStatusChunk::RunLengthChunk(RunLengthChunk {
+            packet_status_symbol: symbol,
+            run_length: run,
+            ..Default::default()
+        })
+    }
+
+    fn status_vector_chunk(symbols: Vec<SymbolTypeTcc>) -> PacketStatusChunk {
+        PacketStatusChunk::StatusVectorChunk(StatusVectorChunk {
+            type_tcc: StatusChunkTypeTcc::StatusVectorChunk,
+            symbol_size: SymbolSizeTypeTcc::TwoBit,
+            symbol_list: symbols,
+        })
+    }
+
+    /// pion's tests marshal and unmarshal before asserting the padded vectors; a fresh
+    /// unmarshalled chunk always carries seven two-bit symbols, where the in-memory chunk
+    /// built by the recorder carries only the real ones.
+    fn round_tripped(packet: &TransportLayerCc) -> TransportLayerCc {
+        use shared::marshal::{Marshal, MarshalSize, Unmarshal};
+
+        let mut buffer = vec![0u8; packet.marshal_size()];
+        packet.marshal_to(&mut buffer).expect("marshal");
+        let mut slice = buffer.as_slice();
+        TransportLayerCc::unmarshal(&mut slice).expect("unmarshal")
+    }
+
+    /// pion `TestBuildFeedbackPacket`: a run of small deltas followed by one large delta comes
+    /// out as two run-length chunks, with the reference time taken from the first arrival.
+    #[test]
+    fn test_build_feedback_packet_full_content() {
+        use shared::marshal::MarshalSize;
+
+        let mut recorder = Recorder::new(5000);
+
+        let arrivals = [
+            64_000, 64_250, 64_500, 64_750, 65_000, 65_250, 65_500,
+            129_500, // 256 scale factors after the previous
+        ];
+        add_run(&mut recorder, &[0, 1, 2, 3, 4, 5, 6, 7], &arrivals);
+
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+
+        assert_eq!(5000, packet.sender_ssrc);
+        assert_eq!(5000, packet.media_ssrc);
+        assert_eq!(0, packet.base_sequence_number);
+        assert_eq!(8, packet.packet_status_count);
+        assert_eq!(1, packet.reference_time);
+        assert_eq!(0, packet.fb_pkt_count);
+        assert_eq!(
+            vec![
+                run_length_chunk(SymbolTypeTcc::PacketReceivedSmallDelta, 7),
+                run_length_chunk(SymbolTypeTcc::PacketReceivedLargeDelta, 1),
+            ],
+            packet.packet_chunks
+        );
+        assert_eq!(
+            vec![
+                small(0),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                large(TYPE_TCC_DELTA_SCALE_FACTOR * 256),
+            ],
+            packet.recv_deltas
+        );
+        assert_eq!(36, packet.marshal_size(), "RTCP length 8: (8+1)*4 bytes");
+    }
+
+    /// pion `TestBuildFeedbackPacket_MinInput`: a single received packet is a complete report.
+    #[test]
+    fn test_build_feedback_packet_min_input() {
+        use shared::marshal::MarshalSize;
+
+        let mut recorder = Recorder::new(5000);
+        add_run(&mut recorder, &[0], &[REFERENCE_TIME_SCALE]);
+
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+
+        assert_eq!(0, packet.base_sequence_number);
+        assert_eq!(1, packet.reference_time);
+        assert_eq!(0, packet.fb_pkt_count);
+        assert_eq!(1, packet.packet_status_count);
+        assert_eq!(
+            vec![run_length_chunk(SymbolTypeTcc::PacketReceivedSmallDelta, 1)],
+            packet.packet_chunks
+        );
+        assert_eq!(vec![small(0)], packet.recv_deltas);
+        assert_eq!(24, packet.marshal_size(), "RTCP length 5: (5+1)*4 bytes");
+    }
+
+    /// pion `TestBuildFeedbackPacket_Rolling`: a report built across the 16-bit wrap keeps a
+    /// single base (0), counts every sequence in between — including the ones lost across the
+    /// wrap — and bumps the feedback packet count for the second report.
+    #[test]
+    fn test_build_feedback_packet_rolling() {
+        use shared::marshal::MarshalSize;
+
+        let mut recorder = Recorder::new(5000);
+        add_run(&mut recorder, &[65_534, 65_535], &[64_000, 64_250]);
+
+        assert_eq!(1, recorder.build_feedback_packet().len());
+
+        add_run(
+            &mut recorder,
+            &[0, 4, 5, 6],
+            &[64_500, 64_750, 65_000, 65_250],
+        );
+
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+
+        assert_eq!(0, packet.base_sequence_number, "the wrap lands on base 0");
+        assert_eq!(1, packet.reference_time);
+        assert_eq!(1, packet.fb_pkt_count, "the second feedback this window");
+        assert_eq!(7, packet.packet_status_count);
+        assert_eq!(
+            vec![status_vector_chunk(vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+            ])],
+            packet.packet_chunks
+        );
+        assert_eq!(
+            vec![
+                small(TYPE_TCC_DELTA_SCALE_FACTOR * 2),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+            ],
+            packet.recv_deltas
+        );
+        assert_eq!(28, packet.marshal_size(), "RTCP length 6: (6+1)*4 bytes");
+    }
+
+    /// pion `TestBuildFeedbackPacket_MissingPacketsBetweenFeedbacks`: the report after a gap
+    /// starts one past the end of the previous report, and describes the lost stretch as
+    /// not-received symbols so the sender sees both the losses and the survivors.
+    #[test]
+    fn test_build_feedback_packet_missing_packets_between_feedbacks() {
+        let mut recorder = Recorder::new(5000);
+
+        add_run(
+            &mut recorder,
+            &[0, 1, 2, 3],
+            &[64_000, 64_250, 64_500, 64_750],
+        );
+        assert_eq!(1, recorder.build_feedback_packet().len());
+
+        add_run(&mut recorder, &[7, 8, 9], &[129_750, 130_000, 130_250]);
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+
+        assert_eq!(
+            4, packet.base_sequence_number,
+            "one after the end of the previous feedback"
+        );
+        assert_eq!(6, packet.packet_status_count);
+        assert_eq!(
+            vec![status_vector_chunk(vec![
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+            ])],
+            packet.packet_chunks
+        );
+    }
+
+    /// pion `TestBuildFeedbackPacketCount`: the feedback-packet counter starts at zero and
+    /// increments per built feedback, surviving a re-record of the same sequence numbers.
+    #[test]
+    fn test_build_feedback_packet_count() {
+        let mut recorder = Recorder::new(5000);
+
+        add_run(
+            &mut recorder,
+            &[0, 1],
+            &[REFERENCE_TIME_SCALE, REFERENCE_TIME_SCALE],
+        );
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+        assert_eq!(0, packet.fb_pkt_count);
+
+        add_run(
+            &mut recorder,
+            &[0, 1],
+            &[REFERENCE_TIME_SCALE, REFERENCE_TIME_SCALE],
+        );
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+        assert_eq!(1, packet.fb_pkt_count);
+    }
+
+    /// pion `TestDuplicatePackets`: a sequence number recorded twice is reported once.
+    #[test]
+    fn test_duplicate_packets() {
+        let mut recorder = Recorder::new(5000);
+        add_run(&mut recorder, &[12, 13, 13, 14], &[REFERENCE_TIME_SCALE; 4]);
+
+        let packets = recorder.build_feedback_packet();
+        let packet = single_transport_cc(&packets);
+
+        assert_eq!(12, packet.base_sequence_number);
+        assert_eq!(3, packet.packet_status_count, "13 counted once");
+        assert_eq!(
+            vec![run_length_chunk(SymbolTypeTcc::PacketReceivedSmallDelta, 3)],
+            packet.packet_chunks
+        );
+        assert_eq!(vec![small(0), small(0), small(0)], packet.recv_deltas);
+    }
+
+    /// pion `TestShortDeltas` ("SplitsOneBitDeltas"): twelve statuses with two losses split
+    /// across two padded two-bit status vectors; every delta is zero.
+    #[test]
+    fn test_short_deltas_split_across_two_vectors() {
+        use shared::marshal::MarshalSize;
+
+        let mut recorder = Recorder::new(5000);
+        add_run(
+            &mut recorder,
+            &[3, 4, 5, 7, 6, 8, 10, 11, 13, 14],
+            &[REFERENCE_TIME_SCALE; 10],
+        );
+
+        let packets = recorder.build_feedback_packet();
+        let packet = round_tripped(single_transport_cc(&packets));
+
+        assert_eq!(3, packet.base_sequence_number);
+        assert_eq!(1, packet.reference_time);
+        assert_eq!(12, packet.packet_status_count);
+        assert_eq!(
+            vec![
+                status_vector_chunk(vec![
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                ]),
+                status_vector_chunk(vec![
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                    SymbolTypeTcc::PacketNotReceived,
+                ]),
+            ],
+            packet.packet_chunks
+        );
+        assert_eq!(vec![small(0); 10], packet.recv_deltas);
+        assert_eq!(36, packet.marshal_size(), "RTCP length 8: (8+1)*4 bytes");
+    }
+
+    /// pion `TestShortDeltas` ("padsTwoBitDeltas"): fewer statuses than a two-bit vector holds
+    /// are padded with not-received symbols, and the count describes only real sequences.
+    #[test]
+    fn test_short_deltas_pad_the_last_vector() {
+        let mut recorder = Recorder::new(5000);
+        add_run(&mut recorder, &[3, 4, 5, 7], &[REFERENCE_TIME_SCALE; 4]);
+
+        let packets = recorder.build_feedback_packet();
+        let packet = round_tripped(single_transport_cc(&packets));
+
+        assert_eq!(5, packet.packet_status_count, "3..=7 with 6 missing");
+        assert_eq!(
+            vec![status_vector_chunk(vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+            ])],
+            packet.packet_chunks
+        );
+        assert_eq!(vec![small(0); 4], packet.recv_deltas);
+    }
+
+    /// pion `TestReorderedPackets`: a packet arriving after a later sequence number produces a
+    /// negative delta — a large-delta symbol in the vector — and the per-sequence deltas
+    /// describe arrivals in sequence order, not arrival order.
+    #[test]
+    fn test_reordered_packets() {
+        use shared::marshal::MarshalSize;
+
+        let mut recorder = Recorder::new(5000);
+
+        let arrivals: Vec<i64> = (1..=10)
+            .map(|step| REFERENCE_TIME_SCALE + TYPE_TCC_DELTA_SCALE_FACTOR * step)
+            .collect();
+        // 7 arrives before 6, and 6's arrival is later than 7's.
+        add_run(
+            &mut recorder,
+            &[3, 4, 5, 7, 6, 8, 10, 11, 13, 14],
+            &arrivals,
+        );
+
+        let packets = recorder.build_feedback_packet();
+        let packet = round_tripped(single_transport_cc(&packets));
+
+        assert_eq!(3, packet.base_sequence_number);
+        assert_eq!(12, packet.packet_status_count);
+        assert_eq!(
+            vec![
+                status_vector_chunk(vec![
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedLargeDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                ]),
+                status_vector_chunk(vec![
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketReceivedSmallDelta,
+                    SymbolTypeTcc::PacketNotReceived,
+                    SymbolTypeTcc::PacketNotReceived,
+                ]),
+            ],
+            packet.packet_chunks
+        );
+        assert_eq!(
+            vec![
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR * 2),
+                large(-TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR * 2),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+                small(TYPE_TCC_DELTA_SCALE_FACTOR),
+            ],
+            packet.recv_deltas
+        );
+        assert_eq!(36, packet.marshal_size(), "RTCP length 8: (8+1)*4 bytes");
+    }
+
+    /// pion `TestPacketsHheld`: held counts recorded arrivals since the last build.
+    #[test]
+    fn test_packets_held() {
+        let mut recorder = Recorder::new(5000);
+        assert_eq!(0, recorder.packets_held());
+
+        add_run(
+            &mut recorder,
+            &[0, 1, 2],
+            &[
+                REFERENCE_TIME_SCALE,
+                REFERENCE_TIME_SCALE + 250,
+                REFERENCE_TIME_SCALE + 500,
+            ],
+        );
+        assert_eq!(3, recorder.packets_held());
+
+        add_run(
+            &mut recorder,
+            &[3, 4],
+            &[REFERENCE_TIME_SCALE + 750, REFERENCE_TIME_SCALE + 1000],
+        );
+        assert_eq!(5, recorder.packets_held());
+
+        recorder.build_feedback_packet();
+        assert_eq!(0, recorder.packets_held());
+    }
+
+    /// pion `Test_chunk_add` ("fill with not received"): a uniform run reaches the 13-bit
+    /// run-length cap, accepts nothing else, and marshals as `0x1fff`.
+    #[test]
+    fn test_chunk_fill_with_not_received() {
+        use shared::marshal::{Marshal, MarshalSize};
+
+        let mut chunk = Chunk::new();
+        for _ in 0..MAX_RUN_LENGTH_CAP {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketNotReceived));
+            chunk.add(SymbolTypeTcc::PacketNotReceived);
+        }
+        assert!(!chunk.has_different_types);
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketNotReceived));
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedSmallDelta));
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+
+        let encoded = chunk.encode();
+        let mut buffer = vec![0u8; encoded.marshal_size()];
+        encoded.marshal_to(&mut buffer).expect("marshal");
+        assert_eq!(vec![0x1f, 0xff], buffer);
+    }
+
+    /// pion `Test_chunk_add` ("fill with small delta"): small deltas stop at the 14-symbol
+    /// one-bit cap and marshal as `0x200e`.
+    #[test]
+    fn test_chunk_fill_with_small_delta() {
+        use shared::marshal::{Marshal, MarshalSize};
+
+        let mut chunk = Chunk::new();
+        for _ in 0..MAX_ONE_BIT_CAP {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedSmallDelta));
+            chunk.add(SymbolTypeTcc::PacketReceivedSmallDelta);
+        }
+        assert!(!chunk.has_different_types);
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketNotReceived));
+
+        let encoded = chunk.encode();
+        let mut buffer = vec![0u8; encoded.marshal_size()];
+        encoded.marshal_to(&mut buffer).expect("marshal");
+        assert_eq!(vec![0x20, 0x0e], buffer);
+    }
+
+    /// pion `Test_chunk_add` ("fill with large delta"): large deltas stop at the 7-symbol
+    /// two-bit cap and marshal as `0x4007`.
+    #[test]
+    fn test_chunk_fill_with_large_delta() {
+        use shared::marshal::{Marshal, MarshalSize};
+
+        let mut chunk = Chunk::new();
+        for _ in 0..MAX_TWO_BIT_CAP {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+            chunk.add(SymbolTypeTcc::PacketReceivedLargeDelta);
+        }
+        assert!(chunk.has_large_delta);
+        assert!(!chunk.has_different_types);
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedSmallDelta));
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketNotReceived));
+
+        let encoded = chunk.encode();
+        let mut buffer = vec![0u8; encoded.marshal_size()];
+        encoded.marshal_to(&mut buffer).expect("marshal");
+        assert_eq!(vec![0x40, 0x07], buffer);
+    }
+
+    /// pion `Test_chunk_add` ("fill with different types"): a mixed chunk encodes as a two-bit
+    /// status vector marshalling to `0xd56a`.
+    #[test]
+    fn test_chunk_fill_with_different_types() {
+        use shared::marshal::{Marshal, MarshalSize};
+
+        let mut chunk = Chunk::new();
+        for _ in 0..4 {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedSmallDelta));
+            chunk.add(SymbolTypeTcc::PacketReceivedSmallDelta);
+        }
+        for _ in 0..3 {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+            chunk.add(SymbolTypeTcc::PacketReceivedLargeDelta);
+        }
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+
+        let encoded = chunk.encode();
+        let mut buffer = vec![0u8; encoded.marshal_size()];
+        encoded.marshal_to(&mut buffer).expect("marshal");
+        assert_eq!(vec![0xd5, 0x6a], buffer);
+    }
+
+    /// pion `Test_chunk_add` ("overfill and encode"): encoding a two-bit vector keeps the
+    /// symbols beyond the cap for the next chunk, and the leftover joins a following symbol.
+    #[test]
+    fn test_chunk_overfill_and_encode() {
+        let mut chunk = Chunk::new();
+
+        assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedSmallDelta));
+        chunk.add(SymbolTypeTcc::PacketReceivedSmallDelta);
+        for _ in 0..7 {
+            assert!(chunk.can_add(SymbolTypeTcc::PacketNotReceived));
+            chunk.add(SymbolTypeTcc::PacketNotReceived);
+        }
+        assert!(!chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+
+        let first = chunk.encode();
+        assert!(matches!(first, PacketStatusChunk::StatusVectorChunk(_)));
+        assert_eq!(1, chunk.deltas.len(), "one symbol carried over");
+
+        assert!(chunk.can_add(SymbolTypeTcc::PacketReceivedLargeDelta));
+        chunk.add(SymbolTypeTcc::PacketReceivedLargeDelta);
+
+        let second = chunk.encode();
+        assert_eq!(
+            status_vector_chunk(vec![
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+            ]),
+            second
+        );
+        assert!(chunk.deltas.is_empty());
+    }
+
+    /// pion `Test_feedback` ("add simple" and "add too large"): a delta beyond 16 bits cannot
+    /// be represented and is refused rather than truncated.
+    #[test]
+    fn test_feedback_rejects_an_unrepresentable_delta() {
+        let mut feedback = Feedback::new(0, 0, 0);
+        assert!(feedback.add_received(0, 10));
+
+        let mut feedback = Feedback::new(0, 0, 0);
+        assert!(
+            !feedback.add_received(12, 8200 * 1000 * 250),
+            "a delta beyond 16 bits does not fit the format"
+        );
+    }
+
+    /// pion `Test_feedback` ("add received 1"): missing sequences before a received one become
+    /// not-received symbols in the same chunk, and rounding keeps the reference time stable.
+    #[test]
+    fn test_feedback_missing_sequences_join_the_chunk() {
+        let mut feedback = Feedback::new(0, 0, 0);
+        feedback.set_base(1, 1_000_000);
+
+        assert!(feedback.add_received(1, 1_023_000));
+        assert_eq!(2, feedback.next_sequence_number);
+        assert_eq!(15, feedback.ref_timestamp_64ms);
+
+        assert!(feedback.add_received(4, 1_086_000));
+        assert_eq!(5, feedback.next_sequence_number);
+        assert_eq!(15, feedback.ref_timestamp_64ms);
+
+        assert!(feedback.last_chunk.has_different_types);
+        assert_eq!(4, feedback.last_chunk.deltas.len());
+        assert!(
+            !feedback
+                .last_chunk
+                .deltas
+                .contains(&SymbolTypeTcc::PacketReceivedLargeDelta)
+        );
+    }
+
+    /// pion `Test_feedback` ("add received 2"): a full report with losses and large deltas,
+    /// field for field.
+    #[test]
+    fn test_feedback_builds_a_full_report() {
+        use shared::marshal::MarshalSize;
+
+        let mut feedback = Feedback::new(0, 0, 0);
+        feedback.set_base(5, 320_000);
+
+        assert!(feedback.add_received(5, 320_000));
+        assert!(feedback.add_received(7, 448_000));
+        assert!(feedback.add_received(8, 512_000));
+        assert!(feedback.add_received(11, 768_000));
+
+        let packet = feedback.get_rtcp();
+
+        assert_eq!(5, packet.base_sequence_number);
+        assert_eq!(7, packet.packet_status_count);
+        assert_eq!(5, packet.reference_time);
+        assert_eq!(0, packet.fb_pkt_count);
+        assert_eq!(
+            vec![status_vector_chunk(vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+            ])],
+            packet.packet_chunks
+        );
+        assert_eq!(
+            vec![
+                small(0),
+                large(0x0200 * TYPE_TCC_DELTA_SCALE_FACTOR),
+                large(0x0100 * TYPE_TCC_DELTA_SCALE_FACTOR),
+                large(0x0400 * TYPE_TCC_DELTA_SCALE_FACTOR),
+            ],
+            packet.recv_deltas
+        );
+        assert_eq!(32, packet.marshal_size(), "RTCP length 7: (7+1)*4 bytes");
+    }
 }

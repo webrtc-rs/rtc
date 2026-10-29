@@ -23,6 +23,7 @@ fn cross_symmetric(sealer: &dyn RTCCrypto, opener: &dyn RTCCrypto) {
         (AeadAlgorithm::Aes256Gcm, 32),
         (AeadAlgorithm::Aes128Ccm, 16),
         (AeadAlgorithm::Aes128Ccm8, 16),
+        (AeadAlgorithm::Aes256Ccm8, 32),
         (AeadAlgorithm::ChaCha20Poly1305, 32),
     ] {
         let key = vec![0x23; key_len];
@@ -61,21 +62,23 @@ fn cross_symmetric(sealer: &dyn RTCCrypto, opener: &dyn RTCCrypto) {
         assert_eq!(buffer, plaintext);
     }
 
-    let key = [0x67; 32];
     let iv = [0x78; 16];
     let plaintext = [0x89; 32];
-    let mut blocks = plaintext;
-    sealer
-        .new_cbc(CbcAlgorithm::Aes256Cbc, &key)
-        .unwrap()
-        .encrypt_blocks(&iv, &mut blocks)
-        .unwrap();
-    opener
-        .new_cbc(CbcAlgorithm::Aes256Cbc, &key)
-        .unwrap()
-        .decrypt_blocks(&iv, &mut blocks)
-        .unwrap();
-    assert_eq!(blocks, plaintext);
+    for (algorithm, key_len) in [(CbcAlgorithm::Aes128Cbc, 16), (CbcAlgorithm::Aes256Cbc, 32)] {
+        let key = vec![0x67; key_len];
+        let mut blocks = plaintext;
+        sealer
+            .new_cbc(algorithm, &key)
+            .unwrap()
+            .encrypt_blocks(&iv, &mut blocks)
+            .unwrap();
+        opener
+            .new_cbc(algorithm, &key)
+            .unwrap()
+            .decrypt_blocks(&iv, &mut blocks)
+            .unwrap();
+        assert_eq!(blocks, plaintext);
+    }
 }
 
 #[test]

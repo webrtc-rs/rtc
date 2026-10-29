@@ -9,6 +9,7 @@ pub(crate) mod chunk_forward_tsn;
 pub(crate) mod chunk_header;
 pub(crate) mod chunk_heartbeat;
 pub(crate) mod chunk_heartbeat_ack;
+pub(crate) mod chunk_i_forward_tsn;
 pub(crate) mod chunk_init;
 pub mod chunk_payload_data;
 pub(crate) mod chunk_reconfig;
@@ -147,6 +148,10 @@ impl ErrorCause {
             return Err(Error::ErrErrorCauseTooSmall);
         }
 
+        // The cause cannot be longer than the bytes it was cut from.
+        if len as usize > buf.len() {
+            return Err(Error::ErrErrorCauseTooSmall);
+        }
         let value_length = len as usize - ERROR_CAUSE_HEADER_LENGTH;
         let raw = buf.slice(ERROR_CAUSE_HEADER_LENGTH..ERROR_CAUSE_HEADER_LENGTH + value_length);
 

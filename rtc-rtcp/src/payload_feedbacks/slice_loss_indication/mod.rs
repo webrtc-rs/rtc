@@ -54,7 +54,7 @@ impl Packet for SliceLossIndication {
         Header {
             padding: get_padding_size(self.raw_size()) != 0,
             count: FORMAT_SLI,
-            packet_type: PacketType::TransportSpecificFeedback,
+            packet_type: PacketType::PayloadSpecificFeedback,
             length: ((self.marshal_size() / 4) - 1) as u16,
         }
     }
@@ -92,9 +92,7 @@ impl MarshalSize for SliceLossIndication {
 impl Marshal for SliceLossIndication {
     /// Marshal encodes the SliceLossIndication in binary
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
-        if (self.sli_entries.len() + SLI_LENGTH) as u8 > u8::MAX {
-            return Err(Error::TooManyReports);
-        }
+        crate::header::length_field(self.marshal_size())?;
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
         }
@@ -140,7 +138,7 @@ impl Unmarshal for SliceLossIndication {
             return Err(Error::PacketTooShort);
         }
 
-        if h.packet_type != PacketType::TransportSpecificFeedback || h.count != FORMAT_SLI {
+        if h.packet_type != PacketType::PayloadSpecificFeedback || h.count != FORMAT_SLI {
             return Err(Error::WrongType);
         }
 

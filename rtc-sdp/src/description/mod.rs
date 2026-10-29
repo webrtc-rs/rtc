@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod description_test;
+#[cfg(test)]
+mod pion_ported_test;
 
 /// Field types shared by session and media descriptions (`c=`, `b=`, `a=`).
 pub mod common;
@@ -7,3 +9,5 @@ pub mod common;
 pub mod media;
 /// The whole session description, plus the well-known attribute keys.
 pub mod session;
+mod text_writer;
+mod unmarshal;

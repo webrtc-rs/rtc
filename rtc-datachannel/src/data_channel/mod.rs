@@ -89,6 +89,11 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
+    /// Whether a message is waiting for `poll_write`.
+    pub fn has_pending_writes(&self) -> bool {
+        !self.write_outs.is_empty()
+    }
+
     fn new(config: DataChannelConfig, association_handle: usize, stream_id: u16) -> Self {
         Self {
             config,
@@ -149,7 +154,7 @@ impl DataChannel {
         buf: &[u8],
     ) -> Result<Self> {
         if ppi != PayloadProtocolIdentifier::Dcep {
-            return Err(Error::InvalidPayloadProtocolIdentifier(ppi as u8));
+            return Err(Error::InvalidPayloadProtocolIdentifier(ppi.0 as u8));
         }
 
         let mut read_buf = buf;

@@ -537,6 +537,7 @@ impl MarshalSize for TransportLayerCc {
 
 impl Marshal for TransportLayerCc {
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
+        crate::header::length_field(self.marshal_size())?;
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
         }
@@ -590,7 +591,7 @@ impl Unmarshal for TransportLayerCc {
 
         // https://tools.ietf.org/html/rfc4585#page-33
         // header's length + payload's length
-        let total_length = 4 * (h.length + 1) as usize;
+        let total_length = 4 * (h.length as usize + 1);
 
         if total_length < HEADER_LENGTH + PACKET_CHUNK_OFFSET {
             return Err(Error::PacketTooShort);
@@ -661,34 +662,31 @@ impl Unmarshal for TransportLayerCc {
                 StatusChunkTypeTcc::StatusVectorChunk => {
                     let packet_status = StatusVectorChunk::unmarshal(&mut chunk_reader)?;
 
-                    match packet_status.symbol_size {
-                        SymbolSizeTypeTcc::OneBit => {
-                            for sym in &packet_status.symbol_list {
-                                if *sym == SymbolTypeTcc::PacketReceivedSmallDelta {
-                                    recv_deltas.push(RecvDelta {
-                                        type_tcc_packet: SymbolTypeTcc::PacketReceivedSmallDelta,
-                                        ..Default::default()
-                                    })
-                                }
-                            }
-                        }
+                    // The last chunk may list more symbols than packets remain to be
+                    // described; only the first `remaining` of them are real.
+                    let packet_number_to_process = ((packet_status_count - processed_packet_num)
+                        as usize)
+                        .min(packet_status.symbol_list.len());
 
-                        SymbolSizeTypeTcc::TwoBit => {
-                            for sym in &packet_status.symbol_list {
-                                if *sym == SymbolTypeTcc::PacketReceivedSmallDelta
-                                    || *sym == SymbolTypeTcc::PacketReceivedLargeDelta
-                                {
-                                    recv_deltas.push(RecvDelta {
-                                        type_tcc_packet: *sym,
-                                        ..Default::default()
-                                    })
-                                }
+                    for sym in &packet_status.symbol_list[..packet_number_to_process] {
+                        let received = match packet_status.symbol_size {
+                            SymbolSizeTypeTcc::OneBit => {
+                                *sym == SymbolTypeTcc::PacketReceivedSmallDelta
                             }
+                            SymbolSizeTypeTcc::TwoBit => {
+                                *sym == SymbolTypeTcc::PacketReceivedSmallDelta
+                                    || *sym == SymbolTypeTcc::PacketReceivedLargeDelta
+                            }
+                        };
+                        if received {
+                            recv_deltas.push(RecvDelta {
+                                type_tcc_packet: *sym,
+                                ..Default::default()
+                            })
                         }
                     }
 
-                    processed_packet_num =
-                        processed_packet_num.saturating_add(packet_status.symbol_list.len() as u16);
+                    processed_packet_num += packet_number_to_process as u16;
                     initial_packet_status = PacketStatusChunk::StatusVectorChunk(packet_status);
                 }
             }
@@ -700,17 +698,19 @@ impl Unmarshal for TransportLayerCc {
         let mut recv_deltas_pos = packet_status_pos;
 
         for delta in &mut recv_deltas {
-            if recv_deltas_pos >= total_length {
-                return Err(Error::PacketTooShort);
-            }
-
             if delta.type_tcc_packet == SymbolTypeTcc::PacketReceivedSmallDelta {
+                if recv_deltas_pos + 1 > total_length {
+                    return Err(Error::PacketTooShort);
+                }
                 let mut delta_reader = raw_packet.take(1);
                 *delta = RecvDelta::unmarshal(&mut delta_reader)?;
                 recv_deltas_pos += 1;
             }
 
             if delta.type_tcc_packet == SymbolTypeTcc::PacketReceivedLargeDelta {
+                if recv_deltas_pos + 2 > total_length {
+                    return Err(Error::PacketTooShort);
+                }
                 let mut delta_reader = raw_packet.take(2);
                 *delta = RecvDelta::unmarshal(&mut delta_reader)?;
                 recv_deltas_pos += 2;

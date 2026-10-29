@@ -1,11 +1,17 @@
 #[cfg(test)]
 mod context_test;
 #[cfg(test)]
+mod rfc_vectors_test;
+#[cfg(test)]
 mod srtcp_test;
 #[cfg(test)]
 mod srtp_test;
 
 use std::collections::HashMap;
+
+/// Keyed by SSRC, which the remote chooses, and read for every packet: a randomly seeded fast
+/// hash resists crafted collisions without SipHash's cost on the packet path.
+type SsrcMap<T> = HashMap<u32, T, foldhash::fast::RandomState>;
 
 use crypto::RTCCrypto;
 use shared::replay_detector::*;
@@ -17,6 +23,8 @@ use crate::option::*;
 use crate::protection_profile::*;
 use shared::error::{Error, Result};
 
+/// Cryptex (RFC 9335): encrypting header extensions and CSRCs.
+pub mod cryptex;
 /// SRTCP protection and unprotection.
 pub mod srtcp;
 /// SRTP protection and unprotection.
@@ -96,11 +104,13 @@ impl SrtpSsrcState {
 pub struct Context {
     cipher: Box<dyn Cipher>,
 
-    srtp_ssrc_states: HashMap<u32, SrtpSsrcState>,
-    srtcp_ssrc_states: HashMap<u32, SrtcpSsrcState>,
+    srtp_ssrc_states: SsrcMap<SrtpSsrcState>,
+    srtcp_ssrc_states: SsrcMap<SrtcpSsrcState>,
 
     new_srtp_replay_detector: ContextOption,
     new_srtcp_replay_detector: ContextOption,
+
+    cryptex_mode: cryptex::CryptexMode,
 }
 
 impl Context {
@@ -164,11 +174,26 @@ impl Context {
 
         Ok(Context {
             cipher,
-            srtp_ssrc_states: HashMap::new(),
-            srtcp_ssrc_states: HashMap::new(),
+            srtp_ssrc_states: SsrcMap::default(),
+            srtcp_ssrc_states: SsrcMap::default(),
             new_srtp_replay_detector: srtp_ctx_opt,
             new_srtcp_replay_detector: srtcp_ctx_opt,
+            cryptex_mode: cryptex::CryptexMode::Disabled,
         })
+    }
+
+    /// Selects whether RTP is protected with Cryptex ([RFC 9335]) and whether unprotected packets
+    /// are accepted. May be changed while the context is in use, as it is when a renegotiation
+    /// changes what the peers agreed. SRTCP is not affected.
+    ///
+    /// [RFC 9335]: https://www.rfc-editor.org/rfc/rfc9335
+    pub fn set_cryptex_mode(&mut self, mode: cryptex::CryptexMode) {
+        self.cryptex_mode = mode;
+    }
+
+    /// The Cryptex mode in force.
+    pub fn cryptex_mode(&self) -> cryptex::CryptexMode {
+        self.cryptex_mode
     }
 
     fn get_srtp_ssrc_state(&mut self, ssrc: u32) -> &mut SrtpSsrcState {
@@ -219,5 +244,22 @@ impl Context {
     /// set_index sets SRTCP index value of specified SSRC.
     fn set_index(&mut self, ssrc: u32, index: usize) {
         self.get_srtcp_ssrc_state(ssrc).srtcp_index = index % (MAX_SRTCP_INDEX + 1);
+    }
+
+    /// Test-only: a context around an already-built cipher, replay protection off.
+    ///
+    /// The RFC known-answer vectors key the cipher with session keys stated in the RFC itself,
+    /// bypassing the derivation [`Context::new`] performs. pion's test suite reaches the same
+    /// place with `createContextWithCipher`.
+    #[cfg(test)]
+    pub(crate) fn new_with_cipher(cipher: Box<dyn Cipher>) -> Context {
+        Context {
+            cipher,
+            srtp_ssrc_states: SsrcMap::default(),
+            srtcp_ssrc_states: SsrcMap::default(),
+            new_srtp_replay_detector: srtp_no_replay_protection(),
+            new_srtcp_replay_detector: srtcp_no_replay_protection(),
+            cryptex_mode: cryptex::CryptexMode::Disabled,
+        }
     }
 }

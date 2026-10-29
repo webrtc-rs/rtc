@@ -216,6 +216,56 @@ fn a_stream_with_both_halves_is_protected() {
     assert_eq!(1, harness.repair_packets().len());
 }
 
+/// pion `TestFecInterceptor_HandleMultipleStreamsCorrectly`: two protected streams share one
+/// interceptor, and each gets its own repair stream — packets and repair for stream one never
+/// leak into stream two's association.
+#[test]
+fn two_protected_streams_each_get_their_own_repair_packets() {
+    let mut harness = Harness::new(2, 1);
+
+    let (first, second) = (
+        StreamInfo {
+            ssrc: 1000,
+            ssrc_fec: Some(2000),
+            payload_type: 96,
+            payload_type_fec: Some(100),
+            clock_rate: 90_000,
+            ..Default::default()
+        },
+        StreamInfo {
+            ssrc: 1001,
+            ssrc_fec: Some(3000),
+            payload_type: 97,
+            payload_type_fec: Some(101),
+            clock_rate: 90_000,
+            ..Default::default()
+        },
+    );
+    harness.chain.bind_local_stream(&first);
+    harness.chain.bind_local_stream(&second);
+
+    for sequence_number in 1..=2u16 {
+        harness.send_on(1000, sequence_number);
+        harness.send_on(1001, sequence_number);
+    }
+
+    let sent = harness.sent();
+    for (media_ssrc, repair_ssrc, repair_pt) in [(1000, 2000, 100u8), (1001, 3000, 101u8)] {
+        let media: Vec<_> = sent
+            .iter()
+            .filter(|packet| packet.ssrc == media_ssrc)
+            .collect();
+        assert_eq!(2, media.len(), "both media packets of stream {media_ssrc}");
+
+        let repair: Vec<_> = sent
+            .iter()
+            .filter(|packet| packet.ssrc == repair_ssrc)
+            .collect();
+        assert_eq!(1, repair.len(), "one repair packet for stream {media_ssrc}");
+        assert_eq!(repair_pt, repair[0].payload_type);
+    }
+}
+
 #[test]
 fn unbinding_stops_protection() {
     let mut harness = Harness::new(2, 1);

@@ -3,6 +3,7 @@ name = "rtc-turn"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC TURN in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-turn"
@@ -25,15 +26,19 @@ crypto.workspace = true
 
 bytes.workspace = true
 log.workspace = true
+rand.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
 chrono.workspace = true
 hex.workspace = true
+serde_json.workspace = true
 clap.workspace = true
 criterion.workspace = true
 crossbeam-channel.workspace = true
 ctrlc.workspace = true
+tokio.workspace = true
 
 [[bench]]
 name = "bench"
@@ -42,4 +47,24 @@ harness = false
 [[example]]
 name = "turn_client_udp"
 path = "examples/turn_client_udp.rs"
+bench = false
+
+[[example]]
+name = "turn_server_udp"
+path = "examples/turn_server_udp.rs"
+bench = false
+
+[[example]]
+name = "turn_server_tcp"
+path = "examples/turn_server_tcp.rs"
+bench = false
+
+[[example]]
+name = "turn_tcp_check"
+path = "examples/turn_tcp_check.rs"
+bench = false
+
+[[example]]
+name = "turn_echo_check"
+path = "examples/turn_echo_check.rs"
 bench = false

@@ -1,0 +1,150 @@
+# Deep, slow checks that do not belong on every pull request: long fuzzing, undefined-behaviour
+# detection, repetition to flush out flaky tests, and the upcoming compilers.
+name: nightly
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: Seconds to fuzz each target
+        default: '300'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # libFuzzer on every parser and on SRTP/SRTCP unprotect. Corpora persist between runs, so
+  # coverage accumulates night after night; any crash is uploaded as a reproducer.
+  fuzz:
+    name: fuzz ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [ rtc-rtp, rtc-rtcp, rtc-sdp, rtc-stun, rtc-dtls, rtc-sctp, rtc-srtp, rtc-datachannel, rtc-mdns, rtc-turn, rtc-ice ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}/fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.crate }}/fuzz/corpus
+          key: fuzz-corpus-${{ matrix.crate }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.crate }}-
+      - name: Fuzz every target
+        working-directory: ${{ matrix.crate }}
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.fuzz_seconds || '300' }}
+        run: |
+          set -eu
+          for target in $(cargo fuzz list); do
+            echo "::group::$target"
+            cargo fuzz run "$target" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=4096 -timeout=20
+            echo "::endgroup::"
+          done
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.crate }}
+          path: ${{ matrix.crate }}/fuzz/artifacts
+
+
+  # Miri interprets the code and reports undefined behaviour. The workspace has exactly one
+  # place with `unsafe` that is exercised at run time — the audio sample buffers in rtc-media —
+  # so that is what it checks; the protocol crates are safe Rust and are covered by fuzzing.
+  miri:
+    name: miri rtc-media audio buffers
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: miri test
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: cargo miri test -p rtc-media --lib audio
+
+  # Repeat the tests that open sockets, to flush out the flaky ones before a user does. A test
+  # that fails once in fifty runs fails here.
+  soak:
+    name: soak / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests once
+        run: cargo test --workspace --release --no-run
+      - name: Repeat the whole workspace
+        run: |
+          set -eu
+          for i in $(seq 1 25); do
+            echo "::group::iteration $i"
+            cargo test --workspace --release --no-fail-fast
+            echo "::endgroup::"
+          done
+
+  # Tomorrow's compilers: breakage found here is a warning of what the next stable will do.
+  toolchains:
+    name: ${{ matrix.toolchain }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        toolchain: [ beta, nightly ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --no-fail-fast
+
+  # Longer, steadier measurement than the per-PR run, on both providers.
+  bench-vs-pion:
+    name: bench vs pion / ${{ matrix.os }} / ${{ matrix.backend }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        backend: [ ring, aws-lc-rs ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: benchmarks/pion-compare/go/go.mod
+          cache-dependency-path: benchmarks/pion-compare/go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: benchmarks/pion-compare
+      - run: python3 benchmarks/pion-compare/compare.py --runs 7 --backend ${{ matrix.backend }} --summary "$GITHUB_STEP_SUMMARY" --json pion-compare.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pion-compare-${{ matrix.os }}-${{ matrix.backend }}
+          path: pion-compare.json

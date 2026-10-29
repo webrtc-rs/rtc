@@ -9,6 +9,9 @@ use crate::error::{Error, Result};
 use rand::{RngExt, rng};
 use std::net::{SocketAddr, ToSocketAddrs};
 
+#[cfg(test)]
+mod util_test;
+
 // match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]
 fn match_range(lower: u8, upper: u8) -> impl Fn(&[u8]) -> bool {
     move |buf: &[u8]| -> bool {

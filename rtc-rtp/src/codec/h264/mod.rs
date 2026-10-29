@@ -59,19 +59,26 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 pub static ANNEXB_NALUSTART_CODE: Bytes = Bytes::from_static(&[0x00, 0x00, 0x00, 0x01]);
 
 impl H264Payloader {
-    fn next_ind(nalu: &Bytes, start: usize) -> (isize, isize) {
-        let mut zero_count = 0;
-
-        for (i, &b) in nalu[start..].iter().enumerate() {
-            if b == 0 {
-                zero_count += 1;
-                continue;
-            } else if b == 1 && zero_count >= 2 {
-                return ((start + i - zero_count) as isize, zero_count as isize + 1);
+    /// Finds the next Annex B start code (`00 00 01`, preceded by any number of further zero
+    /// bytes) at or after `start`, returning where its leading zeros begin and its length.
+    ///
+    /// Searches for the `01` byte with `memchr` (SIMD) and then looks back for the zeros, rather
+    /// than examining every byte of a frame that is mostly not a start code.
+    fn next_ind(nalu: &[u8], start: usize) -> Option<(usize, usize)> {
+        let haystack = &nalu[start..];
+        let mut from = 0;
+        while let Some(found) = memchr::memchr(1, &haystack[from..]) {
+            let one = from + found;
+            if one >= 2 && haystack[one - 1] == 0 && haystack[one - 2] == 0 {
+                let mut zeros = 2;
+                while zeros < one && haystack[one - 1 - zeros] == 0 {
+                    zeros += 1;
+                }
+                return Some((start + one - zeros, zeros + 1));
             }
-            zero_count = 0
+            from = one + 1;
         }
-        (-1, -1)
+        None
     }
 
     fn emit(&mut self, nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
@@ -190,24 +197,22 @@ impl Payloader for H264Payloader {
 
         let mut payloads = vec![];
 
-        let (mut next_ind_start, mut next_ind_len) = H264Payloader::next_ind(payload, 0);
-        if next_ind_start == -1 {
-            self.emit(payload, mtu, &mut payloads);
-        } else {
-            while next_ind_start != -1 {
-                let prev_start = (next_ind_start + next_ind_len) as usize;
-                let (next_ind_start2, next_ind_len2) = H264Payloader::next_ind(payload, prev_start);
-                next_ind_start = next_ind_start2;
-                next_ind_len = next_ind_len2;
-                if next_ind_start != -1 {
-                    self.emit(
-                        &payload.slice(prev_start..next_ind_start as usize),
-                        mtu,
-                        &mut payloads,
-                    );
-                } else {
-                    // Emit until end of stream, no end indicator found
-                    self.emit(&payload.slice(prev_start..), mtu, &mut payloads);
+        match H264Payloader::next_ind(payload, 0) {
+            None => self.emit(payload, mtu, &mut payloads),
+            Some((start, len)) => {
+                let mut nalu_start = start + len;
+                loop {
+                    match H264Payloader::next_ind(payload, nalu_start) {
+                        Some((next_start, next_len)) => {
+                            self.emit(&payload.slice(nalu_start..next_start), mtu, &mut payloads);
+                            nalu_start = next_start + next_len;
+                        }
+                        None => {
+                            // Emit until end of stream, no end indicator found
+                            self.emit(&payload.slice(nalu_start..), mtu, &mut payloads);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -231,7 +236,7 @@ pub struct H264Packet {
 impl Depacketizer for H264Packet {
     /// depacketize parses the passed byte slice and stores the result in the H264Packet this method is called upon
     fn depacketize(&mut self, packet: &Bytes) -> Result<Bytes> {
-        if packet.len() <= 1 {
+        if packet.is_empty() {
             return Err(Error::ErrShortPacket);
         }
 
@@ -239,11 +244,6 @@ impl Depacketizer for H264Packet {
         // https://tools.ietf.org/html/rfc6184#section-5.4
         let b0 = packet[0];
         let nalu_type = b0 & NALU_TYPE_BITMASK;
-
-        // The AUD NALU can be size 2 (1 byte header, 1 byte payload)
-        if packet.len() <= 2 && nalu_type != AUD_NALU_TYPE {
-            return Err(Error::ErrShortPacket);
-        }
 
         let mut payload = BytesMut::new();
 
@@ -260,6 +260,10 @@ impl Depacketizer for H264Packet {
             STAPA_NALU_TYPE => {
                 let mut curr_offset = STAPA_HEADER_SIZE;
                 while curr_offset < packet.len() {
+                    // A trailing byte too short to hold a size ends the aggregate.
+                    if packet.len() - curr_offset < STAPA_NALU_LENGTH_SIZE {
+                        break;
+                    }
                     let nalu_size =
                         ((packet[curr_offset] as usize) << 8) | packet[curr_offset + 1] as usize;
                     curr_offset += STAPA_NALU_LENGTH_SIZE;

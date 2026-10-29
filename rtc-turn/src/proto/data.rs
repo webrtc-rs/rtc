@@ -29,7 +29,10 @@ impl Setter for Data {
 impl Getter for Data {
     /// Decodes `DATA` from message.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        self.0 = m.get(ATTR_DATA)?;
+        // Reuse the buffer: decoding into a long-lived `Data` allocates only on growth.
+        let v = m.get_value(ATTR_DATA)?;
+        self.0.clear();
+        self.0.extend_from_slice(v);
         Ok(())
     }
 }

@@ -138,6 +138,8 @@ impl<R: Read> IVFReader<R> {
             return Err(Error::ErrSignatureMismatch);
         } else if header.version != 0 {
             return Err(Error::ErrUnknownIVFVersion);
+        } else if header.timebase_denominator == 0 || header.timebase_numerator == 0 {
+            return Err(Error::ErrInvalidMediaTimebase);
         }
 
         self.bytes_read += IVF_FILE_HEADER_SIZE;

@@ -74,6 +74,7 @@ impl RTCCrypto for RingCrypto {
                         | AeadAlgorithm::Aes256Gcm
                         | AeadAlgorithm::Aes128Ccm
                         | AeadAlgorithm::Aes128Ccm8
+                        | AeadAlgorithm::Aes256Ccm8
                         | AeadAlgorithm::ChaCha20Poly1305,
                 )
                 | CryptoAlgorithm::StreamCipher(
@@ -82,7 +83,7 @@ impl RTCCrypto for RingCrypto {
                 | CryptoAlgorithm::BlockCipher(
                     BlockCipherAlgorithm::Aes128 | BlockCipherAlgorithm::Aes256,
                 )
-                | CryptoAlgorithm::Cbc(CbcAlgorithm::Aes256Cbc)
+                | CryptoAlgorithm::Cbc(CbcAlgorithm::Aes128Cbc | CbcAlgorithm::Aes256Cbc)
                 | CryptoAlgorithm::KeyExchange(
                     KeyExchangeAlgorithm::P256
                         | KeyExchangeAlgorithm::P384
@@ -152,7 +153,9 @@ impl RTCCrypto for RingCrypto {
         key: &[u8],
     ) -> Result<Box<dyn AeadCipher>, CryptoError> {
         match algorithm {
-            AeadAlgorithm::Aes128Ccm | AeadAlgorithm::Aes128Ccm8 => common::new_ccm(algorithm, key),
+            AeadAlgorithm::Aes128Ccm | AeadAlgorithm::Aes128Ccm8 | AeadAlgorithm::Aes256Ccm8 => {
+                common::new_ccm(algorithm, key)
+            }
             AeadAlgorithm::Aes128Gcm => RingAead::create(&aead::AES_128_GCM, key),
             AeadAlgorithm::Aes256Gcm => RingAead::create(&aead::AES_256_GCM, key),
             AeadAlgorithm::ChaCha20Poly1305 => RingAead::create(&aead::CHACHA20_POLY1305, key),
@@ -573,7 +576,7 @@ impl RustCryptoHmacSha1 {
     pub(crate) fn new(key: &[u8]) -> Self {
         Self {
             // HMAC accepts any key length: it hashes longer keys and zero-pads shorter ones.
-            keyed: <HmacSha1 as RustCryptoMac>::new_from_slice(key)
+            keyed: <HmacSha1 as ::hmac::KeyInit>::new_from_slice(key)
                 .expect("HMAC accepts keys of any length"),
         }
     }

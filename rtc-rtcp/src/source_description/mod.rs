@@ -22,31 +22,50 @@ const SDES_TEXT_OFFSET: usize = 2;
 /// SDESType is the item type used in the RTCP SDES control packet.
 /// RTP SDES item types registered with IANA. See: <https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-5>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-#[repr(u8)]
 #[non_exhaustive]
 pub enum SdesType {
     #[default]
     /// End of the SDES item list ([RFC 3550] §6.5).
-    SdesEnd = 0, // end of SDES list                RFC 3550, 6.5
+    SdesEnd, // end of SDES list                RFC 3550, 6.5
     /// CNAME: the canonical end-point identifier, which ties an SSRC to a participant.
     ///
     /// The one item WebRTC always sends — it is how a receiver associates streams that belong
     /// together.
-    SdesCname = 1, // canonical name                  RFC 3550, 6.5.1
+    SdesCname, // canonical name                  RFC 3550, 6.5.1
     /// NAME: the participant's display name.
-    SdesName = 2, // user name                       RFC 3550, 6.5.2
+    SdesName, // user name                       RFC 3550, 6.5.2
     /// EMAIL: the participant's email address.
-    SdesEmail = 3, // user's electronic mail address  RFC 3550, 6.5.3
+    SdesEmail, // user's electronic mail address  RFC 3550, 6.5.3
     /// PHONE: the participant's phone number.
-    SdesPhone = 4, // user's phone number             RFC 3550, 6.5.4
+    SdesPhone, // user's phone number             RFC 3550, 6.5.4
     /// LOC: the participant's geographic location.
-    SdesLocation = 5, // geographic user location        RFC 3550, 6.5.5
+    SdesLocation, // geographic user location        RFC 3550, 6.5.5
     /// TOOL: the name and version of the sending application.
-    SdesTool = 6, // name of application or tool     RFC 3550, 6.5.6
+    SdesTool, // name of application or tool     RFC 3550, 6.5.6
     /// NOTE: a transient note about the source, such as "on hold".
-    SdesNote = 7, // notice about the source         RFC 3550, 6.5.7
+    SdesNote, // notice about the source         RFC 3550, 6.5.7
     /// PRIV: a private extension.
-    SdesPrivate = 8, // private extensions              RFC 3550, 6.5.8  (not implemented)
+    SdesPrivate, // private extensions              RFC 3550, 6.5.8  (not implemented)
+    /// An item type this crate does not name; the wire value is kept so the item round-trips.
+    Unknown(u8),
+}
+
+impl SdesType {
+    /// The item type's wire value.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            SdesType::SdesEnd => 0,
+            SdesType::SdesCname => 1,
+            SdesType::SdesName => 2,
+            SdesType::SdesEmail => 3,
+            SdesType::SdesPhone => 4,
+            SdesType::SdesLocation => 5,
+            SdesType::SdesTool => 6,
+            SdesType::SdesNote => 7,
+            SdesType::SdesPrivate => 8,
+            SdesType::Unknown(b) => b,
+        }
+    }
 }
 
 impl fmt::Display for SdesType {
@@ -61,6 +80,7 @@ impl fmt::Display for SdesType {
             SdesType::SdesTool => "TOOL",
             SdesType::SdesNote => "NOTE",
             SdesType::SdesPrivate => "PRIV",
+            SdesType::Unknown(b) => return write!(f, "{b}"),
         };
         write!(f, "{s}")
     }
@@ -77,7 +97,8 @@ impl From<u8> for SdesType {
             6 => SdesType::SdesTool,
             7 => SdesType::SdesNote,
             8 => SdesType::SdesPrivate,
-            _ => SdesType::SdesEnd,
+            0 => SdesType::SdesEnd,
+            b => SdesType::Unknown(b),
         }
     }
 }
@@ -133,10 +154,12 @@ impl Marshal for SourceDescriptionChunk {
         }
 
         // The list of items in each chunk MUST be terminated by one or more null octets
-        buf.put_u8(SdesType::SdesEnd as u8);
+        buf.put_u8(SdesType::SdesEnd.as_u8());
 
         // additional null octets MUST be included if needed to pad until the next 32-bit boundary
-        put_padding(buf, self.raw_size());
+        for _ in 0..get_padding_size(self.raw_size()) {
+            buf.put_u8(0);
+        }
         Ok(self.marshal_size())
     }
 }
@@ -156,28 +179,28 @@ impl Unmarshal for SourceDescriptionChunk {
          *  |                              ...                              |
          *  +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
          */
-        let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < (SDES_SOURCE_LEN + SDES_TYPE_LEN) {
+        let raw = raw_packet.copy_to_bytes(raw_packet.remaining());
+        Self::unmarshal_slice(&raw)
+    }
+}
+
+impl SourceDescriptionChunk {
+    /// Parses one chunk from the front of `raw`, which runs to the end of the packet.
+    fn unmarshal_slice(raw: &[u8]) -> Result<Self> {
+        if raw.len() < (SDES_SOURCE_LEN + SDES_TYPE_LEN) {
             return Err(Error::PacketTooShort);
         }
 
-        let source = raw_packet.get_u32();
+        let source = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
 
-        let mut offset = SDES_SOURCE_LEN;
         let mut items = vec![];
-        while offset < raw_packet_len {
-            let item = SourceDescriptionItem::unmarshal(raw_packet)?;
-            if item.sdes_type == SdesType::SdesEnd {
-                // offset + 1 (one byte for SdesEnd)
-                let padding_len = get_padding_size(offset + 1);
-                if raw_packet.remaining() >= padding_len {
-                    raw_packet.advance(padding_len);
-                    return Ok(SourceDescriptionChunk { source, items });
-                } else {
-                    return Err(Error::PacketTooShort);
-                }
+        let mut i = SDES_SOURCE_LEN;
+        while i < raw.len() {
+            if raw[i] == SdesType::SdesEnd.as_u8() {
+                return Ok(SourceDescriptionChunk { source, items });
             }
-            offset += item.marshal_size();
+            let item = SourceDescriptionItem::unmarshal_slice(&raw[i..])?;
+            i += item.marshal_size();
             items.push(item);
         }
 
@@ -228,7 +251,7 @@ impl Marshal for SourceDescriptionItem {
             return Err(Error::BufferTooShort);
         }
 
-        buf.put_u8(self.sdes_type as u8);
+        buf.put_u8(self.sdes_type.as_u8());
 
         if self.text.len() > SDES_MAX_OCTET_COUNT {
             return Err(Error::SdesTextTooLong);
@@ -255,30 +278,24 @@ impl Unmarshal for SourceDescriptionItem {
          *  |    CNAME=1    |     length    | user and domain name        ...
          *  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
          */
-        let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < SDES_TYPE_LEN {
+        let raw = raw_packet.copy_to_bytes(raw_packet.remaining());
+        Self::unmarshal_slice(&raw)
+    }
+}
+
+impl SourceDescriptionItem {
+    fn unmarshal_slice(raw: &[u8]) -> Result<Self> {
+        if raw.len() < (SDES_TYPE_LEN + SDES_OCTET_COUNT_LEN) {
             return Err(Error::PacketTooShort);
         }
 
-        let sdes_type = SdesType::from(raw_packet.get_u8());
-        if sdes_type == SdesType::SdesEnd {
-            return Ok(SourceDescriptionItem {
-                sdes_type,
-                text: Bytes::new(),
-            });
-        }
-
-        if raw_packet_len < (SDES_TYPE_LEN + SDES_OCTET_COUNT_LEN) {
+        let sdes_type = SdesType::from(raw[SDES_TYPE_OFFSET]);
+        let octet_count = raw[SDES_OCTET_COUNT_OFFSET] as usize;
+        if SDES_TEXT_OFFSET + octet_count > raw.len() {
             return Err(Error::PacketTooShort);
         }
 
-        let octet_count = raw_packet.get_u8() as usize;
-        if SDES_TEXT_OFFSET + octet_count > raw_packet_len {
-            return Err(Error::PacketTooShort);
-        }
-
-        let text = raw_packet.copy_to_bytes(octet_count);
-
+        let text = Bytes::copy_from_slice(&raw[SDES_TEXT_OFFSET..SDES_TEXT_OFFSET + octet_count]);
         Ok(SourceDescriptionItem { sdes_type, text })
     }
 }
@@ -307,7 +324,7 @@ impl Packet for SourceDescription {
     /// Header returns the Header associated with this packet.
     fn header(&self) -> Header {
         Header {
-            padding: get_padding_size(self.raw_size()) != 0,
+            padding: false,
             count: self.chunks.len() as u8,
             packet_type: PacketType::SourceDescription,
             length: ((self.marshal_size() / 4) - 1) as u16,
@@ -355,6 +372,7 @@ impl Marshal for SourceDescription {
         if self.chunks.len() > COUNT_MAX {
             return Err(Error::TooManyChunks);
         }
+        crate::header::length_field(self.marshal_size())?;
 
         if buf.remaining_mut() < self.marshal_size() {
             return Err(Error::BufferTooShort);
@@ -387,11 +405,24 @@ impl Marshal for SourceDescription {
             buf = &mut buf[n..];
         }
 
-        if h.padding {
-            put_padding(buf, self.raw_size());
-        }
-
         Ok(self.marshal_size())
+    }
+}
+
+impl SourceDescription {
+    /// Parses the chunks that follow the header. `expected` (the header's count, which the caller
+    /// checks) only sizes the vector, so a well-formed packet allocates it once, exactly.
+    fn unmarshal_chunks(raw: &[u8], expected: u8) -> Result<Vec<SourceDescriptionChunk>> {
+        // The count comes off the wire, so it is trusted only as far as the packet could hold that
+        // many chunks (each is at least a source id).
+        let mut chunks = Vec::with_capacity((expected as usize).min(raw.len() / SDES_SOURCE_LEN));
+        let mut i = 0;
+        while i < raw.len() {
+            let chunk = SourceDescriptionChunk::unmarshal_slice(&raw[i..])?;
+            i += chunk.marshal_size();
+            chunks.push(chunk);
+        }
+        Ok(chunks)
     }
 }
 
@@ -419,29 +450,25 @@ impl Unmarshal for SourceDescription {
          *        |                              ...                              |
          *        +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
          */
-        let raw_packet_len = raw_packet.remaining();
-
         let h = Header::unmarshal(raw_packet)?;
         if h.packet_type != PacketType::SourceDescription {
             return Err(Error::WrongType);
         }
 
-        let mut offset = HEADER_LENGTH;
-        let mut chunks = vec![];
-        while offset < raw_packet_len {
-            let chunk = SourceDescriptionChunk::unmarshal(raw_packet)?;
-            offset += chunk.marshal_size();
-            chunks.push(chunk);
-        }
+        // Parse straight from the buffer when it is contiguous (it is, for `&[u8]`, `Bytes` and
+        // `BytesMut`); only a fragmented buffer needs flattening into one first.
+        let remaining = raw_packet.remaining();
+        let chunks = if raw_packet.chunk().len() >= remaining {
+            let chunks = Self::unmarshal_chunks(&raw_packet.chunk()[..remaining], h.count)?;
+            raw_packet.advance(remaining);
+            chunks
+        } else {
+            let raw = raw_packet.copy_to_bytes(remaining);
+            Self::unmarshal_chunks(&raw, h.count)?
+        };
 
         if chunks.len() != h.count as usize {
             return Err(Error::InvalidHeader);
-        }
-
-        if
-        /*h.padding &&*/
-        raw_packet.has_remaining() {
-            raw_packet.advance(raw_packet.remaining());
         }
 
         Ok(SourceDescription { chunks })

@@ -11,6 +11,10 @@ use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
+/// Decides which local streams this responder buffers, on top of the NACK feedback check.
+/// pion's `ResponderStreamsFilter`.
+pub type ResponderStreamsFilter = Box<dyn Fn(&StreamInfo) -> bool + Send + Sync>;
+
 /// Builder for the NackResponderInterceptor.
 ///
 /// # Example
@@ -27,11 +31,16 @@ use std::time::Instant;
 pub struct NackResponderBuilder {
     /// Size of the send buffer (must be power of 2: 1, 2, 4, ..., 32768).
     size: u16,
+    /// Extra per-stream gate, applied on top of the NACK feedback check.
+    streams_filter: Option<ResponderStreamsFilter>,
 }
 
 impl Default for NackResponderBuilder {
     fn default() -> Self {
-        Self { size: 1024 }
+        Self {
+            size: 1024,
+            streams_filter: None,
+        }
     }
 }
 
@@ -50,9 +59,35 @@ impl NackResponderBuilder {
         self
     }
 
+    /// Restrict which local streams are buffered, on top of the NACK feedback check.
+    ///
+    /// pion's `ResponderStreamsFilter`: the predicate returns `true` for streams whose packets
+    /// should be kept for retransmission. Without one, every stream negotiating `nack`
+    /// feedback is buffered.
+    pub fn with_streams_filter(mut self, filter: ResponderStreamsFilter) -> Self {
+        self.streams_filter = Some(filter);
+        self
+    }
+
+    /// Build the interceptor, rejecting a buffer size that could never retransmit anything.
+    ///
+    /// pion fails construction with `ErrInvalidSize`; the infallible [`Self::build`] keeps its
+    /// historic shape and instead yields an interceptor that buffers nothing, so callers that
+    /// prefer a loud mistake use this.
+    pub fn try_build(self) -> Result<NackResponderInterceptor, Error> {
+        if !super::send_buffer::is_valid_size(self.size) {
+            return Err(Error::ErrNackInvalidSize);
+        }
+        Ok(self.build())
+    }
+
     /// Build the interceptor.
+    ///
+    /// A size the send buffer cannot hold (not a power of two in range) yields an interceptor
+    /// that buffers nothing; [`Self::try_build`] turns the same configuration into an error
+    /// instead.
     pub fn build(self) -> NackResponderInterceptor {
-        NackResponderInterceptor::new(self.size)
+        NackResponderInterceptor::new(self.size, self.streams_filter)
     }
 }
 
@@ -75,6 +110,8 @@ struct LocalStream {
 pub struct NackResponderInterceptor {
     /// Configuration
     size: u16,
+    /// Extra per-stream gate from the builder, applied with the NACK feedback check.
+    streams_filter: Option<ResponderStreamsFilter>,
 
     /// Send buffers per local stream SSRC
     streams: HashMap<u32, LocalStream>,
@@ -86,10 +123,11 @@ pub struct NackResponderInterceptor {
 }
 
 impl NackResponderInterceptor {
-    fn new(size: u16) -> Self {
+    fn new(size: u16, streams_filter: Option<ResponderStreamsFilter>) -> Self {
         Self {
             read_queue: VecDeque::new(),
             size,
+            streams_filter,
             streams: HashMap::new(),
             write_queue: VecDeque::new(),
         }
@@ -135,9 +173,30 @@ impl NackResponderInterceptor {
                 // - Prepend original sequence number (2 bytes big-endian) to payload
                 // - Use separate RTX sequence number counter
                 let original_seq = original_packet.header.sequence_number;
-                let mut rtx_payload = Vec::with_capacity(2 + original_packet.payload.len());
+
+                // pion strips padding from the RTX copy: the P-bit comes off, and in the legacy
+                // style — padding declared only by the P-bit, its count in the last payload
+                // byte — that many bytes are trimmed from the end. A declared `padding_size`
+                // already keeps the padding octets out of the payload, so only the flag needs
+                // clearing (the fresh header below does).
+                let mut trimmed = original_packet.payload.clone();
+                if original_packet.header.padding
+                    && original_packet.header.padding_size == 0
+                    && !trimmed.is_empty()
+                {
+                    let padding_length = trimmed[trimmed.len() - 1] as usize;
+                    // An overflowing count was never buffered on an RTX stream (see
+                    // `handle_write`), so this cannot over-trim; it is checked again so the
+                    // trimming arithmetic stays honest whatever future refactor does.
+                    if padding_length <= trimmed.len() {
+                        let keep = trimmed.len() - padding_length;
+                        trimmed.truncate(keep);
+                    }
+                }
+
+                let mut rtx_payload = Vec::with_capacity(2 + trimmed.len());
                 rtx_payload.extend_from_slice(&original_seq.to_be_bytes());
-                rtx_payload.extend_from_slice(&original_packet.payload);
+                rtx_payload.extend_from_slice(&trimmed);
 
                 let rtx_seq = stream.rtx_sequence_number;
                 stream.rtx_sequence_number = stream.rtx_sequence_number.wrapping_add(1);
@@ -211,7 +270,22 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NackResponderInterceptor {
         if let Packet::Rtp(ref rtp_packet) = msg.message.packet
             && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
         {
-            stream.send_buffer.add(rtp_packet.clone());
+            // A padded packet whose legacy padding count overflows the payload cannot become an
+            // RTX copy. pion's packet factory rejects it at buffer time (`errPaddingOverflow`)
+            // and the write itself still succeeds, so it is simply never retransmitted. pion's
+            // check runs two bytes further into the OSN-prefixed copy and over-trims there, a
+            // bug not worth copying.
+            let malformed_rtx_padding = stream.ssrc_rtx.is_some()
+                && stream.payload_type_rtx.is_some()
+                && rtp_packet.header.padding
+                && rtp_packet.header.padding_size == 0
+                && !rtp_packet.payload.is_empty()
+                && rtp_packet.payload[rtp_packet.payload.len() - 1] as usize
+                    > rtp_packet.payload.len();
+
+            if !malformed_rtx_padding {
+                stream.send_buffer.add(rtp_packet.clone());
+            }
         }
 
         self.write_queue.push_back(msg);
@@ -235,7 +309,12 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NackResponderInterceptor {
 
 impl Interceptor for NackResponderInterceptor {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
-        if stream_supports_nack(info)
+        let passes_filter = self
+            .streams_filter
+            .as_ref()
+            .is_none_or(|filter| filter(info));
+        if passes_filter
+            && stream_supports_nack(info)
             && let Some(send_buffer) = SendBuffer::new(self.size)
         {
             self.streams.insert(

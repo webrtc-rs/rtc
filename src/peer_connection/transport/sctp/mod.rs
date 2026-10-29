@@ -3,10 +3,14 @@ use crate::peer_connection::transport::RTCTransportId;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
+use crate::statistics::stats::sctp_transport::RTCSctpTransportStats;
+use crate::statistics::stats::{RTCStats, RTCStatsType};
 use sctp::{Association, AssociationHandle};
 use shared::error::Result;
+use shared::time::SystemInstant;
 use shared::{TransportContext, TransportProtocol};
 use std::collections::HashMap;
+use std::time::Instant;
 
 pub(crate) mod capabilities;
 pub(crate) mod state;
@@ -28,7 +32,9 @@ pub(crate) struct SctpTransport {
 
     pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
     pub(crate) sctp_transport_config: Option<::sctp::TransportConfig>,
-    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
+    // Boxed: an `Association` is nearly 2 KiB, and a map keeps its values inline in a table that
+    // starts at four slots, so the one association a peer connection has cost four times that.
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Box<Association>>,
 
     // SCTPTransportState doesn't have an enum to distinguish between New/Connecting
     // so we need a dedicated field
@@ -51,7 +57,35 @@ pub(crate) struct SctpTransport {
     // `EndpointConfig` in `start()`. None uses the sctp crate default (INITIAL_MTU, 1191).
     pub(crate) mtu: Option<u32>,
 
-    pub(crate) internal_buffer: Vec<u8>,
+    // Whether the association may accept and send zero-checksum packets ([RFC 9653]),
+    // from SettingEngine.
+    pub(crate) enable_zero_checksum: bool,
+
+    // SCTP congestion/timer tuning knobs forwarded from the setting engine
+    // (pion's SetSCTPRTOMax / SetSCTPMinCwnd / SetSCTPFastRtxWnd /
+    // SetSCTPCwndCAStep). `None` everywhere keeps the rtc-sctp defaults.
+    pub(crate) congestion: SctpCongestionControls,
+
+    /// The largest message this transport reads or writes: the negotiated `maxMessageSize`, as
+    /// enforced. Messages are assembled straight into their payloads, so this is a bound and
+    /// owns no memory.
+    pub(crate) max_message_len: usize,
+}
+
+/// The four SCTP congestion/timer knobs a [`SettingEngine`](crate::peer_connection::configuration::setting_engine::SettingEngine)
+/// may override, forwarded verbatim into the association's
+/// [`TransportConfig`](sctp::TransportConfig). Every `None` keeps that knob's
+/// default, matching pion's "0 means default" convention.
+#[derive(Default, Clone, Copy, Debug)]
+pub(crate) struct SctpCongestionControls {
+    /// Upper bound of the retransmission timeout.
+    pub(crate) rto_max: Option<std::time::Duration>,
+    /// Congestion-window floor in bytes.
+    pub(crate) min_cwnd: Option<u32>,
+    /// Fast-retransmission burst budget in bytes; effective `max(MTU, n)`.
+    pub(crate) fast_rtx_wnd: Option<u32>,
+    /// Congestion-avoidance growth step in bytes; effective `max(MTU, n)`.
+    pub(crate) cwnd_ca_step: Option<u32>,
 }
 
 impl SctpTransport {
@@ -59,6 +93,8 @@ impl SctpTransport {
         max_message_size: SctpMaxMessageSize,
         max_receive_buffer_size: Option<u32>,
         mtu: Option<u32>,
+        enable_zero_checksum: bool,
+        congestion: SctpCongestionControls,
         id: RTCTransportId,
         dtls_transport_id: RTCTransportId,
     ) -> Self {
@@ -74,7 +110,9 @@ impl SctpTransport {
             negotiated_max_message_size: None,
             max_receive_buffer_size,
             mtu,
-            internal_buffer: vec![],
+            enable_zero_checksum,
+            congestion,
+            max_message_len: 0,
         }
     }
 
@@ -95,7 +133,7 @@ impl SctpTransport {
     /// `sctp_associations` is a map because the endpoint API is written for the general case, but
     /// a peer connection negotiates exactly one SCTP association.
     fn association(&self) -> Option<&Association> {
-        self.sctp_associations.values().next()
+        self.sctp_associations.values().next().map(|a| &**a)
     }
 
     /// W3C `SctpTransport.state`.
@@ -136,6 +174,33 @@ impl SctpTransport {
         self.association()?.negotiated_max_streams()
     }
 
+    /// Produces the `sctp-transport` stats entry, read live from the association.
+    ///
+    /// `None` while no association exists — before negotiation completes, or after the
+    /// association closed and was removed. The counters are cumulative association
+    /// state, so a fresh snapshot taken each call is lossless compared to maintaining
+    /// a parallel accumulator.
+    pub(crate) fn stats(&self, now: Instant) -> Option<RTCSctpTransportStats> {
+        let association = self.association()?;
+        let association_stats = association.stats();
+        Some(RTCSctpTransportStats {
+            stats: RTCStats {
+                timestamp: SystemInstant::now(now),
+                typ: RTCStatsType::SctpTransport,
+                id: "RTCSctpTransport".to_string(),
+            },
+            // Matches the id the accumulator's `RTCTransportStats` entry is filed under,
+            // which is what `transportId` exists to point at.
+            transport_id: "RTCTransport".to_string(),
+            smoothed_round_trip_time: association.rtt().as_secs_f64(),
+            congestion_window: association.cwnd(),
+            receiver_window: association.rwnd(),
+            mtu: association.mtu(),
+            bytes_sent: association_stats.get_bytes_sent(),
+            bytes_received: association_stats.get_bytes_received(),
+        })
+    }
+
     /// Start the SCTPTransport. Since both local and remote parties must mutually
     /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
     /// a connection over SCTP.
@@ -173,7 +238,7 @@ impl SctpTransport {
         // the buffer and the transport config, and then discarded, which left nothing for
         // `maxMessageSize` to report.
         self.negotiated_max_message_size = Some(max_message_size);
-        self.internal_buffer.resize(max_message_size as usize, 0u8);
+        self.max_message_len = max_message_size as usize;
 
         let mut sctp_endpoint_config = ::sctp::EndpointConfig::default();
         if let Some(mtu) = self.mtu {
@@ -184,6 +249,21 @@ impl SctpTransport {
             .with_sctp_port(local_port);
         if let Some(recv_buf) = self.max_receive_buffer_size {
             sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
+        }
+        if let Some(rto_max) = self.congestion.rto_max {
+            sctp_transport_config = sctp_transport_config.with_rto_max(rto_max);
+        }
+        if let Some(min_cwnd) = self.congestion.min_cwnd {
+            sctp_transport_config = sctp_transport_config.with_min_cwnd(min_cwnd);
+        }
+        if let Some(fast_rtx_wnd) = self.congestion.fast_rtx_wnd {
+            sctp_transport_config = sctp_transport_config.with_fast_rtx_wnd(fast_rtx_wnd);
+        }
+        if let Some(cwnd_ca_step) = self.congestion.cwnd_ca_step {
+            sctp_transport_config = sctp_transport_config.with_cwnd_ca_step(cwnd_ca_step);
+        }
+        if self.enable_zero_checksum {
+            sctp_transport_config = sctp_transport_config.with_enable_zero_checksum(true);
         }
         //TODO: add remote_port support
 
@@ -227,6 +307,8 @@ mod tests {
             configured,
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -251,6 +333,52 @@ mod tests {
         assert_eq!(Some(16384), transport.max_message_size());
     }
 
+    // The four pion SetSCTP* congestion/timer knobs must survive the trip from
+    // SettingEngineBuilder through start() into the association's
+    // TransportConfig (pion: sctptransport.go gatherOptions forwards each one
+    // only when set).
+    #[test]
+    fn sctp_congestion_knobs_flow_into_the_transport_config() {
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            false,
+            SctpCongestionControls {
+                rto_max: Some(std::time::Duration::from_secs(2)),
+                min_cwnd: Some(64 * 1024),
+                fast_rtx_wnd: Some(16 * 1024),
+                cwnd_ca_step: Some(8 * 1024),
+            },
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        let config = transport.sctp_transport_config.as_ref().unwrap();
+        assert_eq!(config.rto_max(), std::time::Duration::from_secs(2));
+        assert_eq!(config.min_cwnd(), 64 * 1024);
+        assert_eq!(config.fast_rtx_wnd(), 16 * 1024);
+        assert_eq!(config.cwnd_ca_step(), 8 * 1024);
+
+        // Unset knobs keep the defaults everywhere (pion forwards only the
+        // ones explicitly set; leaving the rest at 0 means "default").
+        let transport = started_transport(SctpMaxMessageSize::default(), 0);
+        let config = transport.sctp_transport_config.as_ref().unwrap();
+        assert_eq!(config.rto_max(), std::time::Duration::ZERO);
+        assert_eq!(config.min_cwnd(), 0);
+        assert_eq!(config.fast_rtx_wnd(), 0);
+        assert_eq!(config.cwnd_ca_step(), 0);
+    }
+
     // The reverse direction, so the test cannot pass by simply echoing the remote's number.
     #[test]
     fn max_message_size_takes_the_smaller_of_the_two_limits() {
@@ -272,8 +400,8 @@ mod tests {
         );
         assert_eq!(
             SctpMaxMessageSize::MAX_MESSAGE_SIZE as usize,
-            transport.internal_buffer.len(),
-            "the reported size and the buffer actually allocated must be the same number"
+            transport.max_message_len,
+            "the reported size and the bound actually enforced must be the same number"
         );
     }
 
@@ -283,6 +411,8 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -296,6 +426,8 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -312,12 +444,14 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
         transport
             .sctp_associations
-            .insert(AssociationHandle(0), Association::default());
+            .insert(AssociationHandle(0), Box::new(Association::default()));
         assert_eq!(RTCSctpTransportState::Closed, transport.state());
         assert_eq!(
             None,
@@ -334,6 +468,8 @@ mod tests {
             SctpMaxMessageSize::default(),
             Some(200_000),
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -362,6 +498,8 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             None,
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -394,6 +532,8 @@ mod tests {
             SctpMaxMessageSize::default(),
             None,
             Some(1500),
+            false,
+            SctpCongestionControls::default(),
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );

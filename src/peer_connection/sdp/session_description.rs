@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::io::Cursor;
 
 use sdp::description::session::SessionDescription;
 use serde::{Deserialize, Serialize};
@@ -491,9 +490,7 @@ impl RTCSessionDescription {
     ///
     /// Returns an error if the stored SDP text is not valid SDP.
     pub fn unmarshal(&self) -> Result<SessionDescription> {
-        let mut reader = Cursor::new(self.sdp.as_bytes());
-        let parsed = SessionDescription::unmarshal(&mut reader)?;
-        Ok(parsed)
+        SessionDescription::unmarshal_slice(self.sdp.as_bytes())
     }
 }
 

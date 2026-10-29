@@ -3,6 +3,7 @@ name = "rtc-stun"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC STUN in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-stun"
@@ -30,6 +31,7 @@ base64.workspace = true
 crc.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 clap.workspace = true
 criterion.workspace = true
 

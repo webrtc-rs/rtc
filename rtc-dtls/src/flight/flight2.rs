@@ -89,6 +89,14 @@ impl Flight for Flight2 {
                 ));
             }
 
+            // This is the hello the negotiation answers, as in pion: refresh the summary and
+            // the certificate selection from it.
+            if let Err((alert, err)) = super::negotiate_server_certificate(state, cfg, client_hello)
+            {
+                return Err((alert, err));
+            }
+            super::retain_remote_cert_signature_schemes(state, client_hello);
+
             Ok(Box::new(Flight4 {}))
         } else {
             Err((

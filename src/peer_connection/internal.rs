@@ -1,14 +1,17 @@
 use super::*;
-use crate::peer_connection::event::{RTCPeerConnectionEvent, RTCPeerConnectionIceEvent};
+use crate::peer_connection::event::{
+    RTCPeerConnectionEvent, RTCPeerConnectionIceEvent, RTCTrackEvent,
+};
 use crate::peer_connection::handler::datachannel::DataChannelHandlerContext;
 use crate::peer_connection::handler::demuxer::DemuxerHandlerContext;
 use crate::peer_connection::handler::endpoint::EndpointHandlerContext;
 use crate::peer_connection::handler::interceptor::InterceptorHandlerContext;
 use crate::peer_connection::handler::srtp::SrtpHandlerContext;
+use crate::peer_connection::sdp::cryptex::{cryptex_mode_from_sdp, cryptex_negotiated_in_sdp};
 use crate::peer_connection::sdp::{
-    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
-    get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
-    rtp_extensions_from_media_description, track_details_from_sdp,
+    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions,
+    description_contains_ufrag, get_by_mid, get_peer_direction, get_rids, have_data_channel,
+    is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -26,6 +29,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverDirection, RTCRtpTran
 use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use ::srtp::context::cryptex::CryptexMode;
 use rand::RngExt;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -102,6 +106,29 @@ impl RTCPeerConnection {
             multicast_dns_query_timeout: setting_engine.multicast_dns.timeout,
             local_ufrag: setting_engine.candidates.username_fragment.clone(),
             local_pwd: setting_engine.candidates.password.clone(),
+            renomination: setting_engine.ice_renomination.as_ref().map(|r| {
+                r.generator.clone().unwrap_or_else(
+                    ice::agent::agent_config::NominationValueGenerator::incrementing,
+                )
+            }),
+            automatic_renomination: setting_engine
+                .ice_renomination
+                .as_ref()
+                .map(|r| r.interval.unwrap_or_default()),
+            nomination_attribute: setting_engine
+                .ice_renomination
+                .as_ref()
+                .and_then(|r| r.nomination_attribute),
+
+            ip_filter: setting_engine.candidates.ip_filter.clone(),
+            remote_ip_filter: setting_engine.candidates.remote_ip_filter.clone(),
+            enable_use_candidate_check_priority: setting_engine
+                .candidates
+                .ice_use_candidate_check_priority,
+            binding_request_handler: setting_engine
+                .candidates
+                .ice_binding_request_handler
+                .clone(),
 
             ..Default::default()
         };
@@ -129,11 +156,16 @@ impl RTCPeerConnection {
             answering_dtls_role: setting_engine.answering_dtls_role,
             srtp_protection_profiles: setting_engine.srtp_protection_profiles.clone(),
             dtls_cipher_suites: setting_engine.dtls_cipher_suites.clone(),
+            dtls_extended_master_secret: setting_engine
+                .dtls_extended_master_secret
+                .unwrap_or(::dtls::config::ExtendedMasterSecretType::Require),
+            dtls_retransmission_interval: setting_engine.dtls_retransmission_interval,
             allow_insecure_verification_algorithm: setting_engine
                 .allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification: setting_engine
                 .disable_certificate_fingerprint_verification,
             replay_protection: setting_engine.replay_protection,
+            dtls_key_logger: setting_engine.dtls_key_logger.clone(),
             crypto_provider,
         })?;
 
@@ -142,6 +174,13 @@ impl RTCPeerConnection {
             setting_engine.sctp_max_message_size,
             setting_engine.sctp_max_receive_buffer_size,
             setting_engine.sctp_mtu,
+            setting_engine.sctp_enable_zero_checksum,
+            SctpCongestionControls {
+                rto_max: setting_engine.sctp_rto_max,
+                min_cwnd: setting_engine.sctp_min_cwnd,
+                fast_rtx_wnd: setting_engine.sctp_fast_rtx_wnd,
+                cwnd_ca_step: setting_engine.sctp_cwnd_ca_step,
+            },
             sctp_transport_id,
             dtls_transport_id,
         );
@@ -167,6 +206,7 @@ impl RTCPeerConnection {
             data_read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            belt: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
             now,
         };
@@ -222,7 +262,7 @@ impl RTCPeerConnection {
             }
         }
 
-        if !self.data_channels.is_empty() {
+        if !self.data_channels.is_empty() || self.configuration.always_negotiate_data_channels {
             media_sections.push(MediaSection {
                 mid: format!("{}", media_sections.len()),
                 transceiver_index: usize::MAX,
@@ -249,6 +289,7 @@ impl RTCPeerConnection {
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
+            cryptex_at_session_level: self.configuration.rtp_header_encryption_policy.enabled(),
         };
         RTCPeerConnection::populate_sdp(
             d,
@@ -279,6 +320,28 @@ impl RTCPeerConnection {
         let mut media_sections = vec![];
         let mut already_have_application_media_section = false;
         let is_extmap_allow_mixed = is_ext_map_allow_mixed_set(self.remote_description());
+
+        // Cryptex (RFC 9335). Offers carry it at the session level, so there is no per-section
+        // mixture to negotiate; an answer mirrors the level the offer used.
+        let (cryptex_at_session_level, cryptex_at_media_level) =
+            if !self.configuration.rtp_header_encryption_policy.enabled() {
+                (false, false)
+            } else if include_unmatched {
+                (true, false)
+            } else if let Some(parsed) = self
+                .remote_description()
+                .as_ref()
+                .and_then(|r| r.parsed.as_ref())
+            {
+                let (negotiated_for_any, _) = cryptex_negotiated_in_sdp(parsed);
+                let offer_has_session_cryptex = parsed.has_attribute(ATTR_KEY_CRYPTEX);
+                (
+                    negotiated_for_any && offer_has_session_cryptex,
+                    negotiated_for_any && !offer_has_session_cryptex,
+                )
+            } else {
+                (false, false)
+            };
 
         // Extract media descriptions to avoid borrowing conflicts
         let media_descriptions = self
@@ -326,6 +389,7 @@ impl RTCPeerConnection {
                             transceiver_index: i,
                             match_extensions: extensions,
                             rid_map: get_rids(media),
+                            cryptex: cryptex_at_media_level,
                             ..Default::default()
                         });
                     } else {
@@ -358,7 +422,9 @@ impl RTCPeerConnection {
                 }
             }
 
-            if !self.data_channels.is_empty() && !already_have_application_media_section {
+            if (!self.data_channels.is_empty() || self.configuration.always_negotiate_data_channels)
+                && !already_have_application_media_section
+            {
                 media_sections.push(MediaSection {
                     mid: format!("{}", media_sections.len()),
                     transceiver_index: usize::MAX,
@@ -394,6 +460,7 @@ impl RTCPeerConnection {
             write_ssrc_attributes_for_simulcast: self
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
+            cryptex_at_session_level,
         };
         RTCPeerConnection::populate_sdp(
             d,
@@ -449,6 +516,72 @@ impl RTCPeerConnection {
     }
 
     // 4.4.1.6 Set the SessionDescription
+    /// The Cryptex modes (RFC 9335) to run SRTP with once `remote` is accepted: `(send, receive)`.
+    ///
+    /// `a=cryptex` declares what its sender can *receive*, so the peer's description decides how
+    /// this side may *send*, and this side's own latest description decides what it still has to
+    /// accept. Before there is a local description (answering a first offer) the answer to come
+    /// mirrors the offer, so both are the same.
+    pub(super) fn cryptex_modes(
+        &self,
+        remote: &SessionDescription,
+    ) -> Result<(CryptexMode, CryptexMode)> {
+        let policy = self.configuration.rtp_header_encryption_policy;
+        let send = cryptex_mode_from_sdp(policy, remote)?;
+
+        let local = self
+            .pending_local_description
+            .as_ref()
+            .or(self.current_local_description.as_ref())
+            .and_then(|d| d.parsed.as_ref());
+        let receive = match local {
+            None => send,
+            // Our own earlier description cannot fail the check; if it somehow does, do not
+            // let that fail the peer's.
+            Some(local) => cryptex_mode_from_sdp(policy, local).unwrap_or(send),
+        };
+        Ok((send, receive))
+    }
+
+    /// Notes, on each transceiver, whether `answer` negotiated Cryptex for it.
+    pub(super) fn record_rtp_header_encryption(&mut self, answer: &SessionDescription) {
+        use crate::peer_connection::sdp::cryptex::{
+            bundle_group_mids, bundle_tag_media, media_section_cryptex_state,
+        };
+        let session_level = answer.has_attribute(ATTR_KEY_CRYPTEX);
+        let tag = bundle_tag_media(answer);
+        let mids = bundle_group_mids(answer);
+        for media in &answer.media_descriptions {
+            if media.is_webrtc_datachannel() {
+                continue;
+            }
+            let Some(mid) = get_mid_value(media) else {
+                continue;
+            };
+            let Some(i) = RTCPeerConnection::find_by_mid(mid, &self.rtp_transceivers) else {
+                continue;
+            };
+            let (_, _, has_cryptex) = media_section_cryptex_state(media, tag, &mids);
+            self.rtp_transceivers[i]
+                .set_rtp_header_encryption_negotiated(session_level || has_cryptex);
+        }
+    }
+
+    /// Applies Cryptex modes to the SRTP contexts that exist now and to those created later.
+    pub(super) fn apply_cryptex_modes(&mut self, send: CryptexMode, receive: CryptexMode) {
+        let dtls = self.dtls_transport_mut();
+        dtls.cryptex_send_mode = send;
+        dtls.cryptex_receive_mode = receive;
+
+        let srtp = &mut self.pipeline_context.srtp_handler_context;
+        if let Some(context) = srtp.local_srtp_context.as_mut() {
+            context.set_cryptex_mode(send);
+        }
+        if let Some(context) = srtp.remote_srtp_context.as_mut() {
+            context.set_cryptex_mode(receive);
+        }
+    }
+
     pub(super) fn set_description(
         &mut self,
         sd: &RTCSessionDescription,
@@ -752,7 +885,7 @@ impl RTCPeerConnection {
                     if let Some(mid) = get_mid_value(media)
                         && !mid.is_empty()
                     {
-                        mids.insert(mid.clone());
+                        mids.insert(mid.to_owned());
                     }
                 }
             }
@@ -844,7 +977,34 @@ impl RTCPeerConnection {
             vec![]
         };
 
-        let only_one_rtp_transceiver = self.rtp_transceivers.len() == 1;
+        // A track the remote no longer announces on this transceiver has ended (pion stops the
+        // receiver, and its `TrackRemote` reads EOF).
+        let ended: Vec<usize> = self
+            .rtp_transceivers
+            .iter()
+            .enumerate()
+            .filter(|(_, transceiver)| {
+                let Some(receiver) = transceiver.receiver().as_ref() else {
+                    return false;
+                };
+                let track = receiver.track();
+                if !Self::track_is_open(track) {
+                    return false;
+                }
+                let announced = transceiver.direction().has_recv()
+                    && incoming_tracks.iter().any(|incoming| {
+                        transceiver.mid().as_ref() == Some(&incoming.mid)
+                            && incoming
+                                .ssrc
+                                .is_none_or(|ssrc| track.ssrcs().any(|open| open == ssrc))
+                    });
+                !announced
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in ended {
+            self.close_remote_track(index);
+        }
 
         for incoming_track in incoming_tracks.into_iter() {
             if let Some(transceiver) = self.rtp_transceivers.iter_mut().find(|transceiver| {
@@ -855,6 +1015,21 @@ impl RTCPeerConnection {
             {
                 let mut receive_codings = vec![];
                 if !incoming_track.rids.is_empty() {
+                    // A renegotiation lists the simulcast section that is already receiving again.
+                    // Replacing its track would forget the SSRC learned for each rid, and the next
+                    // packet of every layer would bind it and fire `OnTrack` a second time (pion
+                    // fires it once per track), with the interceptors binding the stream twice.
+                    let established = receiver.track().track_id() == &incoming_track.track_id
+                        && receiver.track().stream_id() == &incoming_track.stream_id
+                        && receiver.get_coding_parameters().len() == incoming_track.rids.len()
+                        && receiver
+                            .get_coding_parameters()
+                            .iter()
+                            .zip(&incoming_track.rids)
+                            .all(|(coding, rid)| &coding.rid == rid);
+                    if established {
+                        continue;
+                    }
                     // for incoming_track with rids, defer adding track until received the first RTP
                     // packet with rtp header extension with "urn:ietf:params:rtp-hdrext:sdes:mid" and
                     // "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", so that endpoint handler can
@@ -898,17 +1073,27 @@ impl RTCPeerConnection {
 
                     receive_codings.push(rtp_coding_parameters.clone());
 
-                    receiver.set_track(MediaStreamTrack::new(
-                        incoming_track.stream_id,
-                        incoming_track.track_id,
-                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                        incoming_track.kind,
-                        vec![RTCRtpEncodingParameters {
-                            rtp_coding_parameters,
-                            codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                            ..Default::default()
-                        }],
-                    ));
+                    // A renegotiation lists the tracks that were already there again. Replacing
+                    // the track would forget the codec it settled on, and the next packet would
+                    // bind the stream and fire `OnTrack` a second time (pion fires it once per
+                    // track).
+                    let already_established = receiver.track().track_id()
+                        == &incoming_track.track_id
+                        && receiver.track().stream_id() == &incoming_track.stream_id
+                        && receiver.track().ssrcs().eq([ssrc]);
+                    if !already_established {
+                        receiver.set_track(MediaStreamTrack::new(
+                            incoming_track.stream_id,
+                            incoming_track.track_id,
+                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                            incoming_track.kind,
+                            vec![RTCRtpEncodingParameters {
+                                rtp_coding_parameters,
+                                codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                                ..Default::default()
+                            }],
+                        ));
+                    }
 
                     // Deliberately no `interceptor_remote_streams_op` here. It bound nothing: that
                     // walks the track's codings and skips any whose codec does not resolve, and the
@@ -918,10 +1103,13 @@ impl RTCPeerConnection {
                     //
                     // The bind happens once the codec is known, in the endpoint handler's
                     // `find_track_id_by_ssrc`.
-                } else if only_one_rtp_transceiver {
-                    // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
-                    // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
-                    // when received the first RTP packet. So, it is placeholder here.
+                } else {
+                    // No `a=ssrc` and no rid. With a single media rtp transceiver the ssrc doesn't
+                    // have to be declared; with several, a legacy client may still leave it out
+                    // and the first packet is matched to its section by payload type (pion's
+                    // `findMediaSectionByPayloadType`). Either way add a track with no codings:
+                    // the stream_id and track_id from the SDP are kept for the first RTP packet,
+                    // so it is a placeholder here.
                     receiver.set_track(MediaStreamTrack::new(
                         incoming_track.stream_id,
                         incoming_track.track_id,
@@ -929,8 +1117,6 @@ impl RTCPeerConnection {
                         incoming_track.kind,
                         vec![], // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
                     ));
-                } else {
-                    return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                 }
 
                 receiver.set_coding_parameters(receive_codings);
@@ -938,6 +1124,53 @@ impl RTCPeerConnection {
         }
 
         Ok(())
+    }
+
+    /// Whether `track` has settled on a codec for any of its streams, which is when `OnTrack`
+    /// fired for it.
+    fn track_is_open(track: &MediaStreamTrack) -> bool {
+        track.ssrcs().any(|ssrc| {
+            track
+                .get_codec_by_ssrc(ssrc)
+                .is_some_and(|codec| !codec.mime_type.is_empty())
+        })
+    }
+
+    /// Ends the open track of the receiver of transceiver `index`: its streams leave the
+    /// interceptor chain, `OnClosing` and `OnClose` are reported, and the receiver goes back to
+    /// having no track, so the same transceiver can receive a later one with a fresh `OnTrack`.
+    pub(super) fn close_remote_track(&mut self, index: usize) {
+        let Some(receiver) = self.rtp_transceivers[index].receiver_mut() else {
+            return;
+        };
+        if !Self::track_is_open(receiver.track()) {
+            return;
+        }
+        let track_id = receiver.track().track_id().clone();
+        let stream_id = receiver.track().stream_id().to_owned();
+        let kind = receiver.track().kind();
+
+        if let Some(receiver) = self.rtp_transceivers[index].receiver_mut() {
+            // Unbinds every stream of the track from the interceptor chain.
+            let _ = receiver.stop(&self.media_engine, &mut self.interceptor);
+            receiver.set_track(MediaStreamTrack::new(
+                stream_id,
+                track_id.clone(),
+                format!("remote-{kind}-{}", math_rand_alpha(16)),
+                kind,
+                vec![],
+            ));
+            receiver.set_coding_parameters(vec![]);
+        }
+
+        for event in [
+            RTCTrackEvent::OnClosing(track_id.clone()),
+            RTCTrackEvent::OnClose(track_id),
+        ] {
+            self.pipeline_context
+                .event_outs
+                .push_back(RTCPeerConnectionEvent::OnTrack(event));
+        }
     }
 
     /// Update the PeerConnectionState given the state of relevant transports
@@ -1093,7 +1326,7 @@ impl RTCPeerConnection {
                 // https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
                 // Step 5.1
                 // if t.stopping && !t.stopped {
-                // 	return true
+                //      return true
                 // }
                 let m = transceiver
                     .mid()
@@ -1346,6 +1579,23 @@ impl RTCPeerConnection {
 
     pub(super) fn add_ice_remote_candidate(&mut self, candidate_value: &str) -> Result<()> {
         let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+        // Reject candidates from old generations (W3C addIceCandidate step 8): a candidate that
+        // names a username fragment no applied remote description carries belongs to an ICE
+        // session that has since been restarted. Like pion, drop it with an error log instead of
+        // failing the call, so that a late trickled candidate never poisons the new session.
+        if let Some(ufrag) = candidate.get_extension("ufrag")
+            && let Some(parsed) = self
+                .remote_description()
+                .and_then(|description| description.parsed.as_ref())
+            && !description_contains_ufrag(parsed, &ufrag.value)
+        {
+            log::error!(
+                "dropping candidate with ufrag {} because it doesn't match the current ufrags",
+                ufrag.value
+            );
+            return Ok(());
+        }
 
         // Register remote candidate with stats accumulator
         // Per W3C spec, URL must NOT be present for remote candidates

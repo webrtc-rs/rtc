@@ -569,16 +569,36 @@ impl MediaEngine {
         Ok(())
     }
 
-    /// add_codec will append codec if it not exists
-    fn add_codec(codecs: &mut Vec<RTCRtpCodecParameters>, codec: RTCRtpCodecParameters) {
+    /// add_codec appends `codec` unless the same codec is already registered under its payload
+    /// type, and refuses it when a *different* codec holds that payload type: two codecs on one
+    /// payload type cannot be told apart on the wire.
+    fn add_codec(
+        codecs: &mut Vec<RTCRtpCodecParameters>,
+        codec: RTCRtpCodecParameters,
+    ) -> Result<()> {
         for c in codecs.iter() {
-            if c.rtp_codec.mime_type == codec.rtp_codec.mime_type
-                && c.payload_type == codec.payload_type
-            {
-                return;
+            if c.payload_type == codec.payload_type {
+                if c.rtp_codec
+                    .mime_type
+                    .eq_ignore_ascii_case(&codec.rtp_codec.mime_type)
+                    && fmtp::clock_rate_equal(
+                        &c.rtp_codec.mime_type,
+                        c.rtp_codec.clock_rate,
+                        codec.rtp_codec.clock_rate,
+                    )
+                    && fmtp::channels_equal(
+                        &c.rtp_codec.mime_type,
+                        c.rtp_codec.channels,
+                        codec.rtp_codec.channels,
+                    )
+                {
+                    return Ok(());
+                }
+                return Err(Error::ErrCodecAlreadyRegistered);
             }
         }
         codecs.push(codec);
+        Ok(())
     }
 
     /// Registers a custom codec for use in this peer connection.
@@ -631,17 +651,10 @@ impl MediaEngine {
         typ: RtpCodecKind,
     ) -> Result<()> {
         match typ {
-            RtpCodecKind::Audio => {
-                MediaEngine::add_codec(&mut self.audio_codecs, codec);
-                Ok(())
-            }
-            RtpCodecKind::Video => {
-                MediaEngine::add_codec(&mut self.video_codecs, codec);
-                Ok(())
-            }
+            RtpCodecKind::Audio => MediaEngine::add_codec(&mut self.audio_codecs, codec),
+            RtpCodecKind::Video => MediaEngine::add_codec(&mut self.video_codecs, codec),
             RtpCodecKind::Application => {
-                MediaEngine::add_codec(&mut self.application_codecs, codec);
-                Ok(())
+                MediaEngine::add_codec(&mut self.application_codecs, codec)
             }
             _ => Err(Error::ErrUnknownType),
         }
@@ -833,6 +846,8 @@ impl MediaEngine {
 
         let remote_fmtp = fmtp::parse(
             &remote_codec.rtp_codec.mime_type,
+            remote_codec.rtp_codec.clock_rate,
+            remote_codec.rtp_codec.channels,
             remote_codec.rtp_codec.sdp_fmtp_line.as_str(),
         );
         if let Some(apt) = remote_fmtp.parameter("apt") {
@@ -947,12 +962,20 @@ impl MediaEngine {
 
     pub(crate) fn push_codecs(&mut self, codecs: Vec<RTCRtpCodecParameters>, typ: RtpCodecKind) {
         for codec in codecs {
-            if typ == RtpCodecKind::Audio {
-                MediaEngine::add_codec(&mut self.negotiated_audio_codecs, codec);
-            } else if typ == RtpCodecKind::Video {
-                MediaEngine::add_codec(&mut self.negotiated_video_codecs, codec);
-            } else if typ == RtpCodecKind::Application {
-                MediaEngine::add_codec(&mut self.negotiated_application_codecs, codec);
+            let result = match typ {
+                RtpCodecKind::Audio => {
+                    MediaEngine::add_codec(&mut self.negotiated_audio_codecs, codec)
+                }
+                RtpCodecKind::Video => {
+                    MediaEngine::add_codec(&mut self.negotiated_video_codecs, codec)
+                }
+                RtpCodecKind::Application => {
+                    MediaEngine::add_codec(&mut self.negotiated_application_codecs, codec)
+                }
+                _ => Ok(()),
+            };
+            if let Err(err) = result {
+                log::warn!("failed to add a negotiated codec: {err}");
             }
         }
     }
@@ -993,6 +1016,12 @@ impl MediaEngine {
                 if !self.negotiate_multi_codecs || typ == RtpCodecKind::Unspecified {
                     continue;
                 }
+            }
+
+            // A data-channel section lists no RTP payload types: its format is `webrtc-datachannel`
+            // or, in a legacy `DTLS/SCTP 5000` offer, the SCTP port, which is not a `u8`.
+            if media.is_webrtc_datachannel() {
+                continue;
             }
 
             let mut codecs = codecs_from_media_description(media)?;
@@ -1203,8 +1232,12 @@ impl MediaEngine {
         direction: RTCRtpTransceiverDirection,
     ) -> bool {
         for codec in &self.get_rtp_parameters_by_kind(kind, direction).codecs {
-            if UniCase::new(codec.rtp_codec.mime_type.as_str())
-                .contains(*UniCase::new(MIME_TYPE_FLEX_FEC))
+            // `UniCase` has no case-insensitive `contains`; its deref is a plain `str`.
+            if codec
+                .rtp_codec
+                .mime_type
+                .to_ascii_lowercase()
+                .contains(&MIME_TYPE_FLEX_FEC.to_ascii_lowercase())
             {
                 return true;
             }

@@ -4,7 +4,6 @@ use crypto::{
     HmacAlgorithm, Mac, RTCCrypto, SecretVec, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
 };
 use rtcp::header::{HEADER_LENGTH, SSRC_LENGTH};
-use shared::marshal::*;
 
 use super::{Cipher, Kdf, crypto_error};
 use crate::key_derivation::*;
@@ -122,6 +121,59 @@ impl CipherAesCmHmacSha1 {
         })
     }
 
+    /// Test-only: a cipher keyed with the session key and salt stated by a known-answer vector.
+    ///
+    /// The RFC vectors (RFC 3711 appendix B.2, RFC 6188 section 7.1) state the *session* key and
+    /// salt directly, bypassing the key derivation [`new`](Self::new) performs; pion reaches the
+    /// same place with `newSrtpCipherAesCmHmacSha1WithDerivedKeys`. Those vectors carry no auth
+    /// key, so both MACs are keyed with zeros — the tag is produced but never asserted against.
+    #[cfg(test)]
+    pub(crate) fn new_with_session_keys(
+        profile: ProtectionProfile,
+        srtp_session_key: &[u8],
+        srtcp_session_key: &[u8],
+        srtp_session_salt: &[u8],
+        srtcp_session_salt: &[u8],
+        crypto: &dyn RTCCrypto,
+    ) -> Result<Self> {
+        let algorithm = match profile {
+            ProtectionProfile::Aes128CmHmacSha1_32 | ProtectionProfile::Aes128CmHmacSha1_80 => {
+                StreamCipherAlgorithm::Aes128Ctr
+            }
+            ProtectionProfile::Aes256CmHmacSha1_80 | ProtectionProfile::Aes256CmHmacSha1_32 => {
+                StreamCipherAlgorithm::Aes256Ctr
+            }
+            _ => {
+                return Err(Error::Other(String::from(
+                    "no AES protection profile passed to CipherAesCmHmacSha1",
+                )));
+            }
+        };
+
+        let srtp_cipher = crypto
+            .new_stream_cipher(algorithm, srtp_session_key)
+            .map_err(crypto_error)?;
+        let srtcp_cipher = crypto
+            .new_stream_cipher(algorithm, srtcp_session_key)
+            .map_err(crypto_error)?;
+        let srtp_session_auth = crypto
+            .new_hmac(HmacAlgorithm::Sha1, &[0u8; 20])
+            .map_err(crypto_error)?;
+        let srtcp_session_auth = crypto
+            .new_hmac(HmacAlgorithm::Sha1, &[0u8; 20])
+            .map_err(crypto_error)?;
+
+        Ok(Self {
+            profile,
+            srtp_session_salt: srtp_session_salt.to_vec(),
+            srtp_session_auth,
+            srtcp_session_salt: srtcp_session_salt.to_vec(),
+            srtcp_session_auth,
+            srtp_cipher,
+            srtcp_cipher,
+        })
+    }
+
     /// Generate the SRTP HMAC-SHA1 authentication tag described by RFC 3711, section 4.2.
     ///
     /// Takes `&mut self` so the pre-keyed [`Mac`] can be used directly; the key schedule was
@@ -166,80 +218,90 @@ impl Cipher for CipherAesCmHmacSha1 {
             as usize
     }
 
-    fn encrypt_rtp(
-        &mut self,
-        plaintext: &[u8],
-        header: &rtp::Header,
-        roc: u32,
-    ) -> Result<BytesMut> {
-        let mut writer = BytesMut::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
-
-        // Write the plaintext to the destination buffer.
-        writer.extend_from_slice(plaintext);
-
-        // Encrypt the payload
-        let counter = generate_counter(
-            header.sequence_number,
-            roc,
-            header.ssrc,
-            &self.srtp_session_salt,
-        );
-
-        self.srtp_cipher
-            .apply_keystream(&counter, &mut writer[header.marshal_size()..])
-            .map_err(crypto_error)?;
-
-        // Generate the auth tag.
-        let full_auth_tag = self.generate_srtp_auth_tag(&writer, roc)?;
-        let auth_tag = &full_auth_tag[..self.rtp_auth_tag_len()];
-        writer.extend_from_slice(auth_tag);
-
-        Ok(writer)
+    fn authenticates_wire_layout(&self) -> bool {
+        true
     }
 
-    fn decrypt_rtp(
+    fn apply_rtp_keystream(
         &mut self,
-        encrypted: &[u8],
-        header: &rtp::Header,
+        buf: &mut [u8],
+        header: &rtp::header::HeaderSummary,
         roc: u32,
-    ) -> Result<BytesMut> {
-        let encrypted_len = encrypted.len();
-        if encrypted_len < self.rtp_auth_tag_len() {
-            return Err(Error::SrtpTooSmall(encrypted_len, self.rtp_auth_tag_len()));
+    ) -> Result<()> {
+        if header.header_len > buf.len() {
+            return Err(Error::ErrTooShortRtp);
         }
-
-        let mut writer = BytesMut::with_capacity(encrypted_len - self.rtp_auth_tag_len());
-
-        // Split the auth tag and the cipher text into two parts.
-        let actual_tag = &encrypted[encrypted_len - self.rtp_auth_tag_len()..];
-        let cipher_text = &encrypted[..encrypted_len - self.rtp_auth_tag_len()];
-
-        // Generate the auth tag we expect to see from the ciphertext.
-        let full_expected_tag = self.generate_srtp_auth_tag(cipher_text, roc)?;
-        let expected_tag = &full_expected_tag[..self.rtp_auth_tag_len()];
-
-        // See if the auth tag actually matches.
-        // We use a constant time comparison to prevent timing attacks.
-        if !constant_time_eq(actual_tag, expected_tag) {
-            return Err(Error::RtpFailedToVerifyAuthTag);
-        }
-
-        // Write cipher_text to the destination buffer.
-        writer.extend_from_slice(cipher_text);
-
-        // Decrypt the ciphertext for the payload.
         let counter = generate_counter(
             header.sequence_number,
             roc,
             header.ssrc,
             &self.srtp_session_salt,
         );
-
         self.srtp_cipher
-            .apply_keystream(&counter, &mut writer[header.marshal_size()..])
-            .map_err(crypto_error)?;
+            .apply_keystream(&counter, &mut buf[header.header_len..])
+            .map_err(crypto_error)
+    }
 
-        Ok(writer)
+    fn append_rtp_auth_tag(&mut self, buf: &mut BytesMut, start: usize, roc: u32) -> Result<()> {
+        let full_auth_tag = self.generate_srtp_auth_tag(&buf[start..], roc)?;
+        buf.extend_from_slice(&full_auth_tag[..self.rtp_auth_tag_len()]);
+        Ok(())
+    }
+
+    fn verify_and_strip_rtp_auth_tag(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        roc: u32,
+    ) -> Result<()> {
+        let tag_len = self.rtp_auth_tag_len();
+        let encrypted_len = buf.len() - start;
+        if encrypted_len < tag_len {
+            return Err(Error::SrtpTooSmall(encrypted_len, tag_len));
+        }
+        let body_end = buf.len() - tag_len;
+
+        // Generate the auth tag we expect to see from the ciphertext, and compare in constant
+        // time to prevent timing attacks. Nothing is decrypted until it matches.
+        let full_expected_tag = self.generate_srtp_auth_tag(&buf[start..body_end], roc)?;
+        if !constant_time_eq(&buf[body_end..], &full_expected_tag[..tag_len]) {
+            return Err(Error::RtpFailedToVerifyAuthTag);
+        }
+        buf.truncate(body_end);
+        Ok(())
+    }
+
+    fn encrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        if header.header_len > buf.len() - start {
+            return Err(Error::ErrTooShortRtp);
+        }
+        self.apply_rtp_keystream(&mut buf[start..], header, roc)?;
+        self.append_rtp_auth_tag(buf, start, roc)
+    }
+
+    fn decrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        let tag_len = self.rtp_auth_tag_len();
+        let encrypted_len = buf.len() - start;
+        if encrypted_len < tag_len {
+            return Err(Error::SrtpTooSmall(encrypted_len, tag_len));
+        }
+        if header.header_len + tag_len > encrypted_len {
+            return Err(Error::ErrTooShortRtp);
+        }
+        self.verify_and_strip_rtp_auth_tag(buf, start, roc)?;
+        self.apply_rtp_keystream(&mut buf[start..], header, roc)
     }
 
     fn encrypt_rtcp(
@@ -300,11 +362,6 @@ impl Cipher for CipherAesCmHmacSha1 {
 
         writer.extend_from_slice(&encrypted[0..tail_offset]);
 
-        let is_encrypted = encrypted[tail_offset] >> 7;
-        if is_encrypted == 0 {
-            return Ok(writer);
-        }
-
         // Split the auth tag and the cipher text into two parts.
         let actual_tag = &encrypted[encrypted_len - self.rtcp_auth_tag_len()..];
         if actual_tag.len() != self.rtcp_auth_tag_len() {
@@ -324,6 +381,14 @@ impl Cipher for CipherAesCmHmacSha1 {
         // We use a constant time comparison to prevent timing attacks.
         if !constant_time_eq(actual_tag, expected_tag) {
             return Err(Error::RtcpFailedToVerifyAuthTag);
+        }
+
+        // Authentication is mandatory for SRTCP (RFC 3711 §3.4) and was just checked; the E bit
+        // only says whether the payload is encrypted. Returning before the check on E = 0
+        // would let anyone inject RTCP that carries no valid tag.
+        let is_encrypted = encrypted[tail_offset] >> 7;
+        if is_encrypted == 0 {
+            return Ok(writer);
         }
 
         let counter = generate_counter(

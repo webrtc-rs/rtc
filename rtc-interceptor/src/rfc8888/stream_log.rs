@@ -328,4 +328,59 @@ mod tests {
             "the largest expressible offset is not mistaken for a reserved value"
         );
     }
+
+    /// pion `TestStreamLogMetricsAfter` ("reorderedSequence"): each sequence reports the
+    /// arrival time *it* was seen at, however the arrivals interleaved — the offset vector
+    /// follows the sequence order, not the arrival order.
+    #[test]
+    fn reordered_arrivals_keep_their_own_arrival_times() {
+        let now = Instant::now();
+        let mut log = StreamLog::new(1);
+
+        // Sequence 2 arrives before sequence 1; each keeps its own arrival instant.
+        log.add(now, 0, Ecn::NotEct);
+        log.add(now + Duration::from_millis(10), 2, Ecn::NotEct);
+        log.add(now + Duration::from_millis(20), 1, Ecn::NotEct);
+        log.add(now + Duration::from_millis(30), 3, Ecn::NotEct);
+
+        let reference = now + Duration::from_secs(1);
+        let block = log.metrics_after(reference, MAX_REPORTS_PER_BLOCK);
+
+        assert_eq!(0, block.begin_sequence);
+        let offsets: Vec<u16> = block
+            .metric_blocks
+            .iter()
+            .map(|metric| metric.arrival_time_offset)
+            .collect();
+        // One second back to sequence 0, 980 ms to sequence 1, 990 ms to sequence 2, 970 ms
+        // to sequence 3 — in 1/1024 s units.
+        assert_eq!(vec![1024, 1003, 1013, 993], offsets);
+        assert!(
+            log.is_empty(),
+            "the whole window was contiguous, so the log is spent"
+        );
+    }
+
+    /// pion `TestStreamLogDoesNotLeakBelowReportPointer` ("cap grown by packet loss"): when
+    /// the window is capped, the packets the cap keeps are still reported in the same call —
+    /// the loss that grew the window must not leave entries stranded below the pointer.
+    #[test]
+    fn a_cap_grown_by_a_loss_does_not_leak_below_the_report_pointer() {
+        let now = Instant::now();
+        let mut log = StreamLog::new(1);
+
+        log.add(now, 0, Ecn::NotEct);
+        // Sequence 1 is never received; the window grows around the loss.
+        for sequence in 2..8u16 {
+            log.add(now, sequence, Ecn::NotEct);
+        }
+
+        let block = log.metrics_after(now + Duration::from_secs(1), 4);
+        assert_eq!(4, block.metric_blocks.len(), "capped at four blocks");
+
+        assert!(
+            log.is_empty(),
+            "everything the cap retained was reported; nothing may linger below the pointer"
+        );
+    }
 }

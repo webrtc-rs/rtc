@@ -4,7 +4,11 @@ use super::*;
 /// that has an unknown Report Block Type.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct UnknownReportBlock {
-    /// The block's bytes, left unparsed.
+    /// The block type exactly as it appeared on the wire.
+    pub block_type: u8,
+    /// The type-specific bits of the block header, exactly as on the wire.
+    pub type_specific: u8,
+    /// The block's bytes after its header, left unparsed.
     pub bytes: Bytes,
 }
 
@@ -19,7 +23,7 @@ impl UnknownReportBlock {
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::Unknown,
-            type_specific: 0,
+            type_specific: self.type_specific,
             block_length: (self.raw_size() / 4 - 1) as u16,
         }
     }
@@ -63,9 +67,10 @@ impl Marshal for UnknownReportBlock {
             return Err(Error::BufferTooShort);
         }
 
-        let h = self.xr_header();
-        let n = h.marshal_to(buf)?;
-        buf = &mut buf[n..];
+        // The wire block type cannot be expressed as `BlockType`, so write the header directly.
+        buf.put_u8(self.block_type);
+        buf.put_u8(self.type_specific);
+        buf.put_u16(self.xr_header().block_length);
 
         buf.put(self.bytes.clone());
 
@@ -84,8 +89,10 @@ impl Unmarshal for UnknownReportBlock {
             return Err(Error::PacketTooShort);
         }
 
-        let xr_header = XRHeader::unmarshal(raw_packet)?;
-        let block_length = match xr_header.block_length.checked_mul(4) {
+        let block_type = raw_packet.get_u8();
+        let type_specific = raw_packet.get_u8();
+        let block_length = raw_packet.get_u16();
+        let block_length = match block_length.checked_mul(4) {
             Some(length) => length,
             None => return Err(Error::InvalidBlockSize),
         };
@@ -95,6 +102,10 @@ impl Unmarshal for UnknownReportBlock {
 
         let bytes = raw_packet.copy_to_bytes(block_length as usize);
 
-        Ok(UnknownReportBlock { bytes })
+        Ok(UnknownReportBlock {
+            block_type,
+            type_specific,
+            bytes,
+        })
     }
 }

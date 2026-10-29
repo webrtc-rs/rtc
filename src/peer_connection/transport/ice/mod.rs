@@ -244,6 +244,10 @@ impl IceTransport {
             return Err(Error::ErrICETransportNotInNew);
         }
 
+        // A lite peer never runs checks, so a full or lite agent facing one must know to treat
+        // its candidates as valid on sight (RFC 8445 section 2.5), as pion's SetRemoteICELite.
+        self.agent
+            .set_remote_ice_lite(remote_ice_parameters.ice_lite);
         self.agent.start_connectivity_checks(
             now,
             local_ice_role == RTCIceRole::Controlling,

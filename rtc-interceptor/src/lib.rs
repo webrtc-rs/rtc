@@ -38,6 +38,7 @@
 //!
 //! | Interceptor | Description |
 //! |-------------|-------------|
+//! | [`PacketDump`] | Writes a line per RTP/RTCP packet passing through, with filters, formatters and a pluggable output sink |
 //! | [`NoopInterceptor`] | Ends the inbound RTCP path; the last interceptor in a chain |
 //!
 //! # Design
@@ -99,6 +100,36 @@
 //! // `build` appends [`NoopInterceptor`] last, so inbound RTCP — control traffic the interceptors
 //! // above act on — stops there rather than arriving mixed in with the application's media. To
 //! // receive some of it, add an interceptor that marks those packets `DeliverToApplication`.
+//! # let _ = chain;
+//! ```
+//!
+//! # Packet dump
+//!
+//! [`PacketDump`] writes a line for every RTP and RTCP packet that crosses the chain, inbound
+//! and outbound, and forwards each one unchanged. It sits at [`Slot::PacketDump`], the
+//! wire-most slot, so the lines describe what actually went on the wire — after pacing and
+//! numbering on the way out, before recovery and re-stamping on the way in.
+//!
+//! ```
+//! use rtc_interceptor::{PacketDumpBuilder, Registry, Slot};
+//! use std::sync::{Arc, Mutex};
+//!
+//! // Keep the lines in memory instead of the `log` crate.
+//! #[derive(Clone, Default)]
+//! struct Recorder(Arc<Mutex<Vec<String>>>);
+//! impl rtc_interceptor::PacketDumpSink for Recorder {
+//!     fn write(&mut self, line: &str) {
+//!         self.0.lock().unwrap().push(line.to_owned());
+//!     }
+//! }
+//!
+//! let recorder = Recorder::default();
+//! let chain = Registry::new()
+//!     .with(Slot::PacketDump, PacketDumpBuilder::new()
+//!         .rtp_filter(|_| true)
+//!         .sink(Box::new(recorder.clone()))
+//!         .build())
+//!     .build();
 //! # let _ = chain;
 //! ```
 //!
@@ -223,6 +254,7 @@ use std::time::Instant;
 
 pub(crate) mod chain;
 pub(crate) mod noop;
+pub(crate) mod packetdump;
 pub(crate) mod registry;
 
 pub(crate) mod cc;
@@ -230,6 +262,7 @@ pub(crate) mod flexfec;
 pub(crate) mod gcc;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
+pub(crate) mod keyframe_requests;
 pub(crate) mod nack;
 pub(crate) mod pacing;
 pub(crate) mod packet;
@@ -285,8 +318,9 @@ pub use jitterbuffer::receiver::{
     DEFAULT_CAPACITY as JITTER_BUFFER_DEFAULT_CAPACITY,
     DEFAULT_DEPTH as JITTER_BUFFER_DEFAULT_DEPTH, JitterBufferBuilder, JitterBufferInterceptor,
 };
-pub use nack::generator::{NackGeneratorBuilder, NackGeneratorInterceptor};
-pub use nack::responder::{NackResponderBuilder, NackResponderInterceptor};
+pub use keyframe_requests::{KeyframeRequestForwarderBuilder, KeyframeRequestForwarderInterceptor};
+pub use nack::generator::{GeneratorStreamsFilter, NackGeneratorBuilder, NackGeneratorInterceptor};
+pub use nack::responder::{NackResponderBuilder, NackResponderInterceptor, ResponderStreamsFilter};
 pub use noop::NoopInterceptor;
 pub use pacing::pacer::{MIN_BURST_BITS as PACER_MIN_BURST_BITS, Pacer};
 pub use pacing::sender::{
@@ -294,6 +328,10 @@ pub use pacing::sender::{
     PacerBuilder, PacerInterceptor,
 };
 pub use packet::{Attribute, AttributedPacket, Packet, TaggedPacket};
+pub use packetdump::{
+    LogSink, PacketDump, PacketDumpBuilder, PacketDumpSink, RtcpBinaryFormatter,
+    RtcpCompoundFilter, RtpBinaryFormatter,
+};
 pub use registry::{Registry, Slot};
 pub use report::receiver::{ReceiverReportBuilder, ReceiverReportInterceptor};
 pub use report::sender::{SenderReportBuilder, SenderReportInterceptor};
@@ -342,6 +380,14 @@ pub use twcc::sender::{TwccSenderBuilder, TwccSenderInterceptor};
 /// by passing through the interceptors that follow it**. An interceptor that keeps a packet to
 /// itself keeps it from everything downstream, deliberately.
 ///
+/// # When the chain asks
+///
+/// After a packet has been walked, the chain has polled every interceptor, and it does not poll
+/// again until something could have given one something to emit: a packet read (which may ask for
+/// one to be sent), time passing (`handle_timeout`) or a stream being bound or unbound. So output
+/// must be queued from one of those. In particular a `handle_write` may emit toward the wire, and
+/// not toward the application.
+///
 /// # Direction
 ///
 /// Read walks the list forwards, write walks it in reverse, so one ordering serves both: the first
@@ -373,6 +419,15 @@ pub trait Interceptor:
 
     /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
     fn unbind_remote_stream(&mut self, info: &StreamInfo);
+
+    /// Whether this interceptor does nothing to a packet on the write path: `handle_write` only
+    /// queues it and `poll_write` hands it back unchanged, in order. The chain then does not carry
+    /// outgoing packets through it while it has nothing of its own waiting, which for a long chain
+    /// saves most of the work of sending a packet. Anything that looks at, changes, holds or counts
+    /// an outgoing packet must leave this `false`, the default.
+    fn writes_pass_through(&self) -> bool {
+        false
+    }
 }
 
 /// An interceptor whose concrete type has been erased.
@@ -382,6 +437,10 @@ pub trait Interceptor:
 pub type BoxedInterceptor = Box<dyn Interceptor>;
 
 impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
+    fn writes_pass_through(&self) -> bool {
+        (**self).writes_pass_through()
+    }
+
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
     }
@@ -410,6 +469,10 @@ impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
 /// outlives only `'a`. [`Registry::with`] is where the `'static` bound is asked for instead —
 /// locally, by the one method that has to box what it is given.
 impl<P: Interceptor + ?Sized> Interceptor for &mut P {
+    fn writes_pass_through(&self) -> bool {
+        (**self).writes_pass_through()
+    }
+
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
     }
@@ -424,5 +487,31 @@ impl<P: Interceptor + ?Sized> Interceptor for &mut P {
 
     fn unbind_remote_stream(&mut self, info: &StreamInfo) {
         (**self).unbind_remote_stream(info)
+    }
+}
+
+/// The TWCC recorder, for `benchmarks/pion-compare`, which times it against pion's. Not part of
+/// the supported API.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench {
+    /// Records packet arrivals and builds TWCC feedback, as pion's `twcc.Recorder` does.
+    pub struct TwccRecorder(crate::twcc::recorder::Recorder);
+
+    impl TwccRecorder {
+        /// A recorder that reports feedback under `sender_ssrc`.
+        pub fn new(sender_ssrc: u32) -> Self {
+            Self(crate::twcc::recorder::Recorder::new(sender_ssrc))
+        }
+
+        /// Notes that packet `sequence_number` of `media_ssrc` arrived at `arrival_time` (µs).
+        pub fn record(&mut self, media_ssrc: u32, sequence_number: u16, arrival_time: i64) {
+            self.0.record(media_ssrc, sequence_number, arrival_time);
+        }
+
+        /// Builds the feedback packets for everything recorded since the last call.
+        pub fn build_feedback_packet(&mut self) -> Vec<Box<dyn rtcp::Packet>> {
+            self.0.build_feedback_packet()
+        }
     }
 }

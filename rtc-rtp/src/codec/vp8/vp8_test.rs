@@ -9,15 +9,20 @@ fn test_vp8_unmarshal() -> Result<()> {
     let result = pck.depacketize(&empty_bytes);
     assert!(result.is_err(), "Result should be err in case of error");
 
-    // Payload smaller than header size
+    // Without X, the descriptor is one byte and the rest is payload (pion accepts these).
     let small_bytes = Bytes::from_static(&[0x00, 0x11, 0x22]);
-    let result = pck.depacketize(&small_bytes);
-    assert!(result.is_err(), "Result should be err in case of error");
+    assert_eq!(
+        pck.depacketize(&small_bytes)?,
+        Bytes::from_static(&[0x11, 0x22])
+    );
+    let small_bytes = Bytes::from_static(&[0x00]);
+    assert!(pck.depacketize(&small_bytes)?.is_empty());
 
-    // Payload smaller than header size
-    let small_bytes = Bytes::from_static(&[0x00, 0x11]);
-    let result = pck.depacketize(&small_bytes);
-    assert!(result.is_err(), "Result should be err in case of error");
+    // The descriptor claims more bytes than the packet has.
+    let truncated = Bytes::from_static(&[0x80, 0x80]);
+    assert!(pck.depacketize(&truncated).is_err());
+    let truncated = Bytes::from_static(&[0x80, 0x80, 0x81]);
+    assert!(pck.depacketize(&truncated).is_err());
 
     // Normal packet
     let raw_bytes = Bytes::from_static(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90]);
@@ -125,26 +130,26 @@ fn test_vp8_payload() -> Result<()> {
             ],
         ),
         (
-            "WithPictureID_1byte",
+            "WithPictureID_small",
             Vp8Payloader {
                 enable_picture_id: true,
                 picture_id: 0x20,
             },
-            5,
+            6,
             vec![
                 Bytes::from_static(&[0x90, 0x90, 0x90]),
                 Bytes::from_static(&[0x91, 0x91]),
             ],
             vec![
                 vec![
-                    Bytes::from_static(&[0x90, 0x80, 0x20, 0x90, 0x90]),
-                    Bytes::from_static(&[0x80, 0x80, 0x20, 0x90]),
+                    Bytes::from_static(&[0x90, 0x80, 0x80, 0x20, 0x90, 0x90]),
+                    Bytes::from_static(&[0x80, 0x80, 0x80, 0x20, 0x90]),
                 ],
-                vec![Bytes::from_static(&[0x90, 0x80, 0x21, 0x91, 0x91])],
+                vec![Bytes::from_static(&[0x90, 0x80, 0x80, 0x21, 0x91, 0x91])],
             ],
         ),
         (
-            "WithPictureID_2bytes",
+            "WithPictureID_large",
             Vp8Payloader {
                 enable_picture_id: true,
                 picture_id: 0x120,

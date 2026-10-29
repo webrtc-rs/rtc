@@ -152,6 +152,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for FlexFec03ReceiveInterceptor {
 }
 
 impl Interceptor for FlexFec03ReceiveInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         // Both halves, as everywhere else: without the repair SSRC there is nothing to route, and
         // without the payload type the association was never negotiated.

@@ -9,6 +9,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
+        self.announce_replaced_selected_pair(msg.now);
         // demuxing mDNS packet from STUN packet whether peer addr port is MDNS_PORT
         if msg.transport.peer_addr.port() == MDNS_PORT {
             let remote_candidates = if let Some(mdns_conn) = &mut self.mdns {
@@ -44,6 +45,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
                 vec![]
             };
 
+            let remote_candidates = self.allowed_remote_candidates(remote_candidates);
             self.trigger_request_connectivity_check(remote_candidates);
 
             Ok(())
@@ -89,6 +91,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> std::result::Result<(), Self::Error> {
+        self.announce_replaced_selected_pair(now);
         let remote_candidates = if let Some(mdns_conn) = &mut self.mdns {
             let _ = mdns_conn.handle_timeout(now);
 
@@ -121,6 +124,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
         } else {
             vec![]
         };
+        let remote_candidates = self.allowed_remote_candidates(remote_candidates);
         self.trigger_request_connectivity_check(remote_candidates);
 
         if self.ufrag_pwd.remote_credentials.is_some()

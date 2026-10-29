@@ -10,10 +10,9 @@
 //!
 //! [RFC 7798]: https://datatracker.ietf.org/doc/html/rfc7798
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 
-use super::h264::ANNEXB_NALUSTART_CODE;
-use crate::packetizer::{Depacketizer, Payloader};
+use crate::packetizer::Depacketizer;
 use shared::error::{Error, Result};
 
 #[cfg(test)]
@@ -102,202 +101,11 @@ impl UnitType {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-/// Packetizes H.265/HEVC NAL units into RTP payloads, fragmenting when needed.
-pub struct HevcPayloader;
+mod depacketizer;
+mod payloader;
 
-impl HevcPayloader {
-    fn aggregation_payload_header(nalus: &[Bytes]) -> [u8; 2] {
-        let mut f = false;
-        let mut layer_id = u8::MAX;
-        let mut tid = u8::MAX;
-
-        for nalu in nalus {
-            let header = H265NALUHeader::new(nalu[0], nalu[1]);
-            f |= header.f();
-            layer_id = layer_id.min(header.layer_id());
-            tid = tid.min(header.tid());
-        }
-
-        let mut raw = (H265NALU_AGGREGATION_PACKET_TYPE as u16) << 9;
-        raw |= (layer_id as u16) << 3;
-        raw |= tid as u16;
-        if f {
-            raw |= 1 << 15;
-        }
-
-        raw.to_be_bytes()
-    }
-
-    fn fragmentation_payload_header(payload_header: H265NALUHeader) -> [u8; 2] {
-        let mut raw = (H265NALU_FRAGMENTATION_UNIT_TYPE as u16) << 9;
-        raw |= (payload_header.layer_id() as u16) << 3;
-        raw |= payload_header.tid() as u16;
-        if payload_header.f() {
-            raw |= 1 << 15;
-        }
-
-        raw.to_be_bytes()
-    }
-
-    fn fu_header(nalu_type: u8, is_first: bool, is_last: bool) -> u8 {
-        let mut header = nalu_type & 0b0011_1111;
-        if is_first {
-            header |= 0b1000_0000;
-        } else if is_last {
-            header |= 0b0100_0000;
-        }
-        header
-    }
-
-    /// Locates the NAL unit boundaries in an Annex B buffer.
-    ///
-    /// Returns the offset of each start code and the length of the code that was matched.
-    pub fn parse(nalu: &Bytes) -> (Vec<usize>, usize) {
-        let finder = memchr::memmem::Finder::new(&ANNEXB_NALUSTART_CODE);
-        let nals = finder.find_iter(nalu).collect::<Vec<usize>>();
-        if nals.is_empty() {
-            let finder = memchr::memmem::Finder::new(&ANNEXB_3_NALUSTART_CODE);
-            return (finder.find_iter(nalu).collect::<Vec<usize>>(), 3);
-        }
-        (nals, 4)
-    }
-
-    fn flush_aggregation_buffer(nalus: &mut Vec<Bytes>, mtu: usize, payloads: &mut Vec<Bytes>) {
-        match nalus.len() {
-            0 => {}
-            1 => {
-                payloads.push(nalus.pop().expect("single buffered NAL exists"));
-            }
-            _ => {
-                let header = Self::aggregation_payload_header(nalus);
-                let mut aggr_nalu = BytesMut::with_capacity(
-                    NAL_HEADER_SIZE + nalus.iter().map(|nalu| 2 + nalu.len()).sum::<usize>(),
-                );
-                aggr_nalu.extend_from_slice(&header);
-                for nalu in nalus.drain(..) {
-                    aggr_nalu.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
-                    aggr_nalu.extend_from_slice(&nalu);
-                }
-                if aggr_nalu.len() <= mtu {
-                    payloads.push(aggr_nalu.freeze());
-                }
-            }
-        }
-    }
-
-    fn emit(nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
-        if nalu.is_empty() {
-            return;
-        }
-        let payload_header = H265NALUHeader::new(nalu[0], nalu[1]);
-        let payload_nalu_type = payload_header.nalu_type();
-
-        if payload_nalu_type >= H265NALU_AGGREGATION_PACKET_TYPE {
-            return;
-        }
-
-        // Single NALU
-        if nalu.len() <= mtu {
-            payloads.push(nalu.clone());
-            return;
-        }
-        let max_fragment_size =
-            mtu as isize - NAL_HEADER_SIZE as isize - H265FRAGMENTATION_UNIT_HEADER_SIZE as isize;
-        let nalu_data = nalu;
-        let mut nalu_data_index = 2;
-        let nalu_data_length = nalu.len() as isize - nalu_data_index;
-        let mut nalu_data_remaining = nalu_data_length;
-        if std::cmp::min(max_fragment_size, nalu_data_remaining) <= 0 {
-            return;
-        }
-        while nalu_data_remaining > 0 {
-            let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
-            let mut out = BytesMut::with_capacity(
-                NAL_HEADER_SIZE
-                    + H265FRAGMENTATION_UNIT_HEADER_SIZE
-                    + current_fragment_size as usize,
-            );
-            out.extend_from_slice(&Self::fragmentation_payload_header(payload_header));
-            let is_first = nalu_data_index == 2;
-            let is_last = nalu_data_remaining == current_fragment_size;
-            out.put_u8(Self::fu_header(payload_nalu_type, is_first, is_last));
-
-            out.extend_from_slice(
-                &nalu_data
-                    [nalu_data_index as usize..(nalu_data_index + current_fragment_size) as usize],
-            );
-            payloads.push(out.freeze());
-
-            nalu_data_remaining -= current_fragment_size;
-            nalu_data_index += current_fragment_size;
-        }
-    }
-}
-
-impl Payloader for HevcPayloader {
-    /// Payload fragments a H264 packet across one or more byte arrays
-    fn payload(&mut self, mtu: usize, payload: &Bytes) -> Result<Vec<Bytes>> {
-        if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
-        }
-
-        let mut payloads = vec![];
-        let mut aggregation_buffer = vec![];
-
-        let (nal_idxs, offset) = HevcPayloader::parse(payload);
-        if nal_idxs.is_empty() {
-            Self::emit(payload, mtu, &mut payloads);
-            return Ok(payloads);
-        }
-        let nal_len = nal_idxs.len();
-        for (i, start) in nal_idxs.iter().enumerate() {
-            let end = if (i + 1) < nal_len {
-                nal_idxs[i + 1]
-            } else {
-                payload.len()
-            };
-            let nalu = payload.slice((start + offset)..end);
-            if nalu.len() < NAL_HEADER_SIZE {
-                continue;
-            }
-
-            let payload_header = H265NALUHeader::new(nalu[0], nalu[1]);
-            if payload_header.is_aggregation_packet()
-                || payload_header.is_fragmentation_unit()
-                || payload_header.is_paci_packet()
-            {
-                continue;
-            }
-
-            if nalu.len() > mtu {
-                Self::flush_aggregation_buffer(&mut aggregation_buffer, mtu, &mut payloads);
-                Self::emit(&nalu, mtu, &mut payloads);
-                continue;
-            }
-
-            let aggregated_size = NAL_HEADER_SIZE
-                + aggregation_buffer
-                    .iter()
-                    .map(|nalu| 2 + nalu.len())
-                    .sum::<usize>()
-                + 2
-                + nalu.len();
-            if !aggregation_buffer.is_empty() && aggregated_size > mtu {
-                Self::flush_aggregation_buffer(&mut aggregation_buffer, mtu, &mut payloads);
-            }
-
-            aggregation_buffer.push(nalu);
-        }
-        Self::flush_aggregation_buffer(&mut aggregation_buffer, mtu, &mut payloads);
-
-        Ok(payloads)
-    }
-
-    fn clone_to(&self) -> Box<dyn Payloader> {
-        Box::new(self.clone())
-    }
-}
+pub use depacketizer::H265Depacketizer;
+pub use payloader::HevcPayloader;
 
 ///
 /// Network Abstraction Unit Header implementation

@@ -17,12 +17,16 @@ pub mod addr;
 pub mod chandata;
 /// The `CHANNEL-NUMBER` attribute.
 pub mod channum;
+/// The `CONNECTION-ID` attribute of RFC 6062, which names a peer data connection.
+pub mod connid;
 /// The `DATA` attribute, which carries relayed payloads in Send/Data indications.
 pub mod data;
 /// The `DONT-FRAGMENT` attribute, asking the server to set DF on relayed packets.
 pub mod dontfrag;
 /// The `EVEN-PORT` attribute, requesting an even relayed port (for RTP/RTCP pairs).
 pub mod evenport;
+/// Cutting a TCP or TLS byte stream into TURN messages.
+pub mod framing;
 /// The `LIFETIME` attribute, which sets and reports allocation expiry.
 pub mod lifetime;
 /// The `XOR-PEER-ADDRESS` attribute, naming the peer in permission and data messages.

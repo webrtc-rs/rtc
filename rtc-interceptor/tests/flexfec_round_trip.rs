@@ -210,6 +210,52 @@ fn a_block_that_wraps_the_sequence_space_round_trips() {
     assert_every_packet_is_recoverable(&media, &repair);
 }
 
+/// pion `TestFlexFec03_WholeRangeRoundTrip`: 109 media packets — the most the draft-03 masks can
+/// describe — under two repair packets, with every single loss recoverable across all three masks.
+#[test]
+fn the_whole_maskable_range_round_trips() {
+    let media = block(0, 109);
+    let repair = encode(&media, 2);
+    assert_eq!(2, repair.len());
+
+    assert_every_packet_is_recoverable(&media, &repair);
+}
+
+/// pion `TestFlexFec03_EncoderDecoderParityDualFECMask2Coverage`: a 40-packet block spans the
+/// second mask, and two repair packets interleave it — pion's shape for exercising dual-FEC
+/// coverage at mask-2 depth.
+#[test]
+fn dual_fec_mask2_coverage_round_trips() {
+    let media = block(5, 40);
+    let repair = encode(&media, 2);
+    assert_eq!(2, repair.len());
+
+    assert_every_packet_is_recoverable(&media, &repair);
+}
+
+/// pion `TestFlexFec03_EncoderDecoderParityTripleFECMask3Coverage`: 90 media packets under three
+/// repair packets, deep into the third mask.
+#[test]
+fn triple_fec_mask3_coverage_round_trips() {
+    let media = block(120, 90);
+    let repair = encode(&media, 3);
+    assert_eq!(3, repair.len());
+
+    assert_every_packet_is_recoverable(&media, &repair);
+}
+
+/// pion `TestFlexFec03_EncoderDecoderParityHighMediaCount`: 100 media packets under ten repair
+/// packets — every repair packet protects ten media packets, and the masks must agree with the
+/// interleaving at that density.
+#[test]
+fn high_media_count_round_trips() {
+    let media = block(41_000, 100);
+    let repair = encode(&media, 10);
+    assert_eq!(10, repair.len());
+
+    assert_every_packet_is_recoverable(&media, &repair);
+}
+
 /// Payloads of different lengths: the repair payload is sized to the largest, and recovery has to
 /// restore each packet's own length rather than the padded one.
 #[test]

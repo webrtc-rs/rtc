@@ -22,7 +22,7 @@ impl ResourceBody for AResource {
     fn pack(
         &self,
         msg: Vec<u8>,
-        _compression: &mut Option<HashMap<String, usize>>,
+        _compression: &mut Option<NameTable>,
         _compression_off: usize,
     ) -> Result<Vec<u8>> {
         Ok(pack_bytes(msg, &self.a))
@@ -30,6 +30,10 @@ impl ResourceBody for AResource {
 
     fn unpack(&mut self, msg: &[u8], off: usize, _length: usize) -> Result<usize> {
         unpack_bytes(msg, off, &mut self.a)
+    }
+
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {

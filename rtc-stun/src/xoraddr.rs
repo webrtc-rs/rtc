@@ -58,7 +58,7 @@ fn safe_xor_bytes(dst: &mut [u8], a: &[u8], b: &[u8]) -> usize {
 /// space. Returns the number of bytes xor'd.
 pub fn xor_bytes(dst: &mut [u8], a: &[u8], b: &[u8]) -> usize {
     //TODO: if supportsUnaligned {
-    //	return fastXORBytes(dst, a, b)
+    //  return fastXORBytes(dst, a, b)
     //}
     safe_xor_bytes(dst, a, b)
 }
@@ -112,19 +112,25 @@ impl Getter for XorMappedAddress {
 impl XorMappedAddress {
     /// add_to_as adds XOR-MAPPED-ADDRESS value to m as t attribute.
     pub fn add_to_as(&self, m: &mut Message, t: AttrType) -> Result<()> {
+        // Stack buffers throughout: adding an address to a message must not
+        // allocate (pion's TestAllocations pins zero allocations here).
         let (family, ip_len, ip) = match self.ip {
-            IpAddr::V4(ipv4) => (FAMILY_IPV4, IPV4LEN, ipv4.octets().to_vec()),
-            IpAddr::V6(ipv6) => (FAMILY_IPV6, IPV6LEN, ipv6.octets().to_vec()),
+            IpAddr::V4(ipv4) => {
+                let mut ip = [0u8; IPV6LEN];
+                ip[..IPV4LEN].copy_from_slice(&ipv4.octets());
+                (FAMILY_IPV4, IPV4LEN, ip)
+            }
+            IpAddr::V6(ipv6) => (FAMILY_IPV6, IPV6LEN, ipv6.octets()),
         };
 
         let mut value = [0; 32 + 128];
         //value[0] = 0 // first 8 bits are zeroes
-        let mut xor_value = vec![0; IPV6LEN];
+        let mut xor_value = [0u8; IPV6LEN];
         xor_value[4..].copy_from_slice(&m.transaction_id.0);
         xor_value[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
         value[0..2].copy_from_slice(&family.to_be_bytes());
         value[2..4].copy_from_slice(&(self.port ^ (MAGIC_COOKIE >> 16) as u16).to_be_bytes());
-        xor_bytes(&mut value[4..4 + ip_len], &ip, &xor_value);
+        xor_bytes(&mut value[4..4 + ip_len], &ip[..ip_len], &xor_value);
         m.add(t, &value[..4 + ip_len]);
         Ok(())
     }
@@ -132,7 +138,7 @@ impl XorMappedAddress {
     /// get_from_as decodes XOR-MAPPED-ADDRESS attribute value in message
     /// getting it as for t type.
     pub fn get_from_as(&mut self, m: &Message, t: AttrType) -> Result<()> {
-        let v = m.get(t)?;
+        let v = m.get_value(t)?;
         if v.len() <= 4 {
             return Err(Error::ErrUnexpectedEof);
         }
@@ -152,7 +158,7 @@ impl XorMappedAddress {
             },
         )?;
         self.port = u16::from_be_bytes([v[2], v[3]]) ^ (MAGIC_COOKIE >> 16) as u16;
-        let mut xor_value = vec![0; 4 + TRANSACTION_ID_SIZE];
+        let mut xor_value = [0u8; 4 + TRANSACTION_ID_SIZE];
         xor_value[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
         xor_value[4..].copy_from_slice(&m.transaction_id.0);
 

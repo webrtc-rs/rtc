@@ -14,6 +14,9 @@ rand = "0.10.0"
 [dependencies.rtc-dtls]
 path = ".."
 
+[dependencies.rtc-crypto]
+path = "../../rtc-crypto"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]

@@ -38,14 +38,18 @@ use binding::*;
 use transaction::*;
 
 use crate::client::relay::{Relay, RelayState};
-use crate::proto::PROTO_UDP;
 use crate::proto::chandata::*;
 use crate::proto::channum::ChannelNumber;
+use crate::proto::connid::ConnectionId;
 use crate::proto::data::*;
+use crate::proto::evenport::EvenPort;
 use crate::proto::lifetime::Lifetime;
 use crate::proto::peeraddr::*;
 use crate::proto::relayaddr::RelayedAddress;
+use crate::proto::reqfamily::{REQUESTED_FAMILY_IPV4, REQUESTED_FAMILY_IPV6};
 use crate::proto::reqtrans::RequestedTransport;
+use crate::proto::rsrvtoken::ReservationToken;
+use crate::proto::{PROTO_TCP, PROTO_UDP, Protocol};
 use shared::error::{Error, Result};
 use shared::util::lookup_host;
 use shared::{TransportContext, TransportMessage, TransportProtocol};
@@ -75,6 +79,11 @@ pub enum Event {
     /// A request exhausted its retransmissions without a response.
     TransactionTimeout(TransactionId),
 
+    /// An Allocate that asked for the next port up to be reserved succeeded; this is the token
+    /// to claim it with ([`AllocateOptions::reservation_token`]). Comes before the
+    /// `AllocateResponse` of the same transaction.
+    ReservationToken(TransactionId, Vec<u8>),
+
     /// A STUN Binding succeeded, reporting this client's server-reflexive address.
     BindingResponse(TransactionId, ReflexiveAddr),
     /// A STUN Binding failed.
@@ -95,6 +104,29 @@ pub enum Event {
     /// The channel number is `Some` when it came as ChannelData and `None` when it came as a
     /// Data indication.
     DataIndicationOrChannelData(Option<ChannelNumber>, PeerAddr, BytesMut),
+
+    /// A `Connect` succeeded ([RFC 6062 §5.2]): the server opened a TCP connection to the peer
+    /// and names it with this id. Open a new TCP connection to the server and bind it with
+    /// [`Relay::connection_bind`].
+    ///
+    /// [RFC 6062 §5.2]: https://www.rfc-editor.org/rfc/rfc6062#section-5.2
+    ConnectResponse(TransactionId, PeerAddr, ConnectionId),
+    /// A `Connect` failed — the peer could not be reached (`447`), or a connection to it already
+    /// exists (`446`).
+    ConnectError(TransactionId, Error),
+    /// A `ConnectionBind` succeeded ([RFC 6062 §5.4]): the connection it was sent on is now the
+    /// data connection to the peer, and carries the peer's bytes from here on. Stop giving it to
+    /// this client.
+    ///
+    /// [RFC 6062 §5.4]: https://www.rfc-editor.org/rfc/rfc6062#section-5.4
+    ConnectionBindResponse(TransactionId, ConnectionId),
+    /// A `ConnectionBind` failed; the connection it was sent on should be closed.
+    ConnectionBindError(TransactionId, Error),
+    /// A peer connected to the relayed address ([RFC 6062 §5.5]). Open a new TCP connection to
+    /// the server and bind it with [`Relay::connection_bind`] to accept it.
+    ///
+    /// [RFC 6062 §5.5]: https://www.rfc-editor.org/rfc/rfc6062#section-5.5
+    ConnectionAttempt(ConnectionId, PeerAddr),
 }
 
 enum AllocateState {
@@ -111,6 +143,26 @@ enum AllocateState {
 // 5: 15500 ms  +16000
 // 6: 31500 ms  +32000
 // -: 63500 ms  failed
+
+/// What an Allocate asks of the relay beyond the basics ([RFC 5766 §6.1], [RFC 6156]).
+///
+/// [RFC 5766 §6.1]: https://www.rfc-editor.org/rfc/rfc5766#section-6.1
+/// [RFC 6156]: https://www.rfc-editor.org/rfc/rfc6156
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllocateOptions {
+    /// Ask for a relayed port that is even (`Some`), and for the next port up to be held for a
+    /// second Allocate when the value is `true`. The server answers with a
+    /// [`Event::ReservationToken`] in that case. Excludes [`Self::reservation_token`].
+    pub even_port: Option<bool>,
+    /// Claim the port a previous Allocate reserved with `even_port: Some(true)`. Excludes
+    /// [`Self::even_port`] and [`Self::address_family`].
+    pub reservation_token: Option<Vec<u8>>,
+    /// The address family of the relay; the server's default if `None`.
+    pub address_family: Option<RelayFamily>,
+}
+
+/// The address family of a relayed address.
+pub use crate::server::RelayFamily;
 
 /// ClientConfig is a bag of config parameters for Client.
 pub struct ClientConfig {
@@ -173,6 +225,11 @@ pub struct Client {
     rto_in_ms: u64,
     allocation_refresh_interval_cap: Option<Duration>,
 
+    allocate_options: AllocateOptions,
+    /// What the Allocate in progress asks the relay to speak: UDP, or TCP ([RFC 6062]).
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    allocate_protocol: Protocol,
     relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
     events: VecDeque<Event>,
@@ -219,6 +276,8 @@ impl Client {
                 DEFAULT_RTO_IN_MS
             },
             allocation_refresh_interval_cap: config.allocation_refresh_interval_cap,
+            allocate_options: AllocateOptions::default(),
+            allocate_protocol: PROTO_UDP,
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -279,6 +338,17 @@ impl Client {
         }
 
         if msg.typ.class == CLASS_INDICATION {
+            if msg.typ.method == METHOD_CONNECTION_ATTEMPT {
+                let mut connection_id = ConnectionId::default();
+                connection_id.get_from(&msg)?;
+                let mut peer_addr = PeerAddress::default();
+                peer_addr.get_from(&msg)?;
+                self.events.push_back(Event::ConnectionAttempt(
+                    connection_id,
+                    SocketAddr::new(peer_addr.ip, peer_addr.port),
+                ));
+                return Ok(());
+            }
             if msg.typ.method == METHOD_DATA {
                 let mut peer_addr = PeerAddress::default();
                 peer_addr.get_from(&msg)?;
@@ -372,6 +442,28 @@ impl Client {
                         relay.handle_channel_bind_response(now, msg, bind_addr)?;
                     }
                 }
+                METHOD_CONNECT => {
+                    if let TransactionType::ConnectRequest(relayed_addr, peer_addr) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_connect_response(msg, peer_addr)?;
+                    }
+                }
+                METHOD_CONNECTION_BIND => {
+                    if let TransactionType::ConnectionBindRequest(relayed_addr, connection_id) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_connection_bind_response(msg, connection_id)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -380,25 +472,18 @@ impl Client {
     }
 
     fn handle_channel_data(&mut self, data: &[u8]) -> Result<()> {
-        let mut ch_data = ChannelData {
-            raw: data.to_vec(),
-            ..Default::default()
-        };
-        ch_data.decode()?;
+        let (number, payload) = ChannelData::parse(data)?;
 
         let addr = self
-            .find_addr_by_channel_number(ch_data.number.0)
+            .find_addr_by_channel_number(number.0)
             .ok_or(Error::ErrChannelBindNotFound)?;
 
-        trace!(
-            "channel data received from {} (ch={})",
-            addr, ch_data.number.0
-        );
+        trace!("channel data received from {} (ch={})", addr, number.0);
 
         self.events.push_back(Event::DataIndicationOrChannelData(
-            Some(ch_data.number),
+            Some(number),
             addr,
-            BytesMut::from(&ch_data.data[..]),
+            BytesMut::from(payload),
         ));
 
         Ok(())
@@ -431,7 +516,7 @@ impl Client {
     /// a response is.
     ///
     /// Such a host calls this to route a response, rather than guessing from the peer address and
-    /// handing it to a client that will silently discard it — [`handle_read`](Self::handle_read)
+    /// handing it to a client that will silently discard it — `handle_read`
     /// drops a response with no matching transaction, as it must.
     ///
     /// Applies to responses only. TURN ChannelData carries no transaction ID at all, and
@@ -591,18 +676,69 @@ impl Client {
 
     /// Allocate sends a TURN allocation request to the given transport address
     pub fn allocate(&mut self, now: Instant) -> Result<TransactionId> {
+        self.allocate_with(now, AllocateOptions::default())
+    }
+
+    /// As [`allocate`](Self::allocate), asking for the relay described by `options`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `options` asks for things that exclude each other (a reservation token with an
+    /// even port or an address family), or if the request cannot be encoded.
+    pub fn allocate_with(
+        &mut self,
+        now: Instant,
+        options: AllocateOptions,
+    ) -> Result<TransactionId> {
+        self.allocate_with_protocol(now, options, PROTO_UDP)
+    }
+
+    /// Asks for a TCP allocation ([RFC 6062]): a relayed address peers connect to over TCP, and
+    /// that the server connects from to peers named in [`Relay::connect`].
+    ///
+    /// The client must reach the server over TCP ([`ClientConfig::transport_protocol`]), and the
+    /// allocation takes no [`AllocateOptions`] that name a datagram port.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the client talks to the server over UDP, or if the request cannot be encoded.
+    ///
+    /// [RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062
+    pub fn allocate_tcp(&mut self, now: Instant) -> Result<TransactionId> {
+        if self.transport_protocol != TransportProtocol::TCP {
+            return Err(Error::Other(
+                "a TCP allocation is asked for over a TCP connection to the server".to_owned(),
+            ));
+        }
+        self.allocate_with_protocol(now, AllocateOptions::default(), PROTO_TCP)
+    }
+
+    fn allocate_with_protocol(
+        &mut self,
+        now: Instant,
+        options: AllocateOptions,
+        protocol: Protocol,
+    ) -> Result<TransactionId> {
+        if options.reservation_token.is_some()
+            && (options.even_port.is_some() || options.address_family.is_some())
+        {
+            return Err(Error::Other(
+                "a reservation token excludes EVEN-PORT and REQUESTED-ADDRESS-FAMILY".to_owned(),
+            ));
+        }
+        self.allocate_options = options;
+        self.allocate_protocol = protocol;
         let mut msg = Message::new();
-        msg.build(&[
+        let mut setters: Vec<Box<dyn Setter + '_>> = vec![
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
-            Box::new(RequestedTransport {
-                // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
-                // names what the allocation relays, not the client-to-server transport
-                // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
-                protocol: PROTO_UDP,
-            }),
-            Box::new(FINGERPRINT),
-        ])?;
+            // REQUESTED-TRANSPORT names what the allocation relays, not the client-to-server
+            // transport (RFC 8656 §7.1): UDP unless a TCP allocation was asked for (RFC 6062).
+            Box::new(RequestedTransport { protocol }),
+        ];
+        setters.extend(self.allocate_option_setters());
+        setters.push(Box::new(FINGERPRINT));
+        msg.build(&setters)?;
 
         debug!("client.Allocate call PerformTransaction 1");
         let mut tid = self.perform_transaction(
@@ -613,6 +749,25 @@ impl Client {
         );
         tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
         Ok(tid)
+    }
+
+    /// The attributes that carry [`AllocateOptions`], for both rounds of an Allocate.
+    fn allocate_option_setters(&self) -> Vec<Box<dyn Setter + 'static>> {
+        let options = &self.allocate_options;
+        let mut setters: Vec<Box<dyn Setter + 'static>> = Vec::new();
+        if let Some(reserve) = options.even_port {
+            setters.push(Box::new(EvenPort::new(reserve)));
+        }
+        if let Some(token) = &options.reservation_token {
+            setters.push(Box::new(ReservationToken(token.clone())));
+        }
+        if let Some(family) = options.address_family {
+            setters.push(Box::new(match family {
+                RelayFamily::V4 => REQUESTED_FAMILY_IPV4,
+                RelayFamily::V6 => REQUESTED_FAMILY_IPV6,
+            }));
+        }
+        setters
     }
 
     fn handle_allocate_response(
@@ -656,21 +811,21 @@ impl Client {
                 tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
 
                 // Trying to authorize.
-                msg.build(&[
+                let mut setters: Vec<Box<dyn Setter + '_>> = vec![
                     Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
-                        // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
-                        // names what the allocation relays, not the client-to-server transport
-                        // (RFC 8656 §7.1). TCP allocations (RFC 6062) are not implemented here.
-                        protocol: PROTO_UDP,
+                        protocol: self.allocate_protocol,
                     }),
-                    Box::new(self.username.clone()),
-                    Box::new(self.realm.clone()),
-                    Box::new(nonce.clone()),
-                    Box::new(integrity),
-                    Box::new(FINGERPRINT),
-                ])?;
+                ];
+                setters.extend(self.allocate_option_setters());
+                setters.push(Box::new(self.username.clone()));
+                setters.push(Box::new(self.realm.clone()));
+                setters.push(Box::new(nonce.clone()));
+                setters.push(Box::new(integrity));
+                setters.push(Box::new(FINGERPRINT));
+                msg.build(&setters)?;
+                drop(setters);
 
                 debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
@@ -742,6 +897,13 @@ impl Client {
                         self.allocation_refresh_interval_cap,
                     ),
                 );
+                if response.contains(ATTR_RESERVATION_TOKEN) {
+                    let mut token = ReservationToken::default();
+                    if token.get_from(&response).is_ok() {
+                        self.events
+                            .push_back(Event::ReservationToken(response.transaction_id, token.0));
+                    }
+                }
                 self.events.push_back(Event::AllocateResponse(
                     response.transaction_id,
                     relayed_addr,
@@ -789,12 +951,25 @@ impl Client {
         to: SocketAddr,
         transaction_type: TransactionType,
     ) -> TransactionId {
+        self.perform_transaction_from(now, msg, self.local_addr, to, transaction_type)
+    }
+
+    /// As [`perform_transaction`](Self::perform_transaction), from `local_addr`: a `ConnectionBind`
+    /// goes out on a connection of its own, not on the one the allocation lives on.
+    fn perform_transaction_from(
+        &mut self,
+        now: Instant,
+        msg: &Message,
+        local_addr: SocketAddr,
+        to: SocketAddr,
+        transaction_type: TransactionType,
+    ) -> TransactionId {
         let tr = Transaction::new(TransactionConfig {
             now,
             transaction_id: msg.transaction_id,
             transaction_type,
             raw: BytesMut::from(&msg.raw[..]),
-            local_addr: self.local_addr,
+            local_addr,
             peer_addr: to,
             transport_protocol: self.transport_protocol,
             interval: self.rto_in_ms,
@@ -806,7 +981,16 @@ impl Client {
         );
         self.tr_map.insert(msg.transaction_id, tr);
 
-        self.write_to(now, &msg.raw, to);
+        self.transmits.push_back(TransportMessage {
+            now,
+            transport: TransportContext {
+                local_addr,
+                peer_addr: to,
+                transport_protocol: self.transport_protocol,
+                ecn: None,
+            },
+            message: BytesMut::from(&msg.raw[..]),
+        });
 
         msg.transaction_id
     }

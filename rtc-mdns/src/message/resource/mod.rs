@@ -9,8 +9,8 @@ pub(crate) mod soa;
 pub(crate) mod srv;
 pub(crate) mod txt;
 
+use crate::message::name::NameTable;
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt;
 
 use a::*;
@@ -43,6 +43,15 @@ pub(crate) struct Resource {
     pub(crate) body: Option<Box<dyn ResourceBody>>,
 }
 
+impl Clone for Resource {
+    fn clone(&self) -> Self {
+        Resource {
+            header: self.header.clone(),
+            body: self.body.as_ref().map(|b| b.clone_box()),
+        }
+    }
+}
+
 impl fmt::Display for Resource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -63,7 +72,7 @@ impl Resource {
     pub(crate) fn pack(
         &mut self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         self.header.typ = self
@@ -173,7 +182,7 @@ impl ResourceHeader {
     pub(crate) fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<(Vec<u8>, usize)> {
         msg = self.name.pack(msg, compression, compression_off)?;
@@ -268,11 +277,16 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
     fn pack(
         &self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>>;
 
     fn unpack(&mut self, msg: &[u8], off: usize, length: usize) -> Result<usize>;
+
+    // clone_box returns a boxed copy of this resource body. The concrete
+    // bodies derive Clone; this method lets the trait object be copied
+    // (the mDNS record cache needs to hand out records it stores).
+    fn clone_box(&self) -> Box<dyn ResourceBody>;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -280,7 +294,7 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
 pub(crate) fn unpack_resource_body(
     typ: DnsType,
     msg: &[u8],
-    mut off: usize,
+    off: usize,
     length: usize,
 ) -> Result<(Box<dyn ResourceBody>, usize)> {
     let mut rb: Box<dyn ResourceBody> = match typ {
@@ -297,7 +311,11 @@ pub(crate) fn unpack_resource_body(
         _ => return Err(Error::ErrNilResourceBody),
     };
 
-    off = rb.unpack(msg, off, length)?;
+    rb.unpack(msg, off, length)?;
 
-    Ok((rb, off))
+    // The next record starts where the header says this one ends, not where the body parser
+    // happened to stop (golang.org/x/net/dns/dnsmessage does the same). Following the bytes
+    // consumed instead would split a packet with a wrong RDLENGTH into different records than
+    // every other parser does.
+    Ok((rb, off + length))
 }

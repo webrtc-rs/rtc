@@ -14,6 +14,7 @@ use dtls::state::State;
 use log::{debug, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
+use srtp::context::cryptex::CryptexMode;
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 use std::collections::VecDeque;
@@ -49,6 +50,19 @@ impl DtlsHandlerContext {
 pub(crate) struct DtlsHandler<'a> {
     ctx: &'a mut DtlsHandlerContext,
     stats: &'a mut RTCStatsAccumulator,
+}
+
+impl super::WriteBypass for DtlsHandler<'_> {
+    fn can_skip_write(
+        &mut self,
+        pending: &std::collections::VecDeque<TaggedRTCMessageInternal>,
+    ) -> bool {
+        self.ctx.close_requested.is_none()
+            && self.ctx.write_outs.is_empty()
+            && pending
+                .iter()
+                .all(|msg| !matches!(msg.message, RTCMessageInternal::Dtls(DTLSMessage::Raw(_))))
+    }
 }
 
 impl<'a> DtlsHandler<'a> {
@@ -255,6 +269,10 @@ impl<'a>
                                     state,
                                     &self.ctx.dtls_transport.replay_protection,
                                     &self.ctx.dtls_transport.crypto_provider,
+                                    (
+                                        self.ctx.dtls_transport.cryptex_send_mode,
+                                        self.ctx.dtls_transport.cryptex_receive_mode,
+                                    ),
                                 )?;
                             srtp_contexts = Some((local_srtp_context, remote_srtp_context));
                         } else {
@@ -396,6 +414,18 @@ impl<'a>
                         dtls_handshake_config,
                         None,
                     )?;
+                    // The first flight is buffered inside the endpoint when `connect`
+                    // returns; pump it out in the same event so it leaves on the write
+                    // drain of this very iteration. The peer receives the nomination
+                    // (the ICE handler's control-plane-first ordering) before this
+                    // ClientHello, so it no longer drops it.
+                    while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                            now: transmit.now,
+                            transport: transmit.transport,
+                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
+                        });
+                    }
                 };
             }
         } else {
@@ -405,7 +435,7 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.ctx.event_outs.pop_front()
+        super::pop_event(&mut self.ctx.event_outs)
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
@@ -457,6 +487,7 @@ impl<'a> DtlsHandler<'a> {
         state: &State,
         replay_protection: &ReplayProtection,
         crypto_provider: &Arc<dyn RTCCryptoProvider>,
+        (cryptex_send_mode, cryptex_receive_mode): (CryptexMode, CryptexMode),
     ) -> Result<(srtp::context::Context, srtp::context::Context)> {
         let profile = match state.srtp_protection_profile() {
             SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
@@ -474,12 +505,16 @@ impl<'a> DtlsHandler<'a> {
             profile,
             ..Default::default()
         };
-        if replay_protection.srtp != 0 {
+        if replay_protection.srtp_disabled {
+            srtp_config.remote_rtp_options = Some(srtp::option::srtp_no_replay_protection());
+        } else if replay_protection.srtp != 0 {
             srtp_config.remote_rtp_options =
                 Some(srtp::option::srtp_replay_protection(replay_protection.srtp));
         }
 
-        if replay_protection.srtcp != 0 {
+        if replay_protection.srtcp_disabled {
+            srtp_config.remote_rtcp_options = Some(srtp::option::srtcp_no_replay_protection());
+        } else if replay_protection.srtcp != 0 {
             srtp_config.remote_rtcp_options = Some(srtp::option::srtcp_replay_protection(
                 replay_protection.srtcp,
             ));
@@ -493,7 +528,7 @@ impl<'a> DtlsHandler<'a> {
         srtp_config
             .set_session_keys_from_keying_material(keying_material.as_ref(), state.is_client())?;
 
-        let local_context = srtp::context::Context::new(
+        let mut local_context = srtp::context::Context::new(
             &srtp_config.keys.local_master_key,
             &srtp_config.keys.local_master_salt,
             srtp_config.profile,
@@ -502,7 +537,7 @@ impl<'a> DtlsHandler<'a> {
             crypto_provider.crypto(),
         )?;
 
-        let remote_context = srtp::context::Context::new(
+        let mut remote_context = srtp::context::Context::new(
             &srtp_config.keys.remote_master_key,
             &srtp_config.keys.remote_master_salt,
             srtp_config.profile,
@@ -522,6 +557,9 @@ impl<'a> DtlsHandler<'a> {
             },
             crypto_provider.crypto(),
         )?;
+
+        local_context.set_cryptex_mode(cryptex_send_mode);
+        remote_context.set_cryptex_mode(cryptex_receive_mode);
 
         Ok((local_context, remote_context))
     }
@@ -549,9 +587,12 @@ mod tests {
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider,
             },
         )
@@ -578,9 +619,12 @@ mod tests {
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],
                 dtls_cipher_suites: vec![],
+                dtls_extended_master_secret: dtls::config::ExtendedMasterSecretType::Require,
+                dtls_retransmission_interval: None,
                 allow_insecure_verification_algorithm: false,
                 disable_certificate_fingerprint_verification: false,
                 replay_protection: Default::default(),
+                dtls_key_logger: None,
                 crypto_provider: provider,
             },
         )

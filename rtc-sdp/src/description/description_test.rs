@@ -4,7 +4,6 @@ use super::session::*;
 use shared::error::{Error, Result};
 
 use std::io::Cursor;
-use url::Url;
 
 const CANONICAL_MARSHAL_SDP: &str = "v=0\r\n\
      o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5\r\n\
@@ -51,20 +50,20 @@ fn test_marshal() -> Result<()> {
             username: "jdoe".to_string(),
             session_id: 2890844526,
             session_version: 2890842807,
-            network_type: "IN".to_string(),
-            address_type: "IP4".to_string(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             unicast_address: "10.47.16.5".to_string(),
         },
         session_name: "SDP Seminar".to_string(),
         session_information: Some("A Seminar on the session description protocol".to_string()),
-        uri: Some(Url::parse("http://www.example.com/seminars/sdp.pdf")?),
+        uri: Some("http://www.example.com/seminars/sdp.pdf".to_owned()),
         email_address: Some("j.doe@example.com (Jane Doe)".to_string()),
         phone_number: Some("+1 617 555-6011".to_string()),
         connection_information: Some(ConnectionInformation {
-            network_type: "IN".to_string(),
-            address_type: "IP4".to_string(),
+            network_type: "IN".into(),
+            address_type: "IP4".into(),
             address: Some(Address {
-                address: "224.2.17.12".to_string(),
+                address: "224.2.17.12".into(),
                 ttl: Some(127),
                 range: None,
             }),
@@ -122,20 +121,20 @@ fn test_marshal() -> Result<()> {
         media_descriptions: vec![
             MediaDescription {
                 media_name: MediaName {
-                    media: "audio".to_string(),
+                    media: "audio".into(),
                     port: RangedPort {
                         value: 49170,
                         range: None,
                     },
-                    protos: vec!["RTP".to_string(), "AVP".to_string()],
-                    formats: vec!["0".to_string()],
+                    protos: vec!["RTP".into(), "AVP".into()],
+                    formats: vec!["0".into()],
                 },
                 media_title: Some("Vivamus a posuere nisl".to_string()),
                 connection_information: Some(ConnectionInformation {
-                    network_type: "IN".to_string(),
-                    address_type: "IP4".to_string(),
+                    network_type: "IN".into(),
+                    address_type: "IP4".into(),
                     address: Some(Address {
-                        address: "203.0.113.1".to_string(),
+                        address: "203.0.113.1".into(),
                         ttl: None,
                         range: None,
                     }),
@@ -150,13 +149,13 @@ fn test_marshal() -> Result<()> {
             },
             MediaDescription {
                 media_name: MediaName {
-                    media: "video".to_string(),
+                    media: "video".into(),
                     port: RangedPort {
                         value: 51372,
                         range: None,
                     },
-                    protos: vec!["RTP".to_string(), "AVP".to_string()],
-                    formats: vec!["99".to_string()],
+                    protos: vec!["RTP".into(), "AVP".into()],
+                    formats: vec!["99".into()],
                 },
                 media_title: None,
                 connection_information: None,
@@ -721,5 +720,144 @@ fn test_unmarshal_real_safari_offer() -> Result<()> {
         reparsed.media_descriptions[2].media_name.protos,
         sdp.media_descriptions[2].media_name.protos
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// `unmarshal_slice`, and the scan that sizes the attribute lists before they are filled.
+
+const TWO_SECTIONS: &str = "v=0\r\n\
+o=- 1 2 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0 1\r\n\
+a=ice-lite\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111 63\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=sendrecv\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96 97 98\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n\
+a=rtpmap:96 VP8/90000\r\n";
+
+#[test]
+fn test_unmarshal_slice_matches_the_reader() {
+    let from_slice = SessionDescription::unmarshal_slice(TWO_SECTIONS.as_bytes()).unwrap();
+    let from_reader =
+        SessionDescription::unmarshal(&mut std::io::Cursor::new(TWO_SECTIONS.as_bytes())).unwrap();
+    assert_eq!(from_slice.marshal(), from_reader.marshal());
+    assert_eq!(from_slice.marshal(), TWO_SECTIONS);
+}
+
+#[test]
+fn test_unmarshal_reads_from_the_reader_position() {
+    // The buffer is sized from what is left to read, not from the start of the stream.
+    let mut reader = std::io::Cursor::new(format!("junk\n{TWO_SECTIONS}").into_bytes());
+    reader.set_position(5);
+    let parsed = SessionDescription::unmarshal(&mut reader).unwrap();
+    assert_eq!(parsed.marshal(), TWO_SECTIONS);
+}
+
+#[test]
+fn test_unmarshal_slice_rejects_what_the_reader_rejects() {
+    for bad in [
+        "",
+        "v=0\r\n",
+        "v=1\r\n",
+        "garbage",
+        "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n",
+    ] {
+        assert_eq!(
+            SessionDescription::unmarshal_slice(bad.as_bytes()).is_err(),
+            SessionDescription::unmarshal(&mut std::io::Cursor::new(bad.as_bytes())).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn test_attribute_lists_hold_exactly_the_attributes_of_each_section() {
+    let parsed = SessionDescription::unmarshal_slice(TWO_SECTIONS.as_bytes()).unwrap();
+    let keys = |attrs: &[Attribute]| attrs.iter().map(|a| a.key.to_string()).collect::<Vec<_>>();
+    assert_eq!(keys(&parsed.attributes), ["group", "ice-lite"]);
+    assert_eq!(
+        keys(&parsed.media_descriptions[0].attributes),
+        ["mid", "rtpmap", "sendrecv"]
+    );
+    assert_eq!(
+        keys(&parsed.media_descriptions[1].attributes),
+        ["mid", "rtpmap"]
+    );
+    // The m= line's formats were sized from the line too.
+    assert_eq!(
+        parsed.media_descriptions[1].media_name.formats,
+        ["96", "97", "98"]
+    );
+}
+
+#[test]
+fn test_line_endings_and_look_alike_lines_do_not_miscount_attributes() {
+    // Bare LF, an `a=` inside a value, a section without attributes, and `m=` inside a value.
+    let sdp = "v=0\no=- 1 2 IN IP4 127.0.0.1\ns=-\nt=0 0\n\
+               a=x:a=b\n\
+               m=audio 9 RTP/AVP 0\n\
+               i=a=not an attribute m=nor a section\n\
+               m=video 9 RTP/AVP 96\n\
+               a=y\n";
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes()).unwrap();
+    assert_eq!(parsed.attributes.len(), 1);
+    assert_eq!(parsed.attributes[0].value.as_deref(), Some("a=b"));
+    assert!(parsed.media_descriptions[0].attributes.is_empty());
+    assert_eq!(parsed.media_descriptions[1].attributes.len(), 1);
+}
+
+#[test]
+fn test_short_m_line_fields_are_stored_inline_and_long_ones_survive() {
+    let long_proto = "UDP/TLS/RTP/SAVPF/WITH/A/RATHER/LONG/PROTOCOL/LIST";
+    let sdp =
+        format!("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 {long_proto} 0\r\n");
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes()).unwrap();
+    let name = &parsed.media_descriptions[0].media_name;
+    assert_eq!(name.media, "audio");
+    assert_eq!(name.protos.join("/"), long_proto);
+    assert_eq!(name.formats, ["0"]);
+}
+
+#[test]
+fn repeated_long_attribute_values_are_shared_but_never_merged_with_others() -> Result<()> {
+    // 23 bytes is the longest inline value; the others are 24 bytes or more.
+    let inline = "a".repeat(23);
+    let long = "b".repeat(24);
+    let same_start_a = format!("{}-one", "c".repeat(30));
+    let same_start_b = format!("{}-two", "c".repeat(30));
+    let mut sdp = String::from("v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n");
+    for media in ["audio", "video"] {
+        sdp += &format!("m={media} 9 UDP/TLS/RTP/SAVPF 0\r\nc=IN IP4 0.0.0.0\r\n");
+        for value in [&inline, &long, &same_start_a, &same_start_b, &long] {
+            sdp += &format!("a=x:{value}\r\n");
+        }
+    }
+
+    let parsed = SessionDescription::unmarshal_slice(sdp.as_bytes())?;
+    for media in &parsed.media_descriptions {
+        let values: Vec<_> = media
+            .attributes
+            .iter()
+            .map(|a| a.value.as_deref())
+            .collect();
+        assert_eq!(
+            values,
+            [
+                Some(inline.as_str()),
+                Some(long.as_str()),
+                Some(same_start_a.as_str()),
+                Some(same_start_b.as_str()),
+                Some(long.as_str()),
+            ]
+        );
+    }
+    assert_eq!(parsed.marshal(), sdp);
     Ok(())
 }

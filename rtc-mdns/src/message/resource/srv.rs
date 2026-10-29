@@ -31,7 +31,7 @@ impl ResourceBody for SrvResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        _compression: &mut Option<HashMap<String, usize>>,
+        _compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = pack_uint16(msg, self.priority);
@@ -56,6 +56,10 @@ impl ResourceBody for SrvResource {
             .unpack_compressed(msg, off, false /* allowCompression */)?;
 
         Ok(off)
+    }
+
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -155,4 +155,65 @@ mod tests {
         );
         Ok(())
     }
+
+    /// pion's `TestExtractSessionKeysFromDTLS`: the exporter material is laid out client key,
+    /// server key, client salt, server salt (RFC 5764), and each role picks its local and remote
+    /// halves from that order. In this crate the exporter call itself belongs to the DTLS layer
+    /// above; this checks what it hands down.
+    #[test]
+    fn extracts_session_keys_in_dtls_order() -> Result<()> {
+        let profile = ProtectionProfile::Aes128CmHmacSha1_80;
+        let key_len = profile.key_len();
+        let salt_len = profile.salt_len();
+
+        let exported = material(2 * key_len + 2 * salt_len);
+
+        let mut client = Config {
+            profile,
+            ..Default::default()
+        };
+        client.set_session_keys_from_keying_material(&exported, true)?;
+
+        let mut server = Config {
+            profile,
+            ..Default::default()
+        };
+        server.set_session_keys_from_keying_material(&exported, false)?;
+
+        // Client: local = client writes, remote = server writes.
+        assert_eq!(
+            client.keys.local_master_key,
+            exported[0..key_len].to_vec(),
+            "the client's local key must be the first half of the key material"
+        );
+        assert_eq!(
+            client.keys.remote_master_key,
+            exported[key_len..2 * key_len].to_vec()
+        );
+        assert_eq!(
+            client.keys.local_master_salt,
+            exported[2 * key_len..2 * key_len + salt_len].to_vec()
+        );
+        assert_eq!(
+            client.keys.remote_master_salt,
+            exported[2 * key_len + salt_len..].to_vec()
+        );
+
+        // Server: the same material, seen from the other end.
+        assert_eq!(
+            server.keys.local_master_key,
+            exported[key_len..2 * key_len].to_vec()
+        );
+        assert_eq!(
+            server.keys.local_master_salt,
+            exported[2 * key_len + salt_len..].to_vec()
+        );
+        assert_eq!(server.keys.remote_master_key, exported[0..key_len].to_vec());
+        assert_eq!(
+            server.keys.remote_master_salt,
+            exported[2 * key_len..2 * key_len + salt_len].to_vec()
+        );
+
+        Ok(())
+    }
 }

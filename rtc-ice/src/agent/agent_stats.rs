@@ -258,8 +258,8 @@ impl Agent {
                 port: c.port(),
                 candidate_type: c.candidate_type(),
                 priority: c.priority(),
-                // URL string
-                relay_protocol: "udp".to_owned(),
+                // only a local relay candidate knows how it reaches its relay
+                relay_protocol: c.relay_protocol().to_owned(),
                 // Deleted bool
                 ..CandidateStats::new(now)
             };
@@ -280,8 +280,7 @@ impl Agent {
                 port: c.port(),
                 candidate_type: c.candidate_type(),
                 priority: c.priority(),
-                // URL string
-                relay_protocol: "udp".to_owned(),
+                relay_protocol: String::new(),
                 // Deleted bool
                 ..CandidateStats::new(now)
             };

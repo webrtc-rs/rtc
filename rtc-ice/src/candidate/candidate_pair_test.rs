@@ -141,7 +141,7 @@ fn test_candidate_pair_priority() -> Result<()> {
                 candidates[RELAY_INDEX].priority(),
                 true,
             ),
-            72057593987596288,
+            4398012955648,
         ),
         (
             CandidatePair::new(
@@ -151,7 +151,7 @@ fn test_candidate_pair_priority() -> Result<()> {
                 candidates[RELAY_INDEX].priority(),
                 false,
             ),
-            72057593987596287,
+            4398012955647,
         ),
     ];
 

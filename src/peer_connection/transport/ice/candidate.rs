@@ -195,11 +195,18 @@ impl RTCIceCandidate {
                 config.new_candidate_peer_reflexive()?
             }
             RTCIceCandidateType::Relay => {
+                let relay_protocol = match self.relay_protocol {
+                    RTCIceServerTransportProtocol::Udp => "udp",
+                    RTCIceServerTransportProtocol::Tcp => "tcp",
+                    RTCIceServerTransportProtocol::Tls => "tls",
+                    _ => "",
+                };
                 let config = CandidateRelayConfig {
                     base_config,
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
                     url: self.url.clone(),
+                    relay_protocol: relay_protocol.to_owned(),
                 };
                 config.new_candidate_relay()?
             }

@@ -1,7 +1,7 @@
 // Silence warning on complex types:
 #![allow(clippy::type_complexity)]
 
-use std::collections::HashMap;
+use crate::message::name::NameTable;
 
 use super::builder::*;
 use super::header::*;
@@ -259,7 +259,7 @@ fn test_question_pack_unpack() -> Result<()> {
         typ: DnsType::A,
         class: DNSCLASS_INET,
     };
-    let buf = want.pack(vec![0; 1], &mut Some(HashMap::new()), 1)?;
+    let buf = want.pack(vec![0; 1], &mut Some(NameTable::default()), 1)?;
     let mut p = Parser {
         msg: &buf,
         header: HeaderInternal {
@@ -326,7 +326,7 @@ fn test_name_pack_unpack() -> Result<()> {
 
     for (input, want, want_err) in tests {
         let input = Name::new(input)?;
-        let result = input.pack(vec![], &mut Some(HashMap::new()), 0);
+        let result = input.pack(vec![], &mut Some(NameTable::default()), 0);
         if let Some(want_err) = want_err {
             if let Err(actual_err) = result {
                 assert_eq!(actual_err, want_err);
@@ -365,7 +365,7 @@ fn test_name_pack_unpack() -> Result<()> {
 #[test]
 fn test_incompressible_name() -> Result<()> {
     let name = Name::new("example.com.")?;
-    let mut compression = Some(HashMap::new());
+    let mut compression = Some(NameTable::default());
     let buf = name.pack(vec![], &mut compression, 0)?;
     let buf = name.pack(buf, &mut compression, 0)?;
     let mut n1 = Name::default();
@@ -783,7 +783,7 @@ fn test_very_long_txt() -> Result<()> {
         })),
     };
 
-    let buf = want.pack(vec![], &mut Some(HashMap::new()), 0)?;
+    let buf = want.pack(vec![], &mut Some(NameTable::default()), 0)?;
     let mut got = Resource::default();
     let off = got.header.unpack(&buf, 0, 0)?;
     let (body, n) = unpack_resource_body(got.header.typ, &buf, off, got.header.length as usize)?;
@@ -807,7 +807,7 @@ fn test_too_long_txt() -> Result<()> {
         str256.push('.');
     }
     let rb = TxtResource { txt: vec![str256] };
-    if let Err(err) = rb.pack(vec![], &mut Some(HashMap::new()), 0) {
+    if let Err(err) = rb.pack(vec![], &mut Some(NameTable::default()), 0) {
         assert_eq!(err, Error::ErrStringTooLong);
     } else {
         panic!("expected error, but got ok");
@@ -1307,5 +1307,129 @@ fn test_option_pack_unpack() -> Result<()> {
         assert_eq!(ms, tt_ms);
     }
 
+    Ok(())
+}
+
+// The direct packers must emit exactly the bytes the general `Message::pack` does.
+#[test]
+fn test_pack_a_question_matches_message_pack() -> Result<()> {
+    for name in [
+        "a.",
+        "myhost.local.",
+        "7a1f6e3c-0b2d-4c5e-9f10-aabbccddeeff.local.",
+        "a.b.c.d.e.f.",
+    ] {
+        let mut msg = Message {
+            header: Header::default(),
+            questions: vec![Question {
+                typ: DnsType::A,
+                class: DNSCLASS_INET,
+                name: Name::new(name)?,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(msg.pack()?, pack_a_question(name)?, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_pack_a_answer_matches_message_pack() -> Result<()> {
+    for name in [
+        "a.",
+        "myhost.local.",
+        "7a1f6e3c-0b2d-4c5e-9f10-aabbccddeeff.local.",
+    ] {
+        let mut msg = Message {
+            header: Header {
+                response: true,
+                authoritative: true,
+                ..Default::default()
+            },
+            answers: vec![Resource {
+                header: ResourceHeader {
+                    typ: DnsType::A,
+                    class: DNSCLASS_INET,
+                    name: Name::new(name)?,
+                    ttl: 120,
+                    ..Default::default()
+                },
+                body: Some(Box::new(AResource {
+                    a: [192, 168, 1, 100],
+                })),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            msg.pack()?,
+            pack_a_answer(name, [192, 168, 1, 100], 120)?,
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_pack_a_question_rejects_bad_names() {
+    assert!(pack_a_question("no-trailing-dot").is_err());
+    assert!(pack_a_question(&format!("{}.", "a".repeat(64))).is_err());
+    assert!(pack_a_question(&"a.".repeat(200)).is_err());
+    assert!(pack_a_question("a..b.").is_err());
+}
+
+// Compression must find a suffix packed earlier, including one that is itself reached through a
+// pointer, and must not mistake a name that merely starts the same way.
+#[test]
+fn test_name_table_compresses_shared_suffixes() -> Result<()> {
+    let mut table = Some(NameTable::default());
+    let mut msg = vec![];
+    msg = pack_name("a.example.local.", msg, &mut table, 0)?;
+    let first = msg.len();
+    msg = pack_name("b.example.local.", msg, &mut table, 0)?;
+    // "b" label then a pointer to "example.local." inside the first name.
+    assert_eq!(&msg[first..first + 2], &[1, b'b']);
+    assert_eq!(msg[first + 2] & 0xC0, 0xC0);
+    assert_eq!(msg.len(), first + 4);
+    msg = pack_name("c.b.example.local.", msg, &mut table, 0)?;
+    // "c" label, then a pointer to the second name ("b" + pointer), which is followed through.
+    assert_eq!(msg.len(), first + 4 + 2 + 2);
+    // A different suffix of the same length is not compressed.
+    let before = msg.len();
+    msg = pack_name("example.locax.", msg, &mut table, 0)?;
+    assert_eq!(msg.len() - before, "example.locax.".len() + 1);
+
+    // Everything unpacks to the names that went in.
+    let mut name = Name::default();
+    let mut off = 0;
+    for want in [
+        "a.example.local.",
+        "b.example.local.",
+        "c.b.example.local.",
+        "example.locax.",
+    ] {
+        off = name.unpack(&msg, off)?;
+        assert_eq!(name.data, want);
+    }
+    assert_eq!(off, msg.len());
+    Ok(())
+}
+
+#[test]
+fn test_name_table_spills_past_its_inline_entries() -> Result<()> {
+    let mut table = Some(NameTable::default());
+    let mut msg = vec![];
+    let names: Vec<String> = (0..40).map(|i| format!("h{i}.zone{i}.local.")).collect();
+    for n in &names {
+        msg = pack_name(n, msg, &mut table, 0)?;
+    }
+    // The shared "local." suffix is found even though far more than the inline capacity of
+    // suffixes was recorded in between.
+    let mut name = Name::default();
+    let mut off = 0;
+    for want in &names {
+        off = name.unpack(&msg, off)?;
+        assert_eq!(&name.data, want);
+    }
+    assert_eq!(off, msg.len());
     Ok(())
 }

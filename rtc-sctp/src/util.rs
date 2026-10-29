@@ -86,6 +86,18 @@ pub(crate) fn get_padding_size(len: usize) -> usize {
     (PADDING_MULTIPLE - (len % PADDING_MULTIPLE)) % PADDING_MULTIPLE
 }
 
+/// Append `cnt` zero bytes to `raw`, as pion's `padByte`.
+///
+/// A negative `cnt` is clamped to zero, exactly like pion's helper: callers
+/// compute it with [`get_padding_size`], which never yields more than
+/// `PADDING_MULTIPLE - 1`, but the pion unit test pins the defensive clamp.
+pub(crate) fn pad_byte(mut raw: Vec<u8>, cnt: isize) -> Vec<u8> {
+    if cnt > 0 {
+        raw.resize(raw.len() + cnt as usize, 0);
+    }
+    raw
+}
+
 /// Allocate and zero this data once.
 /// We need to use it for the checksum and don't want to allocate/clear each time.
 pub(crate) static FOUR_ZEROES: Bytes = Bytes::from_static(&[0, 0, 0, 0]);
@@ -318,6 +330,24 @@ pub(crate) fn sna16eq(i1: u16, i2: u16) -> bool {
     i1 == i2
 }
 
+/// Index of the first set bit of `val` at or after bit `start`, and whether it lies before `end`.
+///
+/// The TSN bitmask helper of pion's receive queue (`getFirstNonZeroBit`). This crate keeps
+/// received TSNs in a sorted deque rather than a bitmask, so nothing here uses it; it is kept,
+/// with pion's semantics, for tests that pin them. A `start` of 64 or more finds nothing.
+pub(crate) fn first_non_zero_bit(val: u64, start: u32, end: u32) -> (u32, bool) {
+    let shifted = val.checked_shr(start).unwrap_or(0);
+    // 64 trailing zeros of an empty word, as in Go.
+    let i = shifted.trailing_zeros();
+    (i + start, i + start < end)
+}
+
+/// Index of the first clear bit of `val` at or after bit `start`, and whether it lies before
+/// `end`; see [`first_non_zero_bit`].
+pub(crate) fn first_zero_bit(val: u64, start: u32, end: u32) -> (u32, bool) {
+    first_non_zero_bit(!val, start, end)
+}
+
 #[cfg(test)]
 mod test {
     use shared::error::Result;
@@ -364,6 +394,22 @@ mod test {
         assert_eq!(0, consumed);
         assert!(source.has_remaining());
         assert_eq!(3, source.remaining());
+    }
+
+    /// Port of pion's `TestPadByte_Success` (util_test.go).
+    #[test]
+    fn test_pad_byte_success() {
+        let tt: [(Vec<u8>, isize, Vec<u8>); 5] = [
+            (vec![0x1, 0x2], 0, vec![0x1, 0x2]),
+            (vec![0x1, 0x2], 1, vec![0x1, 0x2, 0x0]),
+            (vec![0x1, 0x2], 2, vec![0x1, 0x2, 0x0, 0x0]),
+            (vec![0x1, 0x2], 3, vec![0x1, 0x2, 0x0, 0x0, 0x0]),
+            (vec![0x1, 0x2], -1, vec![0x1, 0x2]),
+        ];
+
+        for (i, (value, pad_len, expected)) in tt.into_iter().enumerate() {
+            assert_eq!(expected, pad_byte(value, pad_len), "test {i} not equal");
+        }
     }
 
     const DIV: isize = 16;
@@ -619,5 +665,24 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_bitfunc() {
+        // pion: TestBitfunc
+        assert_eq!((0, true), first_non_zero_bit(0xf, 0, 20));
+        assert!(!first_non_zero_bit(0xf << 20, 0, 20).1);
+        assert_eq!((20, true), first_non_zero_bit(0xf << 20, 5, 25));
+        assert!(!first_non_zero_bit(0xf << 20, 30, 40).1);
+        assert!(!first_non_zero_bit(0, 0, 64).1);
+
+        assert_eq!((4, true), first_zero_bit(0xf, 0, 20));
+        assert_eq!((0, true), first_zero_bit(0xf << 20, 0, 20));
+        assert!(!first_zero_bit(0xf << 20, 20, 24).1);
+        assert_eq!((30, true), first_zero_bit(0xf << 20, 30, 40));
+        assert!(!first_zero_bit(u64::MAX, 0, 64).1);
+
+        // Go shifts by 64 or more yield zero rather than wrapping.
+        assert_eq!((128, false), first_non_zero_bit(u64::MAX, 64, 100));
     }
 }

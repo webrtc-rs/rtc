@@ -25,8 +25,10 @@ use crate::peer_connection::message::{
         TaggedRTCMessageInternal,
     },
 };
+use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
+use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Packet;
 use log::warn;
@@ -34,6 +36,19 @@ use shared::TaggedBytesMut;
 use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
 use std::time::Instant;
+
+/// Pops the next event from a queue that only ever holds a handful of them over a connection's
+/// life (a state change, a handshake, a channel opening), and hands the queue's memory back once it
+/// is empty. A `VecDeque` keeps the room its first push made, which for events of 288 bytes is over
+/// a kilobyte in each of seven handlers for as long as the connection lives. Not for a queue that
+/// fills on every packet: that would allocate again each time.
+pub(super) fn pop_event<T>(queue: &mut VecDeque<T>) -> Option<T> {
+    let event = queue.pop_front();
+    if event.is_none() && queue.capacity() > 0 {
+        *queue = VecDeque::new();
+    }
+    event
+}
 
 /// Forward handler list - invokes callback with handler list
 macro_rules! forward_handlers {
@@ -98,6 +113,29 @@ macro_rules! for_each_handler {
     };
 }
 
+/// What lets [`RTCPeerConnection::flush_writes`] pass a message by a handler that would only queue
+/// it and hand it back, which for an outgoing media packet is most of the handlers.
+pub(crate) trait WriteBypass {
+    /// Whether the handler can be left out of this pass: it has no output of its own waiting, and
+    /// would only queue every message in `pending` and return it as it came. Whatever
+    /// `handle_write` would have noted from such a message is noted here.
+    fn can_skip_write(&mut self, _pending: &VecDeque<TaggedRTCMessageInternal>) -> bool {
+        false
+    }
+
+    /// Passes `pending` through the handler where it lies, for a handler whose write turns one
+    /// message into at most one: each message is changed (or dropped) on the belt instead of being
+    /// taken off it, queued in the handler and polled back out, which moves a 224-byte message
+    /// three or four times for nothing. Returns whether it did; if it did not, `pending` is as it
+    /// was. The result must be what `handle_write` for each message in turn, then `poll_write`
+    /// until empty, would have left.
+    fn write_in_place(&mut self, _pending: &mut VecDeque<TaggedRTCMessageInternal>) -> bool {
+        false
+    }
+}
+
+impl WriteBypass for EndpointHandler<'_> {}
+
 pub(crate) struct PipelineContext {
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,
@@ -127,6 +165,10 @@ pub(crate) struct PipelineContext {
     pub(crate) data_read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
+
+    /// The queue a pass over the handlers carries messages between them on, kept between passes
+    /// so that each one does not allocate its own. Empty whenever no pass is running.
+    pub(crate) belt: VecDeque<TaggedRTCMessageInternal>,
 
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
@@ -259,16 +301,20 @@ impl RTCPeerConnection {
     fn flush_writes(&mut self) {
         use sansio::Protocol;
 
-        let mut intermediate_wouts = VecDeque::new();
+        let mut intermediate_wouts = std::mem::take(&mut self.pipeline_context.belt);
 
         for_each_handler!(reverse: process_handler!(self, handler, {
-            while let Some(msg) = intermediate_wouts.pop_front() {
-                if let Err(err) = handler.handle_write(msg) {
-                    warn!("{}.handle_write got error: {}", handler.name(), err);
+            if !handler.can_skip_write(&intermediate_wouts)
+                && !handler.write_in_place(&mut intermediate_wouts)
+            {
+                while let Some(msg) = intermediate_wouts.pop_front() {
+                    if let Err(err) = handler.handle_write(msg) {
+                        warn!("{}.handle_write got error: {}", handler.name(), err);
+                    }
                 }
-            }
-            while let Some(msg) = handler.poll_write() {
-                intermediate_wouts.push_back(msg);
+                while let Some(msg) = handler.poll_write() {
+                    intermediate_wouts.push_back(msg);
+                }
             }
         }));
 
@@ -282,10 +328,11 @@ impl RTCPeerConnection {
                 });
             }
         }
+        self.pipeline_context.belt = intermediate_wouts;
     }
 
     fn pump_reads(&mut self, msg: Option<TaggedRTCMessageInternal>) {
-        let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
+        let mut intermediate_routs = std::mem::take(&mut self.pipeline_context.belt);
 
         if let Some(msg) = msg {
             intermediate_routs.push_back(msg);
@@ -349,6 +396,7 @@ impl RTCPeerConnection {
                 }
             }
         }
+        self.pipeline_context.belt = intermediate_routs;
     }
 
     /// Returns whether any handler raised an event during the sweep.
@@ -440,9 +488,24 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 }))
             }
             RTCMessage::RtpPacket(_track_id, rtp_packet) => {
+                // The peer closed the transport (close_notify), or this side did: media has no
+                // one to go to. Say so now, as pion's closed pipe does, rather than protecting
+                // and sending every packet to a peer that has left (a forwarder would keep
+                // spending a syscall per packet on each viewer that hung up).
+                if self.dtls_transport().state() == RTCDtlsTransportState::Closed {
+                    return Err(Error::ErrClosedPipe);
+                }
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet)))
             }
             RTCMessage::RtcpPacket(_track_id, rtcp_packet) => {
+                // As pion's PeerConnection.WriteRTCP: there is no SRTCP session to protect the
+                // packets with until DTLS has connected, so say so now instead of letting the
+                // pipeline drop them later.
+                match self.dtls_transport().state() {
+                    RTCDtlsTransportState::Connected => {}
+                    RTCDtlsTransportState::Closed => return Err(Error::ErrClosedPipe),
+                    _ => return Err(Error::ErrDtlsTransportNotStarted),
+                }
                 RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packet)))
             }
         };
@@ -582,6 +645,17 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             close_errs.push(Error::new(format!("ice_transport: {err}")));
         }
          */
+
+        // The ICE transport is closed with the connection (W3C close() steps 8 to 10), and, as
+        // in pion, the application is told: it may be waiting for exactly this.
+        if self.ice_transport().ice_connection_state != RTCIceConnectionState::Closed {
+            self.ice_transport_mut().ice_connection_state = RTCIceConnectionState::Closed;
+            self.pipeline_context.event_outs.push_back(
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(
+                    RTCIceConnectionState::Closed,
+                ),
+            );
+        }
 
         self.update_connection_state(true);
 

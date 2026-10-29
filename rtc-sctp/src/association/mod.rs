@@ -4,7 +4,7 @@ use crate::association::{
 };
 use crate::chunk::chunk_header::CHUNK_HEADER_SIZE;
 use crate::chunk::{
-    Chunk, ErrorCause, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
+    Chunk, ErrorCause, ErrorCauseUnrecognizedChunkType, PROTOCOL_VIOLATION, USER_INITIATED_ABORT,
     chunk_abort::ChunkAbort,
     chunk_cookie_ack::ChunkCookieAck,
     chunk_cookie_echo::ChunkCookieEcho,
@@ -13,6 +13,9 @@ use crate::chunk::{
     chunk_forward_tsn::ChunkForwardTsnStream,
     chunk_heartbeat::ChunkHeartbeat,
     chunk_heartbeat_ack::ChunkHeartbeatAck,
+    chunk_i_forward_tsn::{
+        ChunkIForwardTsn, ChunkIForwardTsnStream, normalize_i_forward_tsn_streams,
+    },
     chunk_init::ChunkInit,
     chunk_init::ChunkInitAck,
     chunk_payload_data::ChunkPayloadData,
@@ -22,26 +25,31 @@ use crate::chunk::{
     chunk_shutdown::ChunkShutdown,
     chunk_shutdown_ack::ChunkShutdownAck,
     chunk_shutdown_complete::ChunkShutdownComplete,
-    chunk_type::CT_FORWARD_TSN,
+    chunk_type::{CT_FORWARD_TSN, CT_IDATA, CT_IFORWARD_TSN},
 };
-use crate::config::{COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, TransportConfig};
+use crate::config::{
+    COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, StreamScheduler, TransportConfig,
+};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
-    Param,
+    DTLS_ERROR_DETECTION_METHOD, Param,
     param_forward_tsn_supported::ParamForwardTsnSupported,
     param_heartbeat_info::ParamHeartbeatInfo,
     param_outgoing_reset_request::ParamOutgoingResetRequest,
     param_reconfig_response::{ParamReconfigResponse, ReconfigResult},
     param_state_cookie::ParamStateCookie,
     param_supported_extensions::ParamSupportedExtensions,
+    param_zero_checksum_acceptable::ParamZeroChecksumAcceptable,
 };
 use crate::queue::{
+    interleaved_queue::SchedulerKind,
     payload_queue::PayloadQueue,
     pending_queue::{PendingQueue, ResetMarker},
 };
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
+use rack::RackState;
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
 use stream::{Stream, StreamEvent, StreamId, StreamState};
@@ -59,13 +67,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+pub(crate) mod rack;
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
 pub(crate) mod timer;
+pub(crate) mod windowed_min;
 
 #[cfg(test)]
 mod association_test;
+#[cfg(test)]
+mod interleaving_test;
+#[cfg(test)]
+mod stream_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -122,6 +136,40 @@ pub enum Event {
     Stream(StreamEvent),
     /// One or more application datagrams have been received
     DatagramReceived,
+}
+
+/// Which forward-TSN chunk, if any, lets the sender abandon messages on an association.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum PartialReliabilityMode {
+    /// The peer cannot skip data: every message is reliable.
+    #[default]
+    None,
+    /// FORWARD-TSN ([RFC 3758]).
+    ///
+    /// [RFC 3758]: https://datatracker.ietf.org/doc/html/rfc3758
+    ForwardTsn,
+    /// I-FORWARD-TSN ([RFC 8260]), used together with I-DATA.
+    ///
+    /// [RFC 8260]: https://datatracker.ietf.org/doc/html/rfc8260
+    IForwardTsn,
+}
+
+/// What an association negotiated with its peer, as reported by [`Association::metadata`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct AssociationMetadata {
+    /// User message interleaving ([RFC 8260]) is in use: messages travel as I-DATA.
+    ///
+    /// [RFC 8260]: https://datatracker.ietf.org/doc/html/rfc8260
+    pub message_interleaving_enabled: bool,
+    /// Which forward-TSN variant carries partial reliability.
+    pub partial_reliability_mode: PartialReliabilityMode,
+    /// Outgoing packets leave the checksum zero ([RFC 9653]).
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub zero_checksum_sending_enabled: bool,
+    /// Incoming packets may carry a zero checksum.
+    pub zero_checksum_receiving_enabled: bool,
 }
 
 /// Selection is stable even after fragments leave either queue.
@@ -204,10 +252,25 @@ pub struct Association {
 
     pub(crate) mtu: u32,
     // max DATA chunk payload size
-    max_payload_size: u32,
+    pub(crate) max_payload_size: u32,
+    /// The payload budget of a plain DATA chunk; `max_payload_size` is this, or the smaller
+    /// I-DATA budget once interleaving is negotiated.
+    data_max_payload_size: u32,
     cumulative_tsn_ack_point: u32,
     advanced_peer_tsn_ack_point: u32,
-    use_forward_tsn: bool,
+    /// Partial reliability is carried by FORWARD-TSN (RFC 3758).
+    pub(crate) use_forward_tsn: bool,
+    /// Partial reliability is carried by I-FORWARD-TSN (RFC 8260).
+    pub(crate) use_iforward_tsn: bool,
+    /// User messages travel as I-DATA (RFC 8260): offered locally and by the peer.
+    pub(crate) use_interleaving: bool,
+    /// This endpoint offers I-DATA / I-FORWARD-TSN (configuration).
+    local_interleaving: bool,
+    peer_forward_tsn: bool,
+    peer_interleaving: bool,
+    peer_iforward_tsn: bool,
+    stream_scheduler: SchedulerKind,
+    max_reassembly_queue_entries: u32,
     /// Max stream-sequence-number per *ordered* stream among abandoned chunks
     /// currently in the forward-TSN window `(cumulative_tsn_ack_point,
     /// advanced_peer_tsn_ack_point]`. Maintained incrementally as chunks are
@@ -218,6 +281,11 @@ pub struct Association {
     /// ignores the per-stream list for them (it advances by `new_cumulative_tsn`
     /// alone), so reporting them was pure waste.
     fwd_tsn_stream_map: FxHashMap<u16, u16>,
+    /// The I-FORWARD-TSN counterpart of `fwd_tsn_stream_map`: the greatest message identifier
+    /// abandoned per (stream, unordered). Unlike FORWARD-TSN, I-FORWARD-TSN names unordered
+    /// streams too, since it is their message identifiers that let the receiver discard a
+    /// half-assembled unordered message.
+    ifwd_tsn_stream_map: FxHashMap<(u16, bool), u32>,
 
     pub(crate) rto_mgr: RtoManager,
     timers: TimerTable,
@@ -225,6 +293,12 @@ pub struct Association {
     // Congestion control parameters
     max_receive_buffer_size: u32,
     // my congestion window size
+    /// Accept zero-checksum packets ([RFC 9653]) on this association: config-driven.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) recv_zero_checksum: bool,
+    /// Send zero-checksum packets: set when the peer advertised the capability.
+    pub(crate) send_zero_checksum: bool,
     pub(crate) cwnd: u32,
     // calculated peer's receiver windows size
     rwnd: u32,
@@ -233,6 +307,14 @@ pub struct Association {
     partial_bytes_acked: u32,
     pub(crate) in_fast_recovery: bool,
     fast_recover_exit_point: u32,
+    /// Congestion-window floor (pion's `SetSCTPMinCwnd`); 0 keeps the RFC resets.
+    min_cwnd: u32,
+    /// Fast-retransmission bundling budget (pion's `SetSCTPFastRtxWnd`); the
+    /// effective budget is `max(mtu, fast_rtx_wnd)`.
+    fast_rtx_wnd: u32,
+    /// Congestion-avoidance growth step (pion's `SetSCTPCwndCAStep`); the
+    /// effective step is `max(mtu, cwnd_ca_step)`.
+    cwnd_ca_step: u32,
 
     // Chunks stored for retransmission
     stored_init: Option<ChunkInit>,
@@ -253,6 +335,12 @@ pub struct Association {
 
     pub(crate) stats: AssociationStats,
     ack_state: AckState,
+    /// The receiver window credit (`a_rwnd`) most recently put on the wire in a SACK, i.e. what
+    /// the peer believes it may still send. Compared with the live credit when the application
+    /// drains the receive buffer, to decide whether the peer needs telling the window reopened.
+    last_advertised_credit: u32,
+    /// RACK-TLP loss detection state; see `rack.rs`.
+    pub(crate) rack: RackState,
 
     // for testing
     pub(crate) ack_mode: AckMode,
@@ -263,6 +351,8 @@ impl Default for Association {
         Association {
             side: Side::default(),
             state: AssociationState::default(),
+            recv_zero_checksum: false,
+            send_zero_checksum: false,
             handshake_completed: false,
             max_message_size: 0,
             inflight_queue_length: 0,
@@ -309,10 +399,20 @@ impl Default for Association {
             mtu: 0,
             // max DATA chunk payload size
             max_payload_size: 0,
+            data_max_payload_size: 0,
             cumulative_tsn_ack_point: 0,
             advanced_peer_tsn_ack_point: 0,
             use_forward_tsn: false,
+            use_iforward_tsn: false,
+            use_interleaving: false,
+            local_interleaving: false,
+            peer_forward_tsn: false,
+            peer_interleaving: false,
+            peer_iforward_tsn: false,
+            stream_scheduler: SchedulerKind::RoundRobin,
+            max_reassembly_queue_entries: 0,
             fwd_tsn_stream_map: FxHashMap::default(),
+            ifwd_tsn_stream_map: FxHashMap::default(),
 
             rto_mgr: RtoManager::default(),
             timers: TimerTable::default(),
@@ -328,6 +428,9 @@ impl Default for Association {
             partial_bytes_acked: 0,
             in_fast_recovery: false,
             fast_recover_exit_point: 0,
+            min_cwnd: 0,
+            fast_rtx_wnd: 0,
+            cwnd_ca_step: 0,
 
             // Chunks stored for retransmission
             stored_init: None,
@@ -346,11 +449,28 @@ impl Default for Association {
 
             stats: AssociationStats::default(),
             ack_state: AckState::default(),
+            last_advertised_credit: 0,
+            rack: RackState::default(),
 
             // for testing
             ack_mode: AckMode::default(),
         }
     }
+}
+
+/// The estimate of an average DATA chunk's size used to turn a receive buffer size into a count of
+/// chunks (there is no theory behind it).
+const AVG_CHUNK_SIZE: u32 = 500;
+/// The fewest TSNs ahead of the cumulative TSN that are always accepted, however small the buffer.
+const MIN_TSN_OFFSET: u32 = 2000;
+/// The most TSNs ahead of the cumulative TSN that are ever accepted.
+const MAX_TSN_OFFSET: u32 = 40000;
+
+/// How far past the cumulative TSN a DATA chunk may be and still be queued: enough to keep the
+/// bytes held in the receive queue within a small multiple of `max_receive_buffer_size`.
+pub(crate) fn max_tsn_offset(max_receive_buffer_size: u32) -> u32 {
+    (max_receive_buffer_size.saturating_mul(4) / AVG_CHUNK_SIZE)
+        .clamp(MIN_TSN_OFFSET, MAX_TSN_OFFSET)
 }
 
 impl Association {
@@ -383,6 +503,9 @@ impl Association {
         // min > max) and overflowed near `u32::MAX`, both reachable through
         // `EndpointConfig::max_payload_size` and MTU-derived payload budgets.
         let cwnd = mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4));
+        // pion applies the minCwnd clamp to the initial window too
+        // (association.go newAssociation: setCWND(min32(4*MTU, ...))).
+        let cwnd = cwnd.max(config.min_cwnd());
         // RFC 4960 requires an unpredictable initial TSN. SCTP remains usable without an RTC
         // crypto provider, so this deliberately uses `rand`'s thread-local CSPRNG.
         let mut tsn = random::<u32>();
@@ -390,23 +513,51 @@ impl Association {
             tsn += 1;
         }
 
+        let recv_zero_checksum = config.enable_zero_checksum();
+
         let mut this = Association {
             side,
             handshake_completed: false,
+            // Zero-checksum acceptance is a configuration property, not a negotiated
+            // one: it says what this endpoint will take, and travels in the INIT as the
+            // RFC 9653 parameter. The send side starts false and turns on only when the
+            // peer's INIT/INIT-ACK advertises the capability back.
+            recv_zero_checksum,
+            send_zero_checksum: false,
             max_receive_buffer_size: config.max_receive_buffer_size(),
+            // INIT / INIT ACK advertised the whole buffer.
+            last_advertised_credit: config.max_receive_buffer_size(),
+            rack: RackState::new(config.enable_rack()),
             max_message_size: config.max_message_size(),
             my_max_num_outbound_streams: config.max_num_outbound_streams(),
             my_max_num_inbound_streams: config.max_num_inbound_streams(),
             max_payload_size,
+            data_max_payload_size: max_payload_size,
+            local_interleaving: config.enable_interleaving(),
+            stream_scheduler: match config.stream_scheduler() {
+                StreamScheduler::RoundRobin => SchedulerKind::RoundRobin,
+                StreamScheduler::WeightedFairQueueing => SchedulerKind::WeightedFairQueueing {
+                    weights: config
+                        .stream_scheduler_weights()
+                        .iter()
+                        .map(|(&si, &w)| (si, w))
+                        .collect(),
+                },
+            },
+            max_reassembly_queue_entries: config.max_reassembly_queue_entries(),
 
-            rto_mgr: RtoManager::new(),
-            timers: TimerTable::new(config.timer_config()),
+            rto_mgr: RtoManager::new(config.rto_max_millis()),
+            timers: TimerTable::new(config.timer_config(), config.rto_max_millis()),
 
             mtu,
             cwnd,
             remote_addr,
             local_addr,
             transport_protocol: protocol,
+
+            min_cwnd: config.min_cwnd(),
+            fast_rtx_wnd: config.fast_rtx_wnd(),
+            cwnd_ca_step: config.cwnd_ca_step(),
 
             my_verification_tag: local_aid,
             my_next_tsn: tsn,
@@ -428,7 +579,12 @@ impl Association {
                 advertised_receiver_window_credit: this.max_receive_buffer_size,
                 ..Default::default()
             };
-            init.set_supported_extensions();
+            init.set_supported_extensions(this.local_interleaving);
+            if this.recv_zero_checksum {
+                init.params.push(Box::new(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                }));
+            }
 
             this.set_state(AssociationState::CookieWait);
             this.stored_init = Some(init);
@@ -438,6 +594,18 @@ impl Association {
         }
 
         this
+    }
+
+    /// pion's `setCWND`: every congestion-window write floors at the
+    /// configured `min_cwnd` (0 keeps the written value), so the window can
+    /// never drop below it — not on a T3-rtx reset, not in fast recovery, not
+    /// while growing.
+    fn set_cwnd(&mut self, cwnd: u32) {
+        self.cwnd = if cwnd < self.min_cwnd {
+            self.min_cwnd
+        } else {
+            cwnd
+        };
     }
 
     /// Returns application-facing event
@@ -521,7 +689,20 @@ impl Association {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
+        // RACK's timers are not retransmission timers: they have no backoff and no failure
+        // count, and they run ahead of T3-rtx, which they exist to beat.
+        if self.timers.get(Timer::Rack).is_some_and(|due| due <= now) {
+            self.timers.set(Timer::Rack, None);
+            self.on_rack_timeout(now);
+        }
+        if self.timers.get(Timer::Pto).is_some_and(|due| due <= now) {
+            self.timers.set(Timer::Pto, None);
+            self.on_probe_timeout(now);
+        }
         for &timer in &Timer::VALUES {
+            if matches!(timer, Timer::Rack | Timer::Pto) {
+                continue;
+            }
             let (expired, failure, n_rtos) = self.timers.is_expired(timer, now);
             if !expired {
                 continue;
@@ -561,6 +742,16 @@ impl Association {
                 }*/
 
                 if let Payload::PartialDecode(partial_decode) = transmit.message {
+                    // RFC 9653: an association that never enabled zero-checksum
+                    // acceptance must not take packets the endpoint let through on the
+                    // lenient path — dropping here is what keeps the config meaning.
+                    if partial_decode.checksum_is_zero && !self.recv_zero_checksum {
+                        warn!(
+                            "[{}] discarding zero-checksum packet: not enabled",
+                            self.side
+                        );
+                        return;
+                    }
                     debug!(
                         "[{}] recving {} bytes",
                         self.side,
@@ -584,6 +775,25 @@ impl Association {
                 }
             } //TODO:
         }
+    }
+
+    /// What the handshake negotiated, or `None` until the association is established.
+    pub fn metadata(&self) -> Option<AssociationMetadata> {
+        if self.state() != AssociationState::Established {
+            return None;
+        }
+        Some(AssociationMetadata {
+            message_interleaving_enabled: self.use_interleaving,
+            partial_reliability_mode: if self.use_iforward_tsn {
+                PartialReliabilityMode::IForwardTsn
+            } else if self.use_forward_tsn {
+                PartialReliabilityMode::ForwardTsn
+            } else {
+                PartialReliabilityMode::None
+            },
+            zero_checksum_sending_enabled: self.send_zero_checksum,
+            zero_checksum_receiving_enabled: self.recv_zero_checksum,
+        })
     }
 
     /// Returns Association statistics
@@ -654,6 +864,34 @@ impl Association {
     /// Retransmission timeout backoff does not change this estimate.
     pub fn rtt(&self) -> Duration {
         Duration::from_millis(self.rto_mgr.srtt)
+    }
+
+    /// The current congestion window, in bytes.
+    ///
+    /// Corresponds to `spinfo_cwnd` from [RFC 6458]. Zero before the association reaches
+    /// the `Established` state and the first transmission window is computed.
+    ///
+    /// [RFC 6458]: https://datatracker.ietf.org/doc/html/rfc6458#section-8.1.1
+    pub fn cwnd(&self) -> u32 {
+        self.cwnd
+    }
+
+    /// The peer's latest advertised receiver window (`a_rwnd`), in bytes.
+    ///
+    /// Corresponds to `sstat_rwnd` from [RFC 6458]. Zero until the first SACK arrives.
+    ///
+    /// [RFC 6458]: https://datatracker.ietf.org/doc/html/rfc6458#section-8.1.2
+    pub fn rwnd(&self) -> u32 {
+        self.rwnd
+    }
+
+    /// The path MTU the association transmits with, in bytes.
+    ///
+    /// This is the SCTP-level MTU — the maximum SCTP packet size — not the IP-layer MTU,
+    /// and it is already the configured/negotiated value: it accounts for the space taken by
+    /// the common SCTP header and a DATA chunk header.
+    pub fn mtu(&self) -> u32 {
+        self.mtu
     }
 
     /// The local IP address which was used when the peer established
@@ -978,8 +1216,15 @@ impl Association {
 
     #[allow(clippy::borrowed_box)]
     fn handle_chunk(&mut self, p: &Packet, chunk: &Box<dyn Chunk>, now: Instant) -> Result<()> {
-        chunk.check()?;
         let chunk_any = chunk.as_any();
+        if let Err(err) = chunk.check() {
+            // A malformed I-FORWARD-TSN is the peer's protocol violation, and the peer is told.
+            if chunk_any.is::<ChunkIForwardTsn>() {
+                self.abort_protocol_violation(&err.to_string());
+                return Ok(());
+            }
+            return Err(err);
+        }
         let packets = if let Some(c) = chunk_any.downcast_ref::<ChunkInit>() {
             if c.is_ack {
                 self.handle_init_ack(p, c, now)?
@@ -1024,6 +1269,8 @@ impl Association {
             self.handle_reconfig(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkForwardTsn>() {
             self.handle_forward_tsn(c)?
+        } else if let Some(c) = chunk_any.downcast_ref::<ChunkIForwardTsn>() {
+            self.handle_i_forward_tsn(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkShutdown>() {
             self.handle_shutdown(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkShutdownAck>() {
@@ -1072,6 +1319,18 @@ impl Association {
         self.source_port = p.common_header.destination_port;
         self.destination_port = p.common_header.source_port;
 
+        // RFC 9653: the peer advertising the DTLS error-detection method is permission
+        // for *our* outgoing packets to drop the CRC-32C from here on.
+        self.send_zero_checksum = i.params.iter().any(|param| {
+            matches!(
+                param.as_any().downcast_ref::<ParamZeroChecksumAcceptable>(),
+                Some(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                    ..
+                })
+            )
+        });
+
         // 13.2 This is the last TSN received in sequence.  This value
         // is set initially by taking the peer's initial TSN,
         // received in the INIT or INIT ACK chunk, and
@@ -1092,19 +1351,9 @@ impl Association {
         debug!("[{}] initial rwnd={}", self.side, self.rwnd);
         self.ssthresh = self.rwnd;
 
-        for param in &i.params {
-            if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
-                for t in &v.chunk_types {
-                    if *t == CT_FORWARD_TSN {
-                        debug!("[{}] use ForwardTSN (on init)", self.side);
-                        self.use_forward_tsn = true;
-                    }
-                }
-            }
-        }
-        if !self.use_forward_tsn {
-            warn!("[{}] not using ForwardTSN (on init)", self.side);
-        }
+        self.set_peer_extensions(&i.params);
+        self.update_interleaving_state()?;
+        self.log_negotiated_extensions("init");
 
         let mut outbound = Packet {
             common_header: CommonHeader {
@@ -1133,7 +1382,12 @@ impl Association {
             init_ack.params = vec![Box::new(my_cookie.clone())];
         }
 
-        init_ack.set_supported_extensions();
+        init_ack.set_supported_extensions(self.local_interleaving);
+        if self.recv_zero_checksum {
+            init_ack.params.push(Box::new(ParamZeroChecksumAcceptable {
+                edmid: DTLS_ERROR_DETECTION_METHOD,
+            }));
+        }
 
         outbound.chunks = vec![Box::new(init_ack)];
 
@@ -1163,6 +1417,18 @@ impl Association {
         self.my_max_num_outbound_streams =
             std::cmp::min(i.num_outbound_streams, self.my_max_num_outbound_streams);
         self.peer_verification_tag = i.initiate_tag;
+
+        // RFC 9653: see the mirror note in handle_init.
+        self.send_zero_checksum = i.params.iter().any(|param| {
+            matches!(
+                param.as_any().downcast_ref::<ParamZeroChecksumAcceptable>(),
+                Some(ParamZeroChecksumAcceptable {
+                    edmid: DTLS_ERROR_DETECTION_METHOD,
+                    ..
+                })
+            )
+        });
+
         self.peer_last_tsn = if i.initial_tsn == 0 {
             u32::MAX
         } else {
@@ -1198,24 +1464,11 @@ impl Association {
         for param in &i.params {
             if let Some(v) = param.as_any().downcast_ref::<ParamStateCookie>() {
                 cookie_param = Some(v);
-            } else if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
-                for t in &v.chunk_types {
-                    if *t == CT_FORWARD_TSN {
-                        debug!("[{}] use ForwardTSN (on initAck)", self.side);
-                        self.use_forward_tsn = true;
-                    }
-                }
-            } else if param
-                .as_any()
-                .downcast_ref::<ParamForwardTsnSupported>()
-                .is_some()
-            {
-                self.use_forward_tsn = true;
             }
         }
-        if !self.use_forward_tsn {
-            warn!("[{}] not using ForwardTSN (on initAck)", self.side);
-        }
+        self.set_peer_extensions(&i.params);
+        self.update_interleaving_state()?;
+        self.log_negotiated_extensions("initAck");
 
         if let Some(v) = cookie_param {
             self.stored_cookie_echo = Some(ChunkCookieEcho {
@@ -1233,6 +1486,95 @@ impl Association {
         } else {
             Err(Error::ErrInitAckNoCookie)
         }
+    }
+
+    /// Remember which extensions the peer's INIT / INIT ACK offered.
+    fn set_peer_extensions(&mut self, params: &[Box<dyn Param>]) {
+        self.peer_forward_tsn = false;
+        self.peer_interleaving = false;
+        self.peer_iforward_tsn = false;
+        for param in params {
+            if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
+                for t in &v.chunk_types {
+                    match *t {
+                        CT_FORWARD_TSN => self.peer_forward_tsn = true,
+                        CT_IDATA => self.peer_interleaving = true,
+                        CT_IFORWARD_TSN => self.peer_iforward_tsn = true,
+                        _ => {}
+                    }
+                }
+            } else if param
+                .as_any()
+                .downcast_ref::<ParamForwardTsnSupported>()
+                .is_some()
+            {
+                self.peer_forward_tsn = true;
+            }
+        }
+    }
+
+    /// Settle which data and forward-TSN chunks this association speaks. User message
+    /// interleaving (RFC 8260) is used only if both sides offered it; it then replaces both DATA
+    /// and FORWARD-TSN, and costs four bytes of payload per chunk for the bigger header.
+    fn update_interleaving_state(&mut self) -> Result<()> {
+        let use_interleaving = self.local_interleaving && self.peer_interleaving;
+        if use_interleaving != self.use_interleaving {
+            self.pending_queue
+                .set_interleaving(use_interleaving.then(|| self.stream_scheduler.clone()))?;
+        }
+        self.use_interleaving = use_interleaving;
+        self.max_payload_size = if use_interleaving {
+            // The larger fixed header comes out of the payload.
+            self.data_max_payload_size.saturating_sub(4)
+        } else {
+            self.data_max_payload_size
+        };
+        for s in self.streams.values_mut() {
+            s.max_payload_size = self.max_payload_size;
+            s.use_idata = use_interleaving;
+        }
+
+        if use_interleaving {
+            self.use_iforward_tsn = self.peer_iforward_tsn && self.local_interleaving;
+            self.use_forward_tsn = false;
+        } else {
+            self.use_iforward_tsn = false;
+            self.use_forward_tsn = self.peer_forward_tsn;
+        }
+        Ok(())
+    }
+
+    fn log_negotiated_extensions(&self, stage: &str) {
+        if self.use_interleaving {
+            debug!("[{}] use interleaving (on {})", self.side, stage);
+            if !self.use_iforward_tsn {
+                warn!("[{}] not using I-ForwardTSN (on {})", self.side, stage);
+            }
+        } else if self.use_forward_tsn {
+            debug!("[{}] use ForwardTSN (on {})", self.side, stage);
+        } else {
+            warn!("[{}] not using ForwardTSN (on {})", self.side, stage);
+        }
+    }
+
+    /// Whether messages can be abandoned: the peer understands a forward-TSN chunk.
+    fn partial_reliability_enabled(&self) -> bool {
+        self.use_forward_tsn || self.use_iforward_tsn
+    }
+
+    /// Tear the association down for a protocol violation by the peer, telling it why.
+    fn abort_protocol_violation(&mut self, reason: &str) {
+        warn!("[{}] protocol violation: {}", self.side, reason);
+        let abort = ChunkAbort {
+            error_causes: vec![ErrorCause {
+                code: PROTOCOL_VIOLATION,
+                raw: Bytes::copy_from_slice(reason.as_bytes()),
+            }],
+        };
+        let packet = self.create_packet(vec![Box::new(abort)]);
+        self.control_queue.push_back(packet);
+        self.awake_write_loop();
+        let _ = self.close(AssociationError::TransportError);
     }
 
     fn handle_heartbeat(&self, c: &ChunkHeartbeat) -> Result<Vec<Packet>> {
@@ -1286,6 +1628,7 @@ impl Association {
                     self.timers.stop(Timer::T1Cookie);
                     self.stored_cookie_echo = None;
 
+                    self.update_interleaving_state()?;
                     self.events.push_back(Event::Connected);
                     self.set_state(AssociationState::Established);
                     self.handshake_completed = true;
@@ -1321,6 +1664,7 @@ impl Association {
         self.timers.stop(Timer::T1Cookie);
         self.stored_cookie_echo = None;
 
+        self.update_interleaving_state()?;
         self.events.push_back(Event::Connected);
         self.set_state(AssociationState::Established);
         self.handshake_completed = true;
@@ -1329,6 +1673,30 @@ impl Association {
     }
 
     fn handle_data(&mut self, d: &ChunkPayloadData) -> Result<Vec<Packet>> {
+        // User data is taken only while it can still be delivered: not before the handshake
+        // completed, and not once the peer announced the end of its data (SHUTDOWN) or this side
+        // sent SHUTDOWN ACK. A retransmission of what was already acknowledged is not lost by
+        // ignoring it, and anything else is the peer's to resend.
+        if !matches!(
+            self.state(),
+            AssociationState::Established
+                | AssociationState::ShutdownPending
+                | AssociationState::ShutdownSent
+        ) {
+            return Ok(vec![]);
+        }
+
+        // RFC 8260 Sec 3: once user message interleaving is negotiated every user message
+        // travels as I-DATA, and without it none may.
+        if d.idata != self.use_interleaving {
+            self.abort_protocol_violation(if d.idata {
+                "received I-DATA without interleaving negotiated"
+            } else {
+                "received DATA with interleaving negotiated"
+            });
+            return Ok(vec![]);
+        }
+
         debug!(
             "[{}] DATA: tsn={} peer_last_tsn={} immediateSack={} len={}, unordered={}",
             self.side,
@@ -1340,7 +1708,13 @@ impl Association {
         );
         self.stats.inc_datas();
 
-        let can_push = self.payload_queue.can_push(d, self.peer_last_tsn);
+        // A chunk this far ahead of the cumulative TSN is either an attack or hopelessly lost
+        // anyway: queueing it would let a peer grow the receive queue (and the cost of every
+        // insert into it) far beyond what `max_receive_buffer_size` is meant to allow. Dropped
+        // like any chunk the receiver cannot take; the sender retransmits what matters.
+        let within_tsn_offset =
+            d.tsn.wrapping_sub(self.peer_last_tsn) <= max_tsn_offset(self.max_receive_buffer_size);
+        let can_push = within_tsn_offset && self.payload_queue.can_push(d, self.peer_last_tsn);
         let mut stream_handle_data = false;
         if can_push {
             if self.get_or_create_stream(d.stream_identifier).is_some() {
@@ -1408,11 +1782,22 @@ impl Association {
         let immediate_sack = d.immediate_sack;
 
         if stream_handle_data && let Some(s) = self.streams.get_mut(&d.stream_identifier) {
+            self.stats.add_bytes_received(d.user_data.len());
             self.events.push_back(Event::DatagramReceived);
-            if s.handle_data(d) && s.reassembly_queue.is_readable() {
-                self.events.push_back(Event::Stream(StreamEvent::Readable {
-                    id: s.stream_identifier,
-                }));
+            match s.handle_data(d) {
+                Ok(complete) => {
+                    if complete && s.reassembly_queue.is_readable() {
+                        self.events.push_back(Event::Stream(StreamEvent::Readable {
+                            id: s.stream_identifier,
+                        }));
+                    }
+                }
+                Err(err) => {
+                    // The stream is holding more than the configured cap allows.
+                    let reason = err.to_string();
+                    self.abort_protocol_violation(&reason);
+                    return Ok(vec![]);
+                }
             }
         }
 
@@ -1488,8 +1873,9 @@ impl Association {
         }
 
         self.process_fast_retransmission(d.cumulative_tsn_ack, htna, cum_tsn_ack_point_advanced)?;
+        self.rack_after_sack(d, now);
 
-        if self.use_forward_tsn {
+        if self.partial_reliability_enabled() {
             // RFC 3758 Sec 3.5 C1
             if sna32lt(
                 self.advanced_peer_tsn_ack_point,
@@ -1499,6 +1885,7 @@ impl Association {
                 // Window reset: everything previously tracked is now at/below
                 // the cumulative ack point, so start the stream map fresh.
                 self.fwd_tsn_stream_map.clear();
+                self.ifwd_tsn_stream_map.clear();
             }
 
             self.advance_peer_ack_point();
@@ -1528,6 +1915,11 @@ impl Association {
 
     fn handle_forward_tsn(&mut self, c: &ChunkForwardTsn) -> Result<Vec<Packet>> {
         trace!("[{}] FwdTSN: {}", self.side, c);
+
+        if self.use_interleaving {
+            self.abort_protocol_violation("received FORWARD-TSN with interleaving enabled");
+            return Ok(vec![]);
+        }
 
         if !self.use_forward_tsn {
             warn!("[{}] received FwdTSN but not enabled", self.side);
@@ -1578,10 +1970,7 @@ impl Association {
         //   chunk,
 
         // Advance peer_last_tsn
-        while sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
-            self.payload_queue.pop(self.peer_last_tsn + 1); // may not exist
-            self.peer_last_tsn += 1;
-        }
+        self.advance_peer_last_tsn(c.new_cumulative_tsn);
 
         // Report new peer_last_tsn value and abandoned largest SSN value to
         // corresponding streams so that the abandoned chunks can be removed
@@ -1607,6 +1996,62 @@ impl Association {
                 self.events.push_back(Event::Stream(StreamEvent::Readable {
                     id: s.stream_identifier,
                 }));
+            }
+        }
+
+        self.handle_peer_last_tsn_and_acknowledgement(false)
+    }
+
+    /// Moves the cumulative TSN point to `new_cumulative_tsn` (which is ahead of it) and drops
+    /// the queued chunks it now covers. The peer chooses how far ahead that is, so this must not
+    /// walk the gap TSN by TSN.
+    fn advance_peer_last_tsn(&mut self, new_cumulative_tsn: u32) {
+        // Exactly 2^31 ahead is the RFC 1982 ambiguity point: not "ahead", so it moves nothing.
+        if sna32lt(self.peer_last_tsn, new_cumulative_tsn) {
+            self.payload_queue
+                .advance_cumulative_tsn(new_cumulative_tsn);
+            self.peer_last_tsn = new_cumulative_tsn;
+        }
+    }
+
+    fn handle_i_forward_tsn(&mut self, c: &ChunkIForwardTsn) -> Result<Vec<Packet>> {
+        trace!("[{}] I-FwdTSN: {}", self.side, c);
+
+        if !self.use_iforward_tsn {
+            self.abort_protocol_violation("received I-FORWARD-TSN without support");
+            return Ok(vec![]);
+        }
+
+        trace!(
+            "[{}] should send ack? newCumTSN={} peer_last_tsn={}",
+            self.side, c.new_cumulative_tsn, self.peer_last_tsn
+        );
+        if sna32lte(c.new_cumulative_tsn, self.peer_last_tsn) {
+            trace!("[{}] sending ack on I-Forward TSN", self.side);
+            self.ack_state = AckState::Immediate;
+            self.timers.stop(Timer::Ack);
+            self.awake_write_loop();
+            return Ok(vec![]);
+        }
+
+        // Same TSN handling as FORWARD-TSN (RFC 3758 Sec 3.6): move the cumulative TSN point.
+        self.advance_peer_last_tsn(c.new_cumulative_tsn);
+
+        // Unlike FORWARD-TSN, the chunk names the skipped messages of ordered and of
+        // unordered streams alike, so each stream is told only what concerns it. A stream
+        // named twice is skipped to the later message.
+        for forwarded in normalize_i_forward_tsn_streams(&c.streams).iter() {
+            if let Some(s) = self.streams.get_mut(&forwarded.identifier) {
+                if forwarded.unordered {
+                    s.handle_forward_tsn_for_unordered_mid(forwarded.message_identifier);
+                } else {
+                    s.handle_forward_tsn_for_ordered_mid(forwarded.message_identifier);
+                }
+                if s.reassembly_queue.is_readable() {
+                    self.events.push_back(Event::Stream(StreamEvent::Readable {
+                        id: s.stream_identifier,
+                    }));
+                }
             }
         }
 
@@ -1675,8 +2120,12 @@ impl Association {
         // Meaning, if peer_last_tsn+1 points to a chunk that is received,
         // advance peer_last_tsn until peer_last_tsn+1 points to unreceived chunk.
         //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
-        while self.payload_queue.pop(self.peer_last_tsn + 1).is_some() {
-            self.peer_last_tsn += 1;
+        while self
+            .payload_queue
+            .pop(self.peer_last_tsn.wrapping_add(1))
+            .is_some()
+        {
+            self.peer_last_tsn = self.peer_last_tsn.wrapping_add(1);
             //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
 
             let rst_reqs: Vec<ParamOutgoingResetRequest> =
@@ -1759,8 +2208,14 @@ impl Association {
         //log::debug!("[{}] i={} d={}", self.name, i, d.cumulative_tsn_ack);
         while sna32lte(i, d.cumulative_tsn_ack) {
             if let Some(mut c) = self.inflight_queue.pop(i) {
+                self.rack.forget(c.tsn);
                 if c.acknowledge() {
                     newly_acked_data |= c.nsent > 0;
+                    if c.nsent == 1
+                        && let Some(since) = c.since
+                    {
+                        self.rack.on_delivered(c.tsn, since, now);
+                    }
 
                     let n_bytes_acked = c.user_data.len() as i64;
                     total_bytes_acked += n_bytes_acked;
@@ -1826,6 +2281,12 @@ impl Association {
 
                 if let Some(c) = self.inflight_queue.get(tsn) {
                     if newly_acknowledged {
+                        self.rack.forget(tsn);
+                        if c.nsent == 1
+                            && let Some(since) = c.since
+                        {
+                            self.rack.on_delivered(tsn, since, now);
+                        }
                         newly_acked_data |= c.nsent > 0;
                         total_bytes_acked += n_bytes_acked;
                         if self.is_current_stream_data(c) {
@@ -1902,17 +2363,18 @@ impl Association {
         if self.cwnd <= self.ssthresh {
             // RFC 4096, sec 7.2.1.  Slow-Start
             //   o  When cwnd is less than or equal to ssthresh, an SCTP endpoint MUST
-            //		use the slow-start algorithm to increase cwnd only if the current
+            //          use the slow-start algorithm to increase cwnd only if the current
             //      congestion window is being fully utilized, an incoming SACK
             //      advances the Cumulative TSN Ack Point, and the data sender is not
             //      in Fast Recovery.  Only when these three conditions are met can
             //      the cwnd be increased; otherwise, the cwnd MUST not be increased.
-            //		If these conditions are met, then cwnd MUST be increased by, at
+            //          If these conditions are met, then cwnd MUST be increased by, at
             //      most, the lesser of 1) the total size of the previously
             //      outstanding DATA chunk(s) acknowledged, and 2) the destination's
             //      path MTU.
             if !self.in_fast_recovery && !self.pending_queue.is_empty() {
-                self.cwnd += std::cmp::min(total_bytes_acked as u32, self.cwnd); // TCP way
+                let grown = self.cwnd + std::cmp::min(total_bytes_acked as u32, self.cwnd); // TCP way
+                self.set_cwnd(grown);
                 // self.cwnd += min32(uint32(total_bytes_acked), self.mtu) // SCTP way (slow)
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} acked={} (SS)",
@@ -1945,7 +2407,10 @@ impl Association {
             //      reset partial_bytes_acked to (partial_bytes_acked - cwnd).
             if self.partial_bytes_acked >= self.cwnd && !self.pending_queue.is_empty() {
                 self.partial_bytes_acked -= self.cwnd;
-                self.cwnd += self.mtu;
+                // pion's SetSCTPCwndCAStep: the growth step is max(MTU, step).
+                let step = self.mtu.max(self.cwnd_ca_step);
+                let grown = self.cwnd + step;
+                self.set_cwnd(grown);
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} acked={} (CA)",
                     self.side, self.cwnd, self.ssthresh, total_bytes_acked
@@ -1990,7 +2455,7 @@ impl Association {
                             self.in_fast_recovery = true;
                             self.fast_recover_exit_point = htna;
                             self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                            self.cwnd = self.ssthresh;
+                            self.set_cwnd(self.ssthresh);
                             self.partial_bytes_acked = 0;
                             self.will_retransmit_fast = true;
 
@@ -2117,7 +2582,7 @@ impl Association {
         // reconfig_response_sequence_number.
         if !sis_to_reset.is_empty() {
             let rsn = self.generate_next_rsn();
-            let tsn = self.my_next_tsn - 1;
+            let tsn = self.my_next_tsn.wrapping_sub(1);
 
             let c = ChunkReconfig {
                 param_a: Some(Box::new(ParamOutgoingResetRequest {
@@ -2179,7 +2644,14 @@ impl Association {
         let mut buf = BytesMut::with_capacity(
             COMMON_HEADER_SIZE as usize + CHUNK_HEADER_SIZE + chunk.value_length() + 3,
         );
-        Packet::write_framed(&common_header, std::iter::once(chunk), &mut buf)?;
+        // SACK / FORWARD-TSN never carry a chunk that mandates a checksum, so the
+        // association's send flag decides directly.
+        Packet::write_framed_with_checksum(
+            &common_header,
+            std::iter::once(chunk),
+            &mut buf,
+            self.send_zero_checksum,
+        )?;
         Ok(buf.freeze())
     }
 
@@ -2197,6 +2669,9 @@ impl Association {
             default_payload_type,
         );
 
+        s.use_idata = self.use_interleaving;
+        s.reassembly_queue = std::mem::take(&mut s.reassembly_queue)
+            .with_max_entries(self.max_reassembly_queue_entries);
         s.generation = self.next_stream_generation;
         self.next_stream_generation = self.next_stream_generation.wrapping_add(1);
 
@@ -2243,6 +2718,33 @@ impl Association {
             .any(|s| s.reassembly_queue.is_readable())
     }
 
+    /// Called when the application has taken data out of a receive queue.
+    ///
+    /// A sender that has been told the window is (nearly) closed stops, and a stopped sender
+    /// has nothing left to elicit a SACK from us: it learns the window reopened only from its
+    /// next zero-window probe, which RFC 9260 §6.3 spaces by the retransmission timeout — one
+    /// second at minimum. That stall hits exactly when the receiver is slower than the sender,
+    /// including at the start of every transfer while the application's reader spins up.
+    /// So when the window was advertised below two MTUs and is now at least that wide again,
+    /// report it straight away (RFC 9260 §6.2: a receiver SHOULD send a SACK when its window
+    /// opens). Requiring two MTUs rather than any growth avoids announcing a sliver that the
+    /// sender could not use (silly-window syndrome).
+    pub(crate) fn note_receive_buffer_drained(&mut self) {
+        let usable = self
+            .mtu
+            .saturating_mul(2)
+            .min(self.max_receive_buffer_size / 2);
+        if self.last_advertised_credit >= usable
+            || self.get_my_receiver_window_credit() < usable
+            || self.ack_state == AckState::Immediate
+        {
+            return;
+        }
+        self.ack_state = AckState::Immediate;
+        self.timers.stop(Timer::Ack);
+        self.awake_write_loop();
+    }
+
     pub(crate) fn get_my_receiver_window_credit(&self) -> u32 {
         let mut bytes_queued = 0;
         for s in self.streams.values() {
@@ -2259,7 +2761,7 @@ impl Association {
 
         if !self.control_queue.is_empty() {
             for p in self.control_queue.drain(..) {
-                if let Ok(raw) = p.marshal() {
+                if let Ok(raw) = p.marshal_opt(self.send_zero_checksum) {
                     raw_packets.push(raw);
                 } else {
                     warn!("[{}] failed to serialize a control packet", self.side);
@@ -2341,6 +2843,7 @@ impl Association {
             trace!("[{}] T3-rtx timer start (pt1)", self.side);
             self.timers
                 .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
+            self.schedule_probe(now);
 
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
@@ -2368,12 +2871,12 @@ impl Association {
 
             if !sis_to_reset.is_empty() {
                 let rsn = self.generate_next_rsn();
-                let tsn = self.my_next_tsn - 1;
+                let tsn = self.my_next_tsn.wrapping_sub(1);
                 debug!(
                     "[{}] sending RECONFIG: rsn={} tsn={} streams={:?}",
                     self.side,
                     rsn,
-                    self.my_next_tsn - 1,
+                    self.my_next_tsn.wrapping_sub(1),
                     sis_to_reset
                 );
 
@@ -2418,6 +2921,9 @@ impl Association {
 
             let mut to_fast_retrans: Vec<ChunkPayloadData> = vec![];
             let mut fast_retrans_size = COMMON_HEADER_SIZE;
+            // pion's SetSCTPFastRtxWnd: the bundling budget for a fast-retransmit
+            // flight is max(MTU, fastRtxWnd) bytes.
+            let fast_rtx_wnd = self.mtu.max(self.fast_rtx_wnd);
 
             let mut i = 0;
             loop {
@@ -2440,10 +2946,7 @@ impl Association {
                             fast_retrans_size = COMMON_HEADER_SIZE
                                 + to_fast_retrans
                                     .iter()
-                                    .map(|c| {
-                                        (DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32)
-                                            .next_multiple_of(4)
-                                    })
+                                    .map(|c| c.wire_size() as u32)
                                     .sum::<u32>();
                             i += 1;
                             continue;
@@ -2466,14 +2969,13 @@ impl Association {
                     //      Retransmit those K DATA chunks in a single packet.  When a Fast
                     //      Retransmit is being performed, the sender SHOULD ignore the value
                     //      of cwnd and SHOULD NOT delay retransmission for this single
-                    //		packet.
+                    //          packet.
 
                     // Padded wire size, the same accounting
                     // bundle_data_chunks_into_packets uses for bundle
                     // decisions.
-                    let data_chunk_size =
-                        (DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32).next_multiple_of(4);
-                    if self.mtu < fast_retrans_size + data_chunk_size {
+                    let data_chunk_size = c.wire_size() as u32;
+                    if fast_rtx_wnd < fast_retrans_size + data_chunk_size {
                         break;
                     }
 
@@ -2532,8 +3034,12 @@ impl Association {
                 self.advanced_peer_tsn_ack_point,
                 self.cumulative_tsn_ack_point,
             ) {
-                let fwd_tsn = self.create_forward_tsn();
-                if let Ok(raw) = self.marshal_control_chunk(&fwd_tsn) {
+                let marshaled = if self.use_iforward_tsn {
+                    self.marshal_control_chunk(&self.create_i_forward_tsn())
+                } else {
+                    self.marshal_control_chunk(&self.create_forward_tsn())
+                };
+                if let Ok(raw) = marshaled {
                     raw_packets.push(raw);
                 } else {
                     warn!("[{}] failed to serialize a Forward TSN packet", self.side);
@@ -2712,8 +3218,13 @@ impl Association {
                 break;
             }
             let (unordered, si, ssn) = (c.unordered, c.stream_identifier, c.stream_sequence_number);
+            let (idata, mid) = (c.idata, c.message_identifier);
             self.advanced_peer_tsn_ack_point = tsn;
-            self.note_abandoned_for_forward_tsn(unordered, si, ssn);
+            if idata {
+                self.note_abandoned_for_i_forward_tsn(unordered, si, mid);
+            } else {
+                self.note_abandoned_for_forward_tsn(unordered, si, ssn);
+            }
             tsn = tsn.wrapping_add(1);
         }
         if sna32gt(
@@ -2723,11 +3234,12 @@ impl Association {
             self.will_send_forward_tsn = true;
         } else {
             self.fwd_tsn_stream_map.clear();
+            self.ifwd_tsn_stream_map.clear();
         }
     }
 
     fn timed_data_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
-        self.use_forward_tsn
+        self.partial_reliability_enabled()
             && c.reliability
                 .deadline()
                 .is_some_and(|deadline| now >= deadline)
@@ -2747,7 +3259,7 @@ impl Association {
         now: Instant,
         is_candidate: bool,
     ) -> bool {
-        if !self.use_forward_tsn {
+        if !self.partial_reliability_enabled() {
             return false;
         }
         match c.reliability {
@@ -3070,8 +3582,7 @@ impl Association {
             // deciding on raw payload sizes admitted bundles that marshalled
             // past the MTU (e.g. payloads of 1147 + 16 pass a payload-only
             // check at an MTU of 1191 but serialize to a 1208-byte packet).
-            let wire =
-                (DATA_CHUNK_HEADER_SIZE as usize + chunk.user_data.len()).next_multiple_of(4);
+            let wire = chunk.wire_size();
             // Close the current bundle before a chunk whose padded wire size
             // would push the datagram past the MTU.
             if bundle_len + wire > self.mtu as usize && i > bundle_start {
@@ -3088,10 +3599,11 @@ impl Association {
         // Second pass: marshal each datagram into the shared buffer.
         let mut buf = BytesMut::with_capacity(total_len);
         for (start, end) in bundles {
-            match Packet::write_framed(
+            match Packet::write_framed_with_checksum(
                 &common_header,
                 chunks[start..end].iter().map(|c| c as &dyn Chunk),
                 &mut buf,
+                self.send_zero_checksum,
             ) {
                 Ok(_) => {
                     let plen = buf.len();
@@ -3115,14 +3627,16 @@ impl Association {
     /// generate_next_rsn returns the my_next_rsn and increases it. The caller should hold the lock.
     fn generate_next_rsn(&mut self) -> u32 {
         let rsn = self.my_next_rsn;
-        self.my_next_rsn += 1;
+        self.my_next_rsn = self.my_next_rsn.wrapping_add(1);
         rsn
     }
 
     fn create_selective_ack_chunk(&mut self) -> ChunkSelectiveAck {
+        let credit = self.get_my_receiver_window_credit();
+        self.last_advertised_credit = credit;
         ChunkSelectiveAck {
             cumulative_tsn_ack: self.peer_last_tsn,
-            advertised_receiver_window_credit: self.get_my_receiver_window_credit(),
+            advertised_receiver_window_credit: credit,
             gap_ack_blocks: self.payload_queue.get_gap_ack_blocks(self.peer_last_tsn),
             duplicate_tsn: self.payload_queue.pop_duplicates(),
         }
@@ -3155,12 +3669,26 @@ impl Association {
             .or_insert(ssn);
     }
 
+    /// The I-FORWARD-TSN twin of [`note_abandoned_for_forward_tsn`](Self::note_abandoned_for_forward_tsn):
+    /// keeps the greatest abandoned message identifier per (stream, unordered). Message
+    /// identifiers are 32-bit, so the serial-number compare is sound for any realistic window.
+    fn note_abandoned_for_i_forward_tsn(&mut self, unordered: bool, si: u16, mid: u32) {
+        self.ifwd_tsn_stream_map
+            .entry((si, unordered))
+            .and_modify(|cur| {
+                if sna32lt(*cur, mid) {
+                    *cur = mid;
+                }
+            })
+            .or_insert(mid);
+    }
+
     /// Test-only observer for the incremental forward-TSN stream map, so the
     /// endpoint tests can assert it is cleared once the forward-TSN window
     /// closes (the C1/C3 clear paths, which the unit tests can't reach).
     #[cfg(test)]
     pub(crate) fn fwd_tsn_stream_map_is_empty(&self) -> bool {
-        self.fwd_tsn_stream_map.is_empty()
+        self.fwd_tsn_stream_map.is_empty() && self.ifwd_tsn_stream_map.is_empty()
     }
 
     /// create_forward_tsn generates ForwardTSN chunk.
@@ -3195,6 +3723,34 @@ impl Association {
         fwd_tsn
     }
 
+    /// create_i_forward_tsn generates the I-FORWARD-TSN chunk (RFC 8260 Sec 2.3.1), the
+    /// counterpart of [`create_forward_tsn`](Self::create_forward_tsn) once interleaving is
+    /// negotiated. It names, for each stream and for ordered and unordered messages
+    /// separately, the greatest message identifier abandoned in the forward-TSN window.
+    fn create_i_forward_tsn(&self) -> ChunkIForwardTsn {
+        let mut streams: Vec<ChunkIForwardTsnStream> = self
+            .ifwd_tsn_stream_map
+            .iter()
+            .map(
+                |(&(identifier, unordered), &message_identifier)| ChunkIForwardTsnStream {
+                    identifier,
+                    unordered,
+                    message_identifier,
+                },
+            )
+            .collect();
+        // The map's order is arbitrary; a stable one keeps the chunk reproducible.
+        streams.sort_unstable_by_key(|s| (s.identifier, s.unordered));
+        trace!(
+            "[{}] building i_fwd_tsn: newCumulativeTSN={} cumTSN={} streams={:?}",
+            self.side, self.advanced_peer_tsn_ack_point, self.cumulative_tsn_ack_point, streams
+        );
+        ChunkIForwardTsn {
+            new_cumulative_tsn: self.advanced_peer_tsn_ack_point,
+            streams,
+        }
+    }
+
     /// Move the chunk peeked with self.pending_queue.peek() to the inflight_queue.
     fn move_pending_data_chunk_to_inflight_queue(
         &mut self,
@@ -3213,7 +3769,7 @@ impl Association {
             trace!(
                 "[{}] sending ppi={} tsn={} ssn={} sent={} len={} ({},{})",
                 self.side,
-                c.payload_type as u32,
+                c.payload_type.0,
                 c.tsn,
                 c.stream_sequence_number,
                 c.nsent,
@@ -3223,6 +3779,7 @@ impl Association {
             );
 
             self.inflight_queue.push_no_check(c.clone());
+            self.rack_on_first_send(c.tsn);
 
             Some(c)
         } else {
@@ -3271,6 +3828,7 @@ impl Association {
     pub(crate) fn send_payload_data(&mut self, id: MessageId, mut chunks: Vec<ChunkPayloadData>) {
         for c in &mut chunks {
             c.message_id = Some(id);
+            self.stats.add_bytes_sent(c.user_data.len());
         }
         self.pending_queue.push_message(chunks);
 
@@ -3365,7 +3923,7 @@ impl Association {
                 //      cwnd = 1*MTU
 
                 self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                self.cwnd = self.mtu;
+                self.set_cwnd(self.mtu);
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} inflight={} (RTO)",
                     self.side,
@@ -3378,7 +3936,7 @@ impl Association {
                 //  A5) Any time the T3-rtx timer expires, on any destination, the sender
                 //  SHOULD try to advance the "Advanced.Peer.Ack.Point" by following
                 //  the procedures outlined in C2 - C5.
-                if self.use_forward_tsn {
+                if self.partial_reliability_enabled() {
                     self.advance_peer_ack_point();
                 }
 

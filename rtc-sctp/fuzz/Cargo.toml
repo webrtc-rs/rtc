@@ -80,6 +80,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "chunk_chunk_i_forward_tsn_unmarshal"
+path = "fuzz_targets/chunk_chunk_i_forward_tsn_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "chunk_chunk_forward_tsn_stream_unmarshal"
 path = "fuzz_targets/chunk_chunk_forward_tsn_stream_unmarshal.rs"
 test = false

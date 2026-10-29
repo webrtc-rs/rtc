@@ -3,6 +3,7 @@ name = "rtc-datachannel"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC DataChannel in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-datachannel"
@@ -20,5 +21,6 @@ bytes.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 env_logger.workspace = true
 chrono.workspace = true

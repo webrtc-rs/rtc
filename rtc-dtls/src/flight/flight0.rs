@@ -1,4 +1,5 @@
 use super::flight2::*;
+use super::flight4::Flight4;
 use super::*;
 use crate::config::*;
 use crate::conn::*;
@@ -69,6 +70,11 @@ impl Flight for Flight0 {
             }
 
             state.remote_random = client_hello.random.clone();
+            state.peer_supported_protocols.clear();
+            // RFC 5746 §3.6: only a client that signalled secure renegotiation is answered in kind.
+            state.peer_renegotiation_info = client_hello
+                .cipher_suites
+                .contains(&CipherSuiteId::Tls_Empty_Renegotiation_Info_Scsv);
 
             if let Ok(id) =
                 find_matching_cipher_suite(&client_hello.cipher_suites, &cfg.local_cipher_suites)
@@ -111,9 +117,10 @@ impl Flight for Flight0 {
                         }
                     }
                     Extension::UseSrtp(e) => {
+                        // The server's preference decides (RFC 5764 §4.1.1), as in pion.
                         if let Ok(profile) = find_matching_srtp_profile(
-                            &e.protection_profiles,
                             &cfg.local_srtp_protection_profiles,
+                            &e.protection_profiles,
                         ) {
                             state.srtp_protection_profile = profile;
                         } else {
@@ -126,6 +133,12 @@ impl Flight for Flight0 {
                             ));
                         }
                     }
+                    Extension::Alpn(e) => {
+                        state.peer_supported_protocols.clone_from(&e.protocols);
+                    }
+                    Extension::RenegotiationInfo(_) => {
+                        state.peer_renegotiation_info = true;
+                    }
                     Extension::UseExtendedMasterSecret(_)
                         if cfg.extended_master_secret != ExtendedMasterSecretType::Disable =>
                     {
@@ -133,6 +146,10 @@ impl Flight for Flight0 {
                     }
                     Extension::ServerName(e) => {
                         state.server_name.clone_from(&e.server_name); // remote server name
+                    }
+                    Extension::SignatureAlgorithmsCert(e) => {
+                        // Retained for certificate-signature validation, as in pion.
+                        state.remote_cert_signature_schemes = e.signature_hash_algorithms.clone();
                     }
                     _ => {}
                 }
@@ -166,6 +183,17 @@ impl Flight for Flight0 {
                         ));
                     }
                 };
+            }
+
+            // Select the certificate while negotiating the hello, as pion does, so retransmits
+            // reuse it and `get_certificate` sees the hello it answers.
+            if let Err((alert, err)) = negotiate_server_certificate(state, cfg, client_hello) {
+                return Err((alert, err));
+            }
+
+            // With the cookie exchange skipped, the hello is answered directly.
+            if cfg.insecure_skip_verify_hello {
+                return Ok(Box::new(Flight4 {}));
             }
 
             Ok(Box::new(Flight2 {}))

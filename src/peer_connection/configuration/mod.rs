@@ -225,13 +225,20 @@ pub mod interceptor_registry;
 pub mod media_engine;
 pub(crate) mod offer_answer_options;
 pub(crate) mod rtcp_mux_policy;
+pub(crate) mod rtp_header_encryption_policy;
 pub(crate) mod sdp_semantics;
 pub mod setting_engine;
+
+#[cfg(test)]
+mod pion_media_engine_test;
+#[cfg(test)]
+mod pion_setting_engine_test;
 
 pub use bundle_policy::RTCBundlePolicy;
 pub use ice_transport_policy::{ICEGatherPolicy, RTCIceTransportPolicy};
 pub use offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 pub use rtcp_mux_policy::RTCRtcpMuxPolicy;
+pub use rtp_header_encryption_policy::RTCRtpHeaderEncryptionPolicy;
 pub use sdp_semantics::RTCSdpSemantics;
 
 pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
@@ -265,6 +272,10 @@ pub struct RTCConfiguration {
     /// candidates.
     pub(crate) rtcp_mux_policy: RTCRtcpMuxPolicy,
 
+    /// rtp_header_encryption_policy indicates whether RTP header extensions and CSRCs are
+    /// encrypted (RFC 9335, "Cryptex") and what to do if the peer cannot.
+    pub(crate) rtp_header_encryption_policy: RTCRtpHeaderEncryptionPolicy,
+
     /// peer_identity sets the target peer identity for the PeerConnection.
     /// The PeerConnection will not establish a connection to a remote peer
     /// unless it can be successfully authenticated with the provided name.
@@ -285,6 +296,12 @@ pub struct RTCConfiguration {
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub(crate) ice_candidate_pool_size: u8,
+
+    /// always_negotiate_data_channels specifies whether the application prefers
+    /// to always offer (and negotiate) an `m=application` section, even before any data
+    /// channel exists, so that the first channel created later needs no renegotiation
+    /// (pion's `AlwaysNegotiateDataChannels`).
+    pub(crate) always_negotiate_data_channels: bool,
 }
 
 impl RTCConfiguration {
@@ -317,6 +334,11 @@ impl RTCConfiguration {
         self.rtcp_mux_policy
     }
 
+    /// Returns the RTP header extension encryption (Cryptex, RFC 9335) policy.
+    pub fn rtp_header_encryption_policy(&self) -> RTCRtpHeaderEncryptionPolicy {
+        self.rtp_header_encryption_policy
+    }
+
     /// Returns the peer identity.
     ///
     /// This is the target peer identity for the PeerConnection.
@@ -338,6 +360,11 @@ impl RTCConfiguration {
     /// This describes the size of the prefetched ICE pool.
     pub fn ice_candidate_pool_size(&self) -> u8 {
         self.ice_candidate_pool_size
+    }
+
+    /// Whether an `m=application` section is offered even before any data channel exists.
+    pub fn always_negotiate_data_channels(&self) -> bool {
+        self.always_negotiate_data_channels
     }
 
     /// get_ice_servers side-steps the strict parsing mode of the ice package
@@ -399,6 +426,22 @@ impl RTCConfiguration {
                     .duration_since(now)
                     .map_err(|_| Error::ErrCertificateExpired)?;
             }
+        }
+
+        // An unspecified policy takes its default, so `get_configuration` reports what is in
+        // effect (pion normalizes the same way) and `set_configuration` can tell a request to
+        // keep a policy from one to change it.
+        if self.ice_transport_policy == RTCIceTransportPolicy::Unspecified {
+            self.ice_transport_policy = RTCIceTransportPolicy::All;
+        }
+        if self.bundle_policy == RTCBundlePolicy::Unspecified {
+            self.bundle_policy = RTCBundlePolicy::Balanced;
+        }
+        if self.rtcp_mux_policy == RTCRtcpMuxPolicy::Unspecified {
+            self.rtcp_mux_policy = RTCRtcpMuxPolicy::Require;
+        }
+        if self.rtp_header_encryption_policy == RTCRtpHeaderEncryptionPolicy::Unspecified {
+            self.rtp_header_encryption_policy = RTCRtpHeaderEncryptionPolicy::Negotiate;
         }
 
         Ok(())
@@ -622,6 +665,17 @@ impl RTCConfigurationBuilder {
         self
     }
 
+    /// Sets whether RTP header extensions and CSRCs are encrypted with Cryptex (RFC 9335).
+    ///
+    /// The default offers Cryptex and uses it when the peer supports it.
+    pub fn with_rtp_header_encryption_policy(
+        mut self,
+        rtp_header_encryption_policy: RTCRtpHeaderEncryptionPolicy,
+    ) -> Self {
+        self.0.rtp_header_encryption_policy = rtp_header_encryption_policy;
+        self
+    }
+
     /// Sets the target peer identity.
     ///
     /// If set, the peer connection will only connect to a remote peer that can be
@@ -689,6 +743,26 @@ impl RTCConfigurationBuilder {
     /// ```
     pub fn with_ice_candidate_pool_size(mut self, ice_candidate_pool_size: u8) -> Self {
         self.0.ice_candidate_pool_size = ice_candidate_pool_size;
+        self
+    }
+
+    /// Always offer an `m=application` section, even before a data channel exists.
+    ///
+    /// With this set, the first channel created after the connection is up is announced
+    /// in-band (DCEP) and does not fire `OnNegotiationNeeded`. Off by default, as in pion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_always_negotiate_data_channels(true)
+    ///     .build();
+    /// assert!(config.always_negotiate_data_channels());
+    /// ```
+    pub fn with_always_negotiate_data_channels(mut self, always: bool) -> Self {
+        self.0.always_negotiate_data_channels = always;
         self
     }
 

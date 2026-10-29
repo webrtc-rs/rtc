@@ -5,9 +5,10 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::codec::av1::leb128::read_leb128;
+use crate::codec::av1::leb128::read_leb128_checked;
 use crate::codec::av1::obu::{
-    OBU_HAS_SIZE_BIT, OBU_TYPE_MASK, OBU_TYPE_TEMPORAL_DELIMITER, OBU_TYPE_TILE_LIST,
+    OBU_FORBIDDEN_BIT, OBU_HAS_EXTENSION_BIT, OBU_HAS_SIZE_BIT, OBU_TYPE_MASK,
+    OBU_TYPE_TEMPORAL_DELIMITER, OBU_TYPE_TILE_LIST,
 };
 use crate::packetizer::Depacketizer;
 use shared::error::{Error, Result};
@@ -49,62 +50,54 @@ impl Depacketizer for Av1Depacketizer {
             return Err(Error::ErrShortPacket);
         }
 
-        // Parse aggregation header
-        // |Z|Y| W |N|-|-|-|
+        // Aggregation header: |Z|Y| W |N|-|-|-|
         let obu_z = (payload[0] & AV1_Z_MASK) != 0;
         let obu_y = (payload[0] & AV1_Y_MASK) != 0;
-        let obu_count = (payload[0] & AV1_W_MASK) >> 4;
+        let obu_count = ((payload[0] & AV1_W_MASK) >> 4) as usize;
         let obu_n = (payload[0] & AV1_N_MASK) != 0;
 
         self.z = obu_z;
         self.y = obu_y;
         self.n = obu_n;
 
-        // Clear buffer on new coded video sequence
-        if obu_n {
-            self.buffer.clear();
-        }
-
-        // Clear buffer if Z is not set but we have buffered data
-        if !obu_z && !self.buffer.is_empty() {
+        // A new coded video sequence, or a packet that does not continue an OBU, drops any
+        // fragment still waiting for its remainder.
+        if obu_n || (!obu_z && !self.buffer.is_empty()) {
             self.buffer.clear();
         }
 
         let mut result = BytesMut::new();
-        let mut offset = 1; // Skip aggregation header
-        let mut obu_offset = 0;
+        let mut offset = 1; // past the aggregation header
+        let mut obu_offset = 0usize;
 
         while offset < payload.len() {
             let is_first = obu_offset == 0;
-            let is_last = obu_count != 0 && obu_offset == (obu_count - 1) as usize;
+            let mut is_last = obu_count != 0 && obu_offset == obu_count - 1;
 
-            // Read OBU element length
-            let (length_field, is_last) = if obu_count == 0 || !is_last {
-                // W=0 or not last element: length field present
-                let payload_slice = payload.slice(offset..);
-                let (len, n) = read_leb128(&payload_slice);
-                if n == 0 {
-                    return Err(Error::ErrShortPacket);
-                }
+            // W == 0: every element carries a length. W != 0: only the last one does not.
+            let length_field = if obu_count == 0 || !is_last {
+                let (len, n) =
+                    read_leb128_checked(&payload[offset..]).ok_or(Error::ErrShortPacket)?;
                 offset += n;
-
-                // Check if this is actually the last element when W=0
-                let is_last_w0 = obu_count == 0 && offset + len as usize == payload.len();
-                (len as usize, is_last || is_last_w0)
+                if obu_count == 0 && offset.checked_add(len) == Some(payload.len()) {
+                    is_last = true;
+                }
+                len
             } else {
-                // Last element when W != 0: no length field
-                (payload.len() - offset, true)
+                payload.len() - offset
             };
 
-            if offset + length_field > payload.len() {
+            if offset
+                .checked_add(length_field)
+                .is_none_or(|end| end > payload.len())
+            {
                 return Err(Error::ErrShortPacket);
             }
 
-            // Build OBU buffer
             let obu_buffer = if is_first && obu_z {
-                // Continuation of previous packet's OBU
+                // The first element continues an OBU from an earlier packet.
                 if self.buffer.is_empty() {
-                    // Lost first fragment, skip this OBU
+                    // That packet was lost: skip the orphaned tail.
                     if is_last {
                         break;
                     }
@@ -112,88 +105,69 @@ impl Depacketizer for Av1Depacketizer {
                     obu_offset += 1;
                     continue;
                 }
-
-                // Combine buffered data with current fragment
-                let mut combined = std::mem::take(&mut self.buffer);
-                combined.extend_from_slice(&payload[offset..offset + length_field]);
-                combined.freeze()
+                self.buffer
+                    .extend_from_slice(&payload[offset..offset + length_field]);
+                std::mem::take(&mut self.buffer).freeze()
             } else {
                 payload.slice(offset..offset + length_field)
             };
             offset += length_field;
 
-            // If this is the last OBU and Y flag is set, buffer it for next packet
+            // The last element continues in the next packet: hold it back.
             if is_last && obu_y {
                 self.buffer = BytesMut::from(obu_buffer.as_ref());
                 break;
             }
 
-            // Skip empty OBUs
             if obu_buffer.is_empty() {
-                if is_last {
-                    break;
-                }
                 obu_offset += 1;
                 continue;
             }
 
-            // Parse OBU header to check type
-            let obu_type = (obu_buffer[0] & OBU_TYPE_MASK) >> 3;
-
-            // Skip temporal delimiter and tile list OBUs
-            if obu_type == OBU_TYPE_TEMPORAL_DELIMITER || obu_type == OBU_TYPE_TILE_LIST {
-                if is_last {
-                    break;
-                }
-                obu_offset += 1;
-                continue;
+            // OBU header: forbidden(1) type(4) extension(1) has_size(1) reserved(1) [extension(8)]
+            let header = obu_buffer[0];
+            if header & OBU_FORBIDDEN_BIT != 0 {
+                return Err(Error::ErrInvalidObuHeader);
             }
-
-            // Check if OBU has size field
-            let has_size_field = (obu_buffer[0] & OBU_HAS_SIZE_BIT) != 0;
-            let has_extension = (obu_buffer[0] & 0x04) != 0;
+            let has_extension = header & OBU_HAS_EXTENSION_BIT != 0;
+            if has_extension && obu_buffer.len() < 2 {
+                return Err(Error::ErrShortPacket);
+            }
             let header_size = if has_extension { 2 } else { 1 };
+            let obu_type = (header & OBU_TYPE_MASK) >> 3;
 
-            if has_size_field {
-                // OBU already has size field, validate it
-                let payload_slice = obu_buffer.slice(header_size..);
-                let (obu_size, leb_size) = read_leb128(&payload_slice);
-                if leb_size == 0 {
-                    return Err(Error::ErrShortPacket);
-                }
-                let expected_size = header_size + leb_size + obu_size as usize;
-                // When this OBU was reassembled from multiple RTP packets,
-                // `length_field` is the length of the current packet's fragment,
-                // not the complete OBU. Use the reassembled buffer length for
-                // validation in that case.
-                let actual_size = if is_first && obu_z {
-                    obu_buffer.len()
-                } else {
-                    length_field
-                };
-                if actual_size != expected_size {
-                    return Err(Error::ErrShortPacket);
-                }
-                result.extend_from_slice(&obu_buffer);
-            } else {
-                // Add size field to OBU
-                // Set obu_has_size_field bit
-                result.put_u8(obu_buffer[0] | OBU_HAS_SIZE_BIT);
-
-                // Copy extension header if present
-                if has_extension && obu_buffer.len() > 1 {
-                    result.put_u8(obu_buffer[1]);
-                }
-
-                // Write payload size as LEB128
-                let payload_size = obu_buffer.len() - header_size;
-                write_leb128(&mut result, payload_size as u32);
-
-                // Copy OBU payload
-                if header_size < obu_buffer.len() {
-                    result.extend_from_slice(&obu_buffer[header_size..]);
-                }
+            // Temporal delimiters and tile lists carry nothing a receiver needs.
+            if obu_type == OBU_TYPE_TEMPORAL_DELIMITER || obu_type == OBU_TYPE_TILE_LIST {
+                obu_offset += 1;
+                continue;
             }
+
+            // obu_has_size_field should be 0 in RTP, but if an element has one that agrees with
+            // the element's length it is kept; otherwise the size is recomputed.
+            let payload_offset = if header & OBU_HAS_SIZE_BIT != 0 {
+                let (size, n) =
+                    read_leb128_checked(&obu_buffer[header_size..]).ok_or(Error::ErrShortPacket)?;
+                if header_size.checked_add(size).and_then(|s| s.checked_add(n))
+                    == Some(length_field)
+                {
+                    result.extend_from_slice(&obu_buffer);
+                    if is_last {
+                        break;
+                    }
+                    obu_offset += 1;
+                    continue;
+                }
+                header_size + n
+            } else {
+                header_size
+            };
+
+            result.put_u8(header | OBU_HAS_SIZE_BIT);
+            if has_extension {
+                result.put_u8(obu_buffer[1]);
+            }
+            write_leb128(&mut result, (obu_buffer.len() - payload_offset) as u32);
+            result.extend_from_slice(&obu_buffer[payload_offset..]);
 
             if is_last {
                 break;
@@ -201,8 +175,10 @@ impl Depacketizer for Av1Depacketizer {
             obu_offset += 1;
         }
 
-        // Validate OBU count if W field was set
-        if obu_count != 0 && obu_offset != (obu_count - 1) as usize && !self.y {
+        // W promised more elements than the packet held. (One more than W - 1 means the last
+        // element was skipped, as a temporal delimiter is; pion reports that as an error too,
+        // but nothing is wrong with the packet.)
+        if obu_count != 0 && obu_offset + 1 < obu_count {
             return Err(Error::ErrShortPacket);
         }
 

@@ -23,7 +23,7 @@ impl ResourceBody for NsResource {
     fn pack(
         &self,
         msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         self.ns.pack(msg, compression, compression_off)
@@ -31,6 +31,10 @@ impl ResourceBody for NsResource {
 
     fn unpack(&mut self, msg: &[u8], off: usize, _txt_length: usize) -> Result<usize> {
         self.ns.unpack(msg, off)
+    }
+
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {

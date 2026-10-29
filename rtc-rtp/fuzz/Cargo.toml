@@ -26,3 +26,27 @@ path = "fuzz_targets/parse_packet.rs"
 test = false
 doc = false
 bench = false
+
+[dependencies.bytes]
+version = "1"
+
+[[bin]]
+name = "depacketize"
+path = "fuzz_targets/depacketize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload"
+path = "fuzz_targets/payload.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "header_peek"
+path = "fuzz_targets/header_peek.rs"
+test = false
+doc = false
+bench = false

@@ -1,6 +1,9 @@
 use log::warn;
 use shared::time::SystemInstant;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How old the wall-clock baseline of a stream may get before the next frame takes a new one.
+const REBASE_EVERY: Duration = Duration::from_secs(1);
 
 pub(crate) struct SenderStream {
     ssrc: u32,
@@ -65,7 +68,16 @@ impl SenderStream {
             if self.last_rtp_time_time.is_none() || pkt.header.timestamp != self.last_rtp_time_rtp {
                 self.last_rtp_time_rtp = pkt.header.timestamp;
                 self.last_rtp_time_time = Some(now);
-                self.time_baseline = Some(SystemInstant::now(now));
+                // The wall clock is read once in a while, not for every frame: a report extrapolates
+                // from the baseline with the monotonic clock, which keeps time as well as the wall
+                // clock does over a second, and reading it costs more than the rest of the packet's
+                // bookkeeping.
+                if self
+                    .time_baseline
+                    .is_none_or(|b| now.saturating_duration_since(b.captured_at()) >= REBASE_EVERY)
+                {
+                    self.time_baseline = Some(SystemInstant::now(now));
+                }
             }
         }
 
@@ -148,6 +160,35 @@ mod tests {
             payload: vec![0u8; payload_len].into(),
             ..Default::default()
         }
+    }
+
+    /// The wall clock is not read for every frame: the baseline a report extrapolates from is kept
+    /// for a second, and the report still tells the time of the instant it is made at.
+    #[test]
+    fn the_wall_clock_baseline_is_kept_for_a_second() {
+        let mut stream = SenderStream::new(1, 48_000, false);
+        let t0 = Instant::now();
+        stream.process_rtp(t0, &make_rtp_packet(1, 0, 8));
+        let baseline = stream.time_baseline.expect("the first frame takes one");
+        assert_eq!(baseline.captured_at(), t0);
+
+        // Frames within the second leave it alone...
+        for n in 1..40u32 {
+            let at = t0 + Duration::from_millis(20 * u64::from(n));
+            stream.process_rtp(at, &make_rtp_packet(n as u16 + 1, 960 * n, 8));
+        }
+        assert_eq!(stream.time_baseline.unwrap().captured_at(), t0);
+
+        // ...and the report at the last of them is still the baseline plus the time since.
+        let at = t0 + Duration::from_millis(780);
+        let sr = stream.generate_report(at).unwrap();
+        assert_eq!(sr.ntp_time, baseline.ntp(at));
+        assert_eq!(sr.rtp_time, 960 * 39);
+
+        // A frame a second after the baseline takes a new one.
+        let later = t0 + Duration::from_millis(1000);
+        stream.process_rtp(later, &make_rtp_packet(41, 960 * 50, 8));
+        assert_eq!(stream.time_baseline.unwrap().captured_at(), later);
     }
 
     #[test]

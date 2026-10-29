@@ -35,7 +35,6 @@ use shared::{error::*, replay_detector::*};
 use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
-use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -111,6 +110,11 @@ pub struct DTLSConn {
     /// an RFC 6347 §4.2.4 last-flight repeat from ordinary post-handshake application data.
     pub(crate) received_handshake_in_last_datagram: bool,
 }
+
+/// The most packets from the next epoch held until the cipher for them exists. They cannot be
+/// authenticated before then, so anyone who can send to the port could otherwise grow the queue
+/// without limit.
+pub(crate) const MAX_ENCRYPTED_PACKET_QUEUE_SIZE: usize = 100;
 
 impl DTLSConn {
     /// Creates a connection in the given role, ready to handshake.
@@ -290,7 +294,7 @@ impl DTLSConn {
             if let Content::Handshake(h) = &p.record.content {
                 let mut handshake_raw = vec![];
                 {
-                    let mut writer = BufWriter::<&mut Vec<u8>>::new(handshake_raw.as_mut());
+                    let mut writer = &mut handshake_raw;
                     p.record.marshal(&mut writer)?;
                 }
                 debug!(
@@ -306,7 +310,7 @@ impl DTLSConn {
                     h.handshake_header.message_sequence,
                     h.handshake_header.handshake_type,
                     self.is_client,
-                );
+                )?;
 
                 let raw_handshake_packets = self.process_handshake_packet(&p, h)?;
                 raw_packets.extend_from_slice(&raw_handshake_packets);
@@ -400,7 +404,7 @@ impl DTLSConn {
 
             let mut record_layer_header_bytes = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(record_layer_header_bytes.as_mut());
+                let mut writer = &mut record_layer_header_bytes;
                 record_layer_header.marshal(&mut writer)?;
             }
 
@@ -424,7 +428,7 @@ impl DTLSConn {
     fn fragment_handshake(maximum_transmission_unit: usize, h: &Handshake) -> Result<Vec<Vec<u8>>> {
         let mut content = vec![];
         {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(content.as_mut());
+            let mut writer = &mut content;
             h.handshake_message.marshal(&mut writer)?;
         }
 
@@ -451,8 +455,7 @@ impl DTLSConn {
 
             let mut handshake_header_fragment_raw = vec![];
             {
-                let mut writer =
-                    BufWriter::<&mut Vec<u8>>::new(handshake_header_fragment_raw.as_mut());
+                let mut writer = &mut handshake_header_fragment_raw;
                 handshake_header_fragment.marshal(&mut writer)?;
             }
 
@@ -468,6 +471,7 @@ impl DTLSConn {
 
     pub(crate) fn set_handshake_completed(&mut self) {
         self.handshake_completed = true;
+        self.cache.finish();
     }
 
     pub(crate) fn is_handshake_completed(&self) -> bool {
@@ -614,11 +618,20 @@ impl DTLSConn {
                 return (false, None, None);
             }
             if enqueue {
-                debug!(
-                    "{}: received packet of next epoch, queuing packet",
-                    srv_cli_str(self.is_client)
-                );
-                self.incoming_encrypted_packets.push_back(pkt);
+                // Nothing here is authenticated yet, so what is held is bounded; the peer
+                // retransmits what matters.
+                if self.incoming_encrypted_packets.len() < MAX_ENCRYPTED_PACKET_QUEUE_SIZE {
+                    debug!(
+                        "{}: received packet of next epoch, queuing packet",
+                        srv_cli_str(self.is_client)
+                    );
+                    self.incoming_encrypted_packets.push_back(pkt);
+                } else {
+                    debug!(
+                        "{}: queue of next-epoch packets is full, discarding packet",
+                        srv_cli_str(self.is_client)
+                    );
+                }
             }
             return (false, None, None);
         }
@@ -764,13 +777,23 @@ impl DTLSConn {
                     }
                 };
 
-                self.cache.push(
+                if let Err(err) = self.cache.push(
                     out,
                     epoch,
                     raw_handshake.handshake_header.message_sequence,
                     raw_handshake.handshake_header.handshake_type,
                     !self.is_client,
-                );
+                ) {
+                    // The peer is sending more handshake than any handshake needs.
+                    return (
+                        false,
+                        Some(Alert {
+                            alert_level: AlertLevel::Fatal,
+                            alert_description: AlertDescription::InternalError,
+                        }),
+                        Some(err),
+                    );
+                }
             }
 
             return (true, None, None);

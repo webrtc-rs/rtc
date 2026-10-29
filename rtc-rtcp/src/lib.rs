@@ -1,3 +1,6 @@
+// The same module docs are rendered where a module is re-exported, and rustdoc judges a link
+// redundant from one place and necessary from the other.
+#![allow(rustdoc::redundant_explicit_links)]
 #![warn(rust_2018_idioms)]
 #![warn(missing_docs)]
 #![allow(dead_code)]
@@ -58,6 +61,8 @@
 //! # }
 //! ```
 
+/// The APP packet (PT 204), carrying application-defined data under a four-character name.
+pub mod application_defined;
 /// Compound RTCP packets — the several reports that share one datagram.
 pub mod compound_packet;
 /// Extended reports (XR, [RFC 3611]): loss/discard run lengths, receipt times and per-block

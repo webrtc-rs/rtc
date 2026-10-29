@@ -2,9 +2,11 @@ use super::*;
 use crate::crypto::crypto_chacha20::*;
 use crate::prf::*;
 
-/// The shared ChaCha20-Poly1305 with SHA-256 implementation, parameterized over the key exchange and signature.
+/// The shared ChaCha20-Poly1305 with SHA-256 implementation, parameterized over the key exchange
+/// and signature: ECDHE with ECDSA or RSA certificates, or a pre-shared key.
 pub struct CipherSuiteChaCha20Poly1305Sha256 {
     rsa: bool,
+    psk: bool,
     cipher: Option<CryptoChaCha20>,
 }
 
@@ -13,15 +15,32 @@ impl CipherSuiteChaCha20Poly1305Sha256 {
     const PRF_KEY_LEN: usize = 32;
     const PRF_IV_LEN: usize = 12;
 
-    /// Builds an uninitialized ChaCha20-Poly1305 with SHA-256 suite; keys are installed later via `init`.
+    /// Builds an uninitialized ChaCha20-Poly1305 with SHA-256 suite for certificate handshakes;
+    /// keys are installed later via `init`.
     pub fn new(rsa: bool) -> Self {
-        CipherSuiteChaCha20Poly1305Sha256 { rsa, cipher: None }
+        CipherSuiteChaCha20Poly1305Sha256 {
+            rsa,
+            psk: false,
+            cipher: None,
+        }
+    }
+
+    /// Builds the uninitialized `TLS_PSK_WITH_CHACHA20_POLY1305_SHA256` suite for pre-shared-key
+    /// handshakes; keys are installed later via `init`.
+    pub fn new_psk() -> Self {
+        CipherSuiteChaCha20Poly1305Sha256 {
+            rsa: false,
+            psk: true,
+            cipher: None,
+        }
     }
 }
 
 impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
     fn to_string(&self) -> String {
-        if self.rsa {
+        if self.psk {
+            "TLS_PSK_WITH_CHACHA20_POLY1305_SHA256".to_owned()
+        } else if self.rsa {
             "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256".to_owned()
         } else {
             "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256".to_owned()
@@ -29,7 +48,9 @@ impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
     }
 
     fn id(&self) -> CipherSuiteId {
-        if self.rsa {
+        if self.psk {
+            CipherSuiteId::Tls_Psk_With_ChaCha20_Poly1305_Sha256
+        } else if self.rsa {
             CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256
         } else {
             CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256
@@ -37,7 +58,9 @@ impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
     }
 
     fn certificate_type(&self) -> ClientCertificateType {
-        if self.rsa {
+        if self.psk {
+            ClientCertificateType::Unsupported
+        } else if self.rsa {
             ClientCertificateType::RsaSign
         } else {
             ClientCertificateType::EcdsaSign
@@ -49,7 +72,7 @@ impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
     }
 
     fn is_psk(&self) -> bool {
-        false
+        self.psk
     }
 
     fn is_initialized(&self) -> bool {

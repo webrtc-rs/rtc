@@ -295,6 +295,7 @@ fn test_vp9_payloader_payload() -> Result<()> {
 
     for (name, bs, mtu, expected) in tests {
         let mut pck = Vp9Payloader {
+            flexible_mode: true,
             initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
             ..Default::default()
         };
@@ -309,6 +310,7 @@ fn test_vp9_payloader_payload() -> Result<()> {
     //"PictureIDOverflow"
     {
         let mut pck = Vp9Payloader {
+            flexible_mode: true,
             initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
             ..Default::default()
         };

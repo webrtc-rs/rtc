@@ -1,6 +1,8 @@
 use super::*;
 use crate::codec::*;
+use crate::packet::Packet;
 use shared::error::Result;
+use shared::marshal::{Marshal, MarshalSize, Unmarshal};
 
 use chrono::prelude::*;
 use std::time::Duration;
@@ -78,6 +80,7 @@ fn test_packetizer_abs_send_time() -> Result<()> {
                 payload: Bytes::from_static(&[0x40, 0, 0]),
             }],
             extensions_padding: 0,
+            padding_size: 0,
         },
         payload: Bytes::from_static(&[0x11, 0x12, 0x13, 0x14]),
     };
@@ -138,5 +141,118 @@ fn test_packetizer_abs_send_time_comes_from_the_caller() -> Result<()> {
     assert_eq!(first, same_instant, "same instant, same absolute send time");
     assert_ne!(first, later, "a later instant must stamp a later time");
 
+    Ok(())
+}
+
+// pion TestPacketizer_Roundtrip: every packetized frame survives a
+// marshal/unmarshal round-trip with all its fields intact.
+#[test]
+fn test_packetizer_roundtrip() -> Result<()> {
+    let now = Instant::now();
+    let multiple_payload = Bytes::from_static(&[0; 128]);
+    let g722 = Box::new(g7xx::G722Payloader {});
+    let seq = Box::new(new_random_sequencer());
+    let mut packetizer = new_packetizer(now, 100, 98, 0x1234ABCD, g722, seq, 90000);
+    let packets = packetizer.packetize(now, &multiple_payload, 1000)?;
+
+    for expected in &packets {
+        let mut raw = vec![0u8; expected.marshal_size()];
+        let n = expected.marshal_to(&mut raw)?;
+        assert_eq!(n, raw.len());
+
+        let parsed = Packet::unmarshal(&mut &raw[..])?;
+        assert_eq!(raw.len(), parsed.marshal_size());
+        assert_eq!(expected.marshal_size(), parsed.marshal_size());
+        assert_eq!(expected.header.version, parsed.header.version);
+        assert_eq!(expected.header.padding, parsed.header.padding);
+        assert_eq!(expected.header.extension, parsed.header.extension);
+        assert_eq!(expected.header.marker, parsed.header.marker);
+        assert_eq!(expected.header.payload_type, parsed.header.payload_type);
+        assert_eq!(
+            expected.header.sequence_number,
+            parsed.header.sequence_number
+        );
+        assert_eq!(expected.header.timestamp, parsed.header.timestamp);
+        assert_eq!(expected.header.ssrc, parsed.header.ssrc);
+        assert_eq!(expected.header.csrc, parsed.header.csrc);
+        assert_eq!(
+            expected.header.extension_profile,
+            parsed.header.extension_profile
+        );
+        assert_eq!(expected.payload, parsed.payload);
+        assert_eq!(expected, &parsed);
+    }
+    Ok(())
+}
+
+// pion TestPacketizer_GeneratePadding: each padding packet is payload-less and
+// carries a full 255-octet padding block.
+#[test]
+fn test_packetizer_generate_padding() {
+    let now = Instant::now();
+    let g722 = Box::new(g7xx::G722Payloader {});
+    let seq = Box::new(new_fixed_sequencer(1234));
+    let mut packetizer = new_packetizer(now, 100, 98, 0x1234ABCD, g722, seq, 90000);
+
+    let packets = packetizer.generate_padding(5);
+
+    assert_eq!(
+        5,
+        packets.len(),
+        "should generate exactly 5 padding packets"
+    );
+    for (i, packet) in packets.iter().enumerate() {
+        assert!(packet.header.padding, "packet {i} should have padding set");
+        assert_eq!(255, packet.header.padding_size);
+        assert!(
+            packet.payload.is_empty(),
+            "packet {i} should have no payload"
+        );
+    }
+}
+
+// pion TestPacketizer_GeneratePadding with zero samples: no packets at all.
+#[test]
+fn test_packetizer_generate_padding_zero() {
+    let now = Instant::now();
+    let g722 = Box::new(g7xx::G722Payloader {});
+    let seq = Box::new(new_fixed_sequencer(1234));
+    let mut packetizer = new_packetizer(now, 100, 98, 0x1234ABCD, g722, seq, 90000);
+    assert!(packetizer.generate_padding(0).is_empty());
+}
+
+// pion TestPacketizer_Empty_Payload: an empty payload produces no packets and
+// does not disturb the timestamps of the packets around it.
+#[test]
+fn test_packetizer_empty_payload() -> Result<()> {
+    let now = Instant::now();
+    let g722 = Box::new(g7xx::G722Payloader {});
+    let seq = Box::new(new_fixed_sequencer(1234));
+    let mut packetizer = new_packetizer(now, 100, 98, 0x1234ABCD, g722, seq, 90000);
+
+    const EXPECTED_SAMPLES: u32 = 4000;
+    let mut prev_timestamp = 0u32;
+    for i in 0..10 {
+        let payload = if i % 2 == 0 {
+            Bytes::new()
+        } else {
+            Bytes::from_static(&[0x11, 0x12, 0x13, 0x14])
+        };
+
+        let packets = packetizer.packetize(now, &payload, 2000)?;
+
+        if i % 2 == 0 {
+            assert!(packets.is_empty(), "empty payload must produce no packets");
+        } else {
+            assert_eq!(1, packets.len());
+            if prev_timestamp != 0 {
+                assert_eq!(
+                    packets[0].header.timestamp - prev_timestamp,
+                    EXPECTED_SAMPLES
+                );
+            }
+            prev_timestamp = packets[0].header.timestamp;
+        }
+    }
     Ok(())
 }

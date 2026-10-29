@@ -2,7 +2,7 @@
 //!
 //! The Stream Control Transmission Protocol ([RFC 4960]) with the extensions WebRTC data
 //! channels need: partial reliability ([RFC 3758]) and stream reset / reconfiguration
-//! ([RFC 6525]). In WebRTC, SCTP runs *over* DTLS rather than over IP, and carries the data
+//! ([RFC 6525]), and, when enabled, user message interleaving ([RFC 8260]). In WebRTC, SCTP runs *over* DTLS rather than over IP, and carries the data
 //! channels described by [`rtc-datachannel`].
 //!
 //! This is a fully deterministic implementation of the protocol logic. It contains no
@@ -45,6 +45,7 @@
 //! [RFC 4960]: https://datatracker.ietf.org/doc/html/rfc4960
 //! [RFC 3758]: https://datatracker.ietf.org/doc/html/rfc3758
 //! [RFC 6525]: https://datatracker.ietf.org/doc/html/rfc6525
+//! [RFC 8260]: https://datatracker.ietf.org/doc/html/rfc8260
 //! [`rtc-datachannel`]: https://docs.rs/rtc-datachannel
 
 #![warn(rust_2018_idioms)]
@@ -57,7 +58,7 @@ use std::{fmt, ops};
 
 mod association;
 pub use crate::association::{
-    Association, AssociationError, Event,
+    Association, AssociationError, AssociationMetadata, Event, PartialReliabilityMode,
     stats::AssociationStats,
     stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState},
     timer::TimerConfig,
@@ -71,14 +72,16 @@ pub use crate::chunk::{
 
 mod config;
 pub use crate::config::{
-    ClientConfig, EndpointConfig, MIN_DATA_PACKET_MTU, ServerConfig, TransportConfig,
-    max_payload_size_for_mtu,
+    ClientConfig, EndpointConfig, MIN_DATA_PACKET_MTU, ServerConfig, StreamScheduler,
+    TransportConfig, max_payload_size_for_mtu,
 };
 
 mod endpoint;
 pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoint};
 
 mod packet;
+#[cfg(test)]
+mod pion_golden_test;
 
 mod shared;
 pub use crate::shared::{AssociationEvent, AssociationId, EndpointEvent};

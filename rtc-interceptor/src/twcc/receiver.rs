@@ -151,11 +151,14 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for TwccReceiverInterceptor {
                 .or(self.transport_hdr_ext_id);
 
             // Extract transport CC sequence number
+            // The borrowed form: cloning the payload `Bytes` would allocate on every packet
+            // (the bytes crate promotes a fresh payload to its shared form on first clone),
+            // and this runs once per received packet.
             if let Some(hdr_ext_id) = hdr_ext_id
-                && let Some(ext_data) = rtp_packet.header.get_extension(hdr_ext_id)
+                && let Some(mut ext_data) = rtp_packet.header.get_extension_payload(hdr_ext_id)
                 && let Ok(tcc) =
                     rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                        &mut ext_data.as_ref(),
+                        &mut ext_data,
                     )
             {
                 // Initialize recorder on the first packet carrying transport-wide CC
@@ -217,6 +220,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for TwccReceiverInterceptor {
 }
 
 impl Interceptor for TwccReceiverInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         if let Some(hdr_ext_id) = stream_supports_twcc(info) {
             // Don't track if ID is 0 (invalid)

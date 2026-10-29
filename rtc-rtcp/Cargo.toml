@@ -3,6 +3,7 @@ name = "rtc-rtcp"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC RTCP in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-rtcp"
@@ -18,6 +19,7 @@ bytes.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "bench"

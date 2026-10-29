@@ -40,6 +40,10 @@ pub struct CryptoCcm {
 
 impl CryptoCcm {
     /// Builds the cipher from the local and remote keys and salts.
+    ///
+    /// As in pion, the AES variant follows the key length: a 16-byte key selects AES-128-CCM and a
+    /// 32-byte key AES-256-CCM. AES-256-CCM is only offered with the truncated 8-byte tag
+    /// (`TLS_PSK_WITH_AES_256_CCM_8`, RFC 6655), so a full-tag 32-byte combination is rejected.
     pub fn new(
         provider: Arc<dyn RTCCryptoProvider>,
         tag_len: &CryptoCcmTagLen,
@@ -48,9 +52,18 @@ impl CryptoCcm {
         remote_key: &[u8],
         remote_write_iv: &[u8],
     ) -> Result<Self> {
-        let algorithm = match tag_len {
-            CryptoCcmTagLen::CryptoCcmTagLength => AeadAlgorithm::Aes128Ccm,
-            CryptoCcmTagLen::CryptoCcm8TagLength => AeadAlgorithm::Aes128Ccm8,
+        let algorithm = match (tag_len, local_key.len()) {
+            (CryptoCcmTagLen::CryptoCcmTagLength, 16) => AeadAlgorithm::Aes128Ccm,
+            (CryptoCcmTagLen::CryptoCcm8TagLength, 16) => AeadAlgorithm::Aes128Ccm8,
+            (CryptoCcmTagLen::CryptoCcm8TagLength, 32) => AeadAlgorithm::Aes256Ccm8,
+            // The full-tag CCM suites are AES-128 only, and AES-256-CCM is offered with the
+            // truncated 8-byte tag only (RFC 6655); nothing else has an AEAD to hand.
+            (_, actual) => {
+                return Err(crypto_error(crypto::CryptoError::InvalidKeyLength {
+                    expected: 16,
+                    actual,
+                }));
+            }
         };
         let local_ccm = provider
             .crypto()

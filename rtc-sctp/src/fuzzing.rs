@@ -17,6 +17,7 @@ use crate::chunk::chunk_forward_tsn::{ChunkForwardTsn, ChunkForwardTsnStream};
 use crate::chunk::chunk_header::ChunkHeader;
 use crate::chunk::chunk_heartbeat::ChunkHeartbeat;
 use crate::chunk::chunk_heartbeat_ack::ChunkHeartbeatAck;
+use crate::chunk::chunk_i_forward_tsn::ChunkIForwardTsn;
 use crate::chunk::chunk_init::ChunkInit;
 use crate::chunk::chunk_payload_data::ChunkPayloadData;
 use crate::chunk::chunk_reconfig::ChunkReconfig;
@@ -153,6 +154,12 @@ pub fn chunk_chunk_forward_tsn_unmarshal(data: &[u8]) -> Result<()> {
 pub fn chunk_chunk_forward_tsn_stream_unmarshal(data: &[u8]) -> Result<()> {
     let raw = to_bytes(data);
     let _ = ChunkForwardTsnStream::unmarshal(&raw)?;
+    Ok(())
+}
+
+pub fn chunk_chunk_i_forward_tsn_unmarshal(data: &[u8]) -> Result<()> {
+    let raw = to_bytes(data);
+    let _ = ChunkIForwardTsn::unmarshal(&raw)?;
     Ok(())
 }
 

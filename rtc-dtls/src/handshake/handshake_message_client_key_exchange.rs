@@ -34,13 +34,16 @@ impl HandshakeMessageClientKeyExchange {
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
-        if (!self.identity_hint.is_empty() && !self.public_key.is_empty())
-            || (self.identity_hint.is_empty() && self.public_key.is_empty())
-        {
+        // Both set is ambiguous. Both empty is a PSK handshake whose client identity is the
+        // empty string, which pion accepts (`TestPSK` "Client identity empty").
+        if !self.identity_hint.is_empty() && !self.public_key.is_empty() {
             return Err(Error::ErrInvalidClientKeyExchange);
         }
 
         if !self.public_key.is_empty() {
+            if self.public_key.len() > 255 {
+                return Err(Error::ErrPublicKeyTooLong);
+            }
             writer.write_u8(self.public_key.len() as u8)?;
             writer.write_all(&self.public_key)?;
         } else {

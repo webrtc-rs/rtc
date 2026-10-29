@@ -1,0 +1,233 @@
+# Linux x64 (macOS arm64 is tested by hand on the developer's Mac), in debug and release, on both built-in crypto
+# providers. The `cargo.yml` workflow covers feature-graph and packaging concerns on one
+# runner; this one answers "does it work, and stay fast, on every platform we support".
+name: platform
+
+on:
+  push:
+    branches: [ master, v1.x, v0.21.x, v0.20.x ]
+  pull_request:
+    branches: [ master, v1.x, v0.21.x, v0.20.x ]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: test ${{ matrix.target.name }} / ${{ matrix.profile }} / ${{ matrix.backend }}
+    runs-on: ${{ matrix.target.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: linux-x64,   os: ubuntu-latest }
+        profile: [ debug, release ]
+        backend: [ crypto-ring, crypto-aws-lc-rs ]
+    env:
+      FLAGS: ${{ matrix.profile == 'release' && '--release' || '' }} --no-default-features --features rtc/${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target.name }}-${{ matrix.profile }}-${{ matrix.backend }}
+      - name: Toolchain and host
+        shell: bash
+        run: |
+          rustc -vV
+          uname -a
+          case "$(uname -m)" in
+            arm64|aarch64)
+              # The hardware AES / SHA paths are runtime-detected; log what this runner offers so
+              # a performance regression can be told apart from a runner without the extensions.
+              if [ "$(uname -s)" = Darwin ]; then
+                sysctl hw.optional.arm 2>/dev/null | grep -E 'AES|SHA1|SHA2|PMULL' || true
+              else
+                grep -m1 -o -E 'aes|sha1|sha2|pmull' /proc/cpuinfo | sort -u || true
+              fi ;;
+            *) grep -m1 -o -E 'aes|sha_ni|pclmulqdq|avx2' /proc/cpuinfo 2>/dev/null | sort -u || sysctl -n machdep.cpu.features machdep.cpu.leaf7_features 2>/dev/null || true ;;
+          esac
+      - name: Build everything
+        run: |
+          # FLAGS is deliberately split into words.
+          # shellcheck disable=SC2086
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo build --workspace --all-targets $FLAGS --verbose
+      - name: Test workspace
+        run: |
+          # shellcheck disable=SC2086
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast $FLAGS --verbose
+      - name: Test documentation
+        run: |
+          # shellcheck disable=SC2086
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --doc $FLAGS --verbose
+
+  # Every parser is checked against pion's verdicts on a corpus of valid and mutated inputs
+  # (see `tests/pion_golden.rs` in each protocol crate). They run in the job above in debug; this
+  # re-runs them in release, where integer-overflow checks are off and optimizer-visible
+  # differences can surface.
+  pion-golden:
+    name: pion differential corpus / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Replay golden vectors in release
+        run: |
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release \
+            -p rtc-sdp -p rtc-rtcp -p rtc-rtp -p rtc-stun -p rtc-datachannel -p rtc-dtls -p rtc-srtp \
+            -p rtc-turn --test pion_golden --verbose
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release -p rtc-ice \
+            --test pion_candidate_golden --verbose
+          # The codecs that keep their parsers private are tested from inside the crate.
+          $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --release \
+            -p rtc-sctp -p rtc-mdns -p rtc-interceptor --lib pion_golden --verbose
+
+  lint:
+    name: lint / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo fmt --all -- --check
+      # Library and binary code is held to a clean slate.
+      - name: clippy (library code, warnings are errors)
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo clippy --workspace --lib --bins -- -D warnings
+      # Tests, examples and benches carry style lints inherited from before this gate existed;
+      # `correctness` (code that is wrong or useless) is nonetheless a hard failure everywhere.
+      - name: clippy (all targets, correctness lints are errors)
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo clippy --workspace --all-targets -- -A clippy::all -D clippy::correctness
+      - name: rustdoc (warnings are errors)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo doc --workspace --no-deps
+
+  # musl libc: static Linux binaries (containers, Alpine). Built and tested for real, not just
+  # type-checked, since libc differences show up at run time (sockets, resolver, threads).
+  musl:
+    name: musl / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Test workspace
+        env:
+          CC: musl-gcc
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo test --workspace --no-fail-fast --target ${{ matrix.target }} --no-default-features --features rtc/crypto-ring --verbose
+
+  # The workspace must keep building on the oldest compiler it claims to support.
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the declared MSRV
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Check on the MSRV toolchain
+        env:
+          # Cargo.lock is not committed, so a fresh resolve would otherwise pick dependency
+          # versions newer than the MSRV compiler can build; prefer ones that declare support.
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh cargo check --workspace --all-targets --verbose
+
+  # Performance is a feature: re-measure against pion on every runner type and fail if the
+  # allocation counts regress or the time ratio leaves its envelope. See benchmarks/pion-compare.
+  bench-vs-pion:
+    name: bench vs pion / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: benchmarks/pion-compare/go/go.mod
+          cache-dependency-path: benchmarks/pion-compare/go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: benchmarks/pion-compare
+      - name: Compare
+        run: $GITHUB_WORKSPACE/scripts/ci-run.sh python3 benchmarks/pion-compare/compare.py --summary "$GITHUB_STEP_SUMMARY" --json pion-compare.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pion-compare-${{ matrix.os }}
+          path: pion-compare.json
+
+  # Everything `cargo publish` will do on release, minus the upload: every crate is packaged in
+  # dependency order and built from its packaged contents, so a missing file or a path-only
+  # dependency fails here, not on release day.
+  publish-dry-run:
+    name: publish dry run / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --workspace --dry-run
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      # Advisories (RustSec), licences, banned/duplicate crates and crate sources, for the
+      # dependency graph that ships; see deny.toml.
+      - name: cargo deny
+        run: cargo deny check

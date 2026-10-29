@@ -164,6 +164,14 @@ impl MarshalSize for DataChannelOpen {
 
 impl Marshal for DataChannelOpen {
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
+        // The lengths travel in 16-bit fields: truncating them would put a corrupt message on
+        // the wire, so refuse before writing anything.
+        if self.label.len() > u16::MAX as usize {
+            return Err(Error::ErrTooLongLabel);
+        }
+        if self.protocol.len() > u16::MAX as usize {
+            return Err(Error::ErrTooLongProtocol);
+        }
         let required_len = self.marshal_size();
         if buf.remaining_mut() < required_len {
             return Err(Error::UnexpectedEndOfBuffer {
@@ -182,6 +190,21 @@ impl Marshal for DataChannelOpen {
         buf.put_slice(self.protocol.as_slice());
         Ok(self.marshal_size())
     }
+}
+
+/// The next `len` bytes of `buf`, copied once into a vector of exactly that size (no zero-fill
+/// first, and none at all when `len` is 0). The caller has checked that `len` bytes remain.
+fn take_bytes<B: Buf>(buf: &mut B, len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut left = len;
+    while left > 0 {
+        let chunk = buf.chunk();
+        let n = chunk.len().min(left);
+        out.extend_from_slice(&chunk[..n]);
+        buf.advance(n);
+        left -= n;
+    }
+    out
 }
 
 impl Unmarshal for DataChannelOpen {
@@ -211,11 +234,8 @@ impl Unmarshal for DataChannelOpen {
             });
         }
 
-        let mut label = vec![0; label_len];
-        let mut protocol = vec![0; protocol_len];
-
-        buf.copy_to_slice(&mut label[..]);
-        buf.copy_to_slice(&mut protocol[..]);
+        let label = take_bytes(buf, label_len);
+        let protocol = take_bytes(buf, protocol_len);
 
         Ok(Self {
             channel_type,
@@ -435,6 +455,87 @@ mod tests {
 
         assert_eq!(bytes_written, channel_open.marshal_size());
         assert_eq!(&bytes[..], &MARSHALED_BYTES);
+        Ok(())
+    }
+
+    // pion/datachannel `TestChannelOpenMarshalTooLongLabel` / `...TooLongProtocol`: the lengths are
+    // 16-bit fields, so a longer value is refused instead of being truncated into a corrupt message.
+    #[test]
+    fn test_channel_open_marshal_too_long_label() {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![b'a'; u16::MAX as usize + 1],
+            protocol: b"bar".to_vec(),
+        };
+        assert_eq!(open.marshal().unwrap_err(), Error::ErrTooLongLabel);
+    }
+
+    #[test]
+    fn test_channel_open_marshal_too_long_protocol() {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: b"foo".to_vec(),
+            protocol: vec![b'b'; u16::MAX as usize + 1],
+        };
+        assert_eq!(open.marshal().unwrap_err(), Error::ErrTooLongProtocol);
+    }
+
+    // pion/datachannel `TestChannelOpenUnmarshalVeryLongMessage`: the largest label and protocol
+    // the length fields can express survive a round trip.
+    #[test]
+    fn test_channel_open_very_long_message_round_trips() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![b'a'; u16::MAX as usize],
+            protocol: vec![b'b'; u16::MAX as usize],
+        };
+        let mut raw = open.marshal()?;
+        assert_eq!(raw.len(), 11 + 2 * u16::MAX as usize);
+        assert_eq!(&raw[7..11], &[0xff, 0xff, 0xff, 0xff]);
+        assert_eq!(DataChannelOpen::unmarshal(&mut raw)?, open);
+        Ok(())
+    }
+
+    #[test]
+    fn test_unmarshal_is_the_same_whichever_way_the_buffer_is_split() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::PartialReliableTimed,
+            priority: 7,
+            reliability_parameter: 1234,
+            label: b"a label spanning chunks".to_vec(),
+            protocol: b"and a protocol".to_vec(),
+        };
+        let wire = open.marshal()?.freeze();
+        for split in 0..=wire.len() {
+            let mut chained = wire.slice(..split).chain(wire.slice(split..));
+            assert_eq!(
+                DataChannelOpen::unmarshal(&mut chained)?,
+                open,
+                "split at {split}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_label_and_protocol_allocate_nothing() -> Result<()> {
+        let open = DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: vec![],
+            protocol: vec![],
+        };
+        let wire = open.marshal()?.freeze();
+        let got = DataChannelOpen::unmarshal(&mut wire.clone())?;
+        assert_eq!(got, open);
+        assert_eq!((got.label.capacity(), got.protocol.capacity()), (0, 0));
         Ok(())
     }
 }

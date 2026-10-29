@@ -1,4 +1,7 @@
 use super::*;
+use crate::packetizer::{Depacketizer, Payloader};
+use bytes::{BufMut, BytesMut};
+use shared::error::{Error, Result};
 
 #[test]
 fn test_h265_payload_packetizes_raw_single_nalu_without_annexb_prefix() -> Result<()> {
@@ -52,46 +55,127 @@ fn test_h265_payload_packetizes_idr_n_lp_instead_of_dropping_it() -> Result<()> 
 }
 
 #[test]
-fn test_h265_payload_keeps_single_nalus_when_called_separately() -> Result<()> {
+fn test_h265_payload_sends_parameter_sets_with_the_next_vcl_nalu() -> Result<()> {
     let mut pck = HevcPayloader::default();
 
+    // A parameter set is held back, whichever call it arrives in...
+    let vps = Bytes::from_static(&[0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff]);
+    let pps = Bytes::from_static(&[0x00, 0x00, 0x01, 0x44, 0x01, 0xc0]);
+    assert!(pck.payload(1500, &vps)?.is_empty());
+    assert!(pck.payload(1500, &pps)?.is_empty());
+
+    // ...until a slice comes along, which they are aggregated with.
+    let idr = Bytes::from_static(&[0x00, 0x00, 0x01, 0x26, 0x01, 0xaa, 0xbb]);
     assert_eq!(
-        pck.payload(
-            1500,
-            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x40, 0x01, 0x01])
-        )?,
-        vec![Bytes::from_static(&[0x40, 0x01, 0x01])]
-    );
-    assert_eq!(
-        pck.payload(
-            1500,
-            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x42, 0x01, 0x02])
-        )?,
-        vec![Bytes::from_static(&[0x42, 0x01, 0x02])]
-    );
-    assert_eq!(
-        pck.payload(
-            1500,
-            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x44, 0x01, 0x03])
-        )?,
-        vec![Bytes::from_static(&[0x44, 0x01, 0x03])]
+        pck.payload(1500, &idr)?,
+        vec![Bytes::from_static(&[
+            0x60, 0x01, // aggregation packet
+            0x00, 0x06, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, // VPS
+            0x00, 0x03, 0x44, 0x01, 0xc0, // PPS
+            0x00, 0x04, 0x26, 0x01, 0xaa, 0xbb, // IDR slice
+        ])]
     );
 
-    let payloads = pck.payload(
+    // The sets are sent once: the next slice goes out alone.
+    let p = Bytes::from_static(&[0x00, 0x00, 0x01, 0x02, 0x01, 0x11, 0x22]);
+    assert_eq!(
+        pck.payload(1500, &p)?,
+        vec![Bytes::from_static(&[0x02, 0x01, 0x11, 0x22])]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_h265_payload_replaces_a_resent_parameter_set() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+    // Two VPS with id 0: only the later one survives.
+    pck.payload(
         1500,
-        &Bytes::from_static(&[
-            0x00, 0x00, 0x01, 0x40, 0x01, 0x01, 0x00, 0x00, 0x01, 0x42, 0x01, 0x02,
-        ]),
+        &Bytes::from_static(&[0, 0, 1, 0x40, 0x01, 0x0c, 0x01]),
     )?;
-
-    assert_eq!(payloads.len(), 1, "expected aggregated payload");
+    pck.payload(
+        1500,
+        &Bytes::from_static(&[0, 0, 1, 0x40, 0x01, 0x0c, 0x02]),
+    )?;
+    let out = pck.payload(1500, &Bytes::from_static(&[0, 0, 1, 0x26, 0x01, 0xaa]))?;
     assert_eq!(
-        payloads[0],
-        Bytes::from_static(&[
-            0x60, 0x01, 0x00, 0x03, 0x40, 0x01, 0x01, 0x00, 0x03, 0x42, 0x01, 0x02,
-        ])
+        out,
+        vec![Bytes::from_static(&[
+            0x60, 0x01, 0x00, 0x04, 0x40, 0x01, 0x0c, 0x02, 0x00, 0x03, 0x26, 0x01, 0xaa,
+        ])]
     );
+    Ok(())
+}
 
+#[test]
+fn test_h265_payload_skip_aggregation_sends_each_nalu_alone() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+    pck.skip_aggregation = true;
+    let frame = Bytes::from_static(&[
+        0, 0, 1, 0x40, 0x01, 0x0c, 0x01, 0, 0, 1, 0x26, 0x01, 0xaa, 0xbb,
+    ]);
+    assert_eq!(
+        pck.payload(1500, &frame)?,
+        vec![
+            Bytes::from_static(&[0x40, 0x01, 0x0c, 0x01]),
+            Bytes::from_static(&[0x26, 0x01, 0xaa, 0xbb]),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_h265_payload_never_loops_or_panics_on_tiny_mtu() -> Result<()> {
+    // pion hangs on an MTU of 3; every MTU must terminate here.
+    for mtu in 0..8 {
+        let mut pck = HevcPayloader::default();
+        let frame = Bytes::from_static(&[0, 0, 1, 0x26, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let out = pck.payload(mtu, &frame)?;
+        assert!(
+            out.iter().all(|p| p.len() <= mtu.max(2)),
+            "mtu {mtu}: {out:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_h265_depacketizer_reassembles_fragmentation_units() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+    let nalu = [0x26, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let mut frame = vec![0, 0, 0, 1];
+    frame.extend_from_slice(&nalu);
+    let packets = pck.payload(7, &Bytes::from(frame))?;
+    assert!(packets.len() > 2);
+
+    let mut depacketizer = H265Depacketizer::new();
+    let mut annex_b = BytesMut::new();
+    for (i, p) in packets.iter().enumerate() {
+        let out = depacketizer.depacketize(p)?;
+        if i + 1 < packets.len() {
+            assert!(out.is_empty(), "fragment {i} must wait for the rest");
+        }
+        annex_b.put_slice(&out);
+    }
+    let mut expected = vec![0, 0, 0, 1];
+    expected.extend_from_slice(&nalu);
+    assert_eq!(annex_b.as_ref(), expected.as_slice());
+    Ok(())
+}
+
+#[test]
+fn test_h265_depacketizer_drops_lost_fragment_runs() -> Result<()> {
+    let mut d = H265Depacketizer::new();
+    // A middle fragment with no start before it cannot be placed.
+    let middle = Bytes::from_static(&[0x62, 0x01, 0x26, 1, 2, 3]);
+    assert_eq!(
+        d.depacketize(&middle),
+        Err(Error::ErrH265ExpectedFragmentationStart)
+    );
+    // An end fragment with nothing before it is dropped silently.
+    let end = Bytes::from_static(&[0x62, 0x01, 0x66, 4, 5, 6]);
+    assert!(d.depacketize(&end)?.is_empty());
     Ok(())
 }
 

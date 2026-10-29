@@ -57,6 +57,14 @@ pub enum CryptoError {
         /// Supplied length.
         actual: usize,
     },
+    /// The requested output length exceeds what the algorithm can produce in one expansion.
+    #[error("output length too large: maximum {maximum}, got {actual}")]
+    OutputTooLarge {
+        /// Maximum producible length.
+        maximum: usize,
+        /// Requested length.
+        actual: usize,
+    },
     /// Sanitized provider diagnostic context.
     #[error("provider failure: {0}")]
     Provider(String),

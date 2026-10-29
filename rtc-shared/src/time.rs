@@ -29,6 +29,11 @@ impl SystemInstant {
         }
     }
 
+    /// The monotonic instant this was captured with.
+    pub fn captured_at(&self) -> Instant {
+        self.instant
+    }
+
     /// Only used for deserialization
     pub fn from_epoch(duration_since_unix_epoch: Duration) -> Self {
         let system_now = SystemTime::now(); // Exemption: wall-clock is correct here to deserialization only

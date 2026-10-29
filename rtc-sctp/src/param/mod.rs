@@ -13,6 +13,7 @@ pub(crate) mod param_state_cookie;
 pub(crate) mod param_supported_extensions;
 pub(crate) mod param_type;
 pub(crate) mod param_uknown;
+pub(crate) mod param_zero_checksum_acceptable;
 
 use crate::param::{
     param_chunk_list::ParamChunkList, param_forward_tsn_supported::ParamForwardTsnSupported,
@@ -23,8 +24,10 @@ use crate::param::{
     param_state_cookie::ParamStateCookie, param_supported_extensions::ParamSupportedExtensions,
     param_uknown::ParamUnknown,
 };
+
 use param_header::*;
 use param_type::*;
+pub(crate) use param_zero_checksum_acceptable::DTLS_ERROR_DETECTION_METHOD;
 use shared::error::{Error, Result};
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -68,6 +71,9 @@ pub(crate) fn build_param(raw_param: &Bytes) -> Result<Box<dyn Param>> {
         ParamType::ReqHmacAlgo => Ok(Box::new(ParamRequestedHmacAlgorithm::unmarshal(raw_param)?)),
         ParamType::ChunkList => Ok(Box::new(ParamChunkList::unmarshal(raw_param)?)),
         ParamType::StateCookie => Ok(Box::new(ParamStateCookie::unmarshal(raw_param)?)),
+        ParamType::ZeroChecksumAcceptable => Ok(Box::new(
+            param_zero_checksum_acceptable::ParamZeroChecksumAcceptable::unmarshal(raw_param)?,
+        )),
         ParamType::HeartbeatInfo => Ok(Box::new(ParamHeartbeatInfo::unmarshal(raw_param)?)),
         ParamType::OutSsnResetReq => Ok(Box::new(ParamOutgoingResetRequest::unmarshal(raw_param)?)),
         ParamType::ReconfigResp => Ok(Box::new(ParamReconfigResponse::unmarshal(raw_param)?)),

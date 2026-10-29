@@ -3,6 +3,7 @@ name = "rtc-sdp"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC SDP in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-sdp"
@@ -12,6 +13,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+memchr.workspace = true
+smol_str.workspace = true
+rustc-hash.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 
 url.workspace = true
@@ -19,6 +23,8 @@ rand.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+serde_json.workspace = true
+base64.workspace = true
 
 [[bench]]
 name = "bench"

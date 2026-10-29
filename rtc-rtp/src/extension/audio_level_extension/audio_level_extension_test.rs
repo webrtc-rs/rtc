@@ -63,3 +63,21 @@ fn test_audio_level_extension_level_overflow() -> Result<()> {
 
     Ok(())
 }
+
+// pion TestAudioLevelExtensionMarshalTo.
+#[test]
+fn test_audio_level_extension_marshal_to() -> Result<()> {
+    let a = AudioLevelExtension {
+        level: 8,
+        voice: true,
+    };
+
+    let mut buf = vec![0u8; a.marshal_size()];
+    let n = a.marshal_to(&mut buf)?;
+    assert_eq!(a.marshal_size(), n);
+    assert_eq!(&[0x88][..], &buf[..n]);
+
+    // A zero-length buffer is a short buffer.
+    assert!(a.marshal_to(&mut []).is_err());
+    Ok(())
+}

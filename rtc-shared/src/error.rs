@@ -249,6 +249,12 @@ pub enum Error {
     /// Invalid padding value.
     #[error("Invalid padding value")]
     WrongPadding,
+    /// An RTCP APP packet's data does not fit the 16-bit length field.
+    #[error("application defined data is too large")]
+    AppDefinedDataTooLarge,
+    /// An RTCP APP packet's length field disagrees with the bytes received.
+    #[error("application defined packet length does not match its data")]
+    AppDefinedInvalidLength,
     /// Wrong feedback message type.
     #[error("Wrong feedback message type")]
     WrongFeedbackType,
@@ -548,6 +554,9 @@ pub enum Error {
     /// Bad UNKNOWN-ATTRIBUTES size.
     #[error("bad UNKNOWN-ATTRIBUTES size")]
     ErrBadUnknownAttrsSize,
+    /// Invalid ERROR-CODE code (the class digit exceeds the 3-bit field).
+    #[error("invalid ERROR-CODE code")]
+    ErrInvalidErrorCode,
     /// Invalid length of IP value.
     #[error("invalid length of IP value")]
     ErrBadIpLength,
@@ -857,6 +866,22 @@ pub enum Error {
     #[error("lite agents must only use host candidates")]
     ErrLiteUsingNonHostCandidates,
 
+    /// Indicates that only the controlling agent can renominate a candidate pair.
+    #[error("only controlling agent can renominate")]
+    ErrOnlyControllingAgentCanRenominate,
+
+    /// Indicates that renomination was requested but is not enabled on the agent.
+    #[error("renomination is not enabled")]
+    ErrRenominationNotEnabled,
+
+    /// Indicates that an invalid nomination attribute type was provided.
+    #[error("invalid nomination attribute type")]
+    ErrInvalidNominationAttribute,
+
+    /// Indicates that the requested candidate pair does not exist.
+    #[error("candidate pair not found")]
+    ErrCandidatePairNotFound,
+
     /// Indicates that current ice agent supports Lite only
     #[error("lite support only")]
     ErrLiteSupportOnly,
@@ -937,6 +962,15 @@ pub enum Error {
     /// Could not parse type.
     #[error("could not parse type")]
     ErrParseType,
+    /// Could not parse the candidate foundation.
+    #[error("could not parse foundation")]
+    ErrParseFoundation,
+    /// Could not parse a candidate extension.
+    #[error("could not parse extension")]
+    ErrParseExtension,
+    /// Could not parse the tcptype extension.
+    #[error("could not parse tcptype")]
+    ErrParseTcpType,
     /// Unknown candidate type.
     #[error("unknown candidate type")]
     ErrUnknownCandidateType,
@@ -1029,6 +1063,12 @@ pub enum Error {
     /// Server responded with SRTP Profile we do not support.
     #[error("server responded with SRTP Profile we do not support")]
     ErrClientNoMatchingSrtpProfile,
+    /// The ALPN extension is malformed, or the server selected a protocol the client did not offer.
+    #[error("alpn extension has an invalid format")]
+    ErrAlpnInvalidFormat,
+    /// The peer and this endpoint share no application protocol.
+    #[error("no application protocol in common")]
+    ErrAlpnNoAppProto,
     /// Client required Extended Master Secret extension, but server does not support it.
     #[error("client required Extended Master Secret extension, but server does not support it")]
     ErrClientRequiredButNoServerEms,
@@ -1041,12 +1081,30 @@ pub enum Error {
     /// Cookie must not be longer then 255 bytes.
     #[error("cookie must not be longer then 255 bytes")]
     ErrCookieTooLong,
+    /// Session ID must not be longer than 255 bytes.
+    #[error("session ID must not be longer than 255 bytes")]
+    ErrSessionIdTooLong,
+    /// Too many compression methods to encode.
+    #[error("too many compression methods to encode")]
+    ErrCompressionMethodsTooLong,
+    /// Too many certificate types to encode.
+    #[error("too many certificate types to encode")]
+    ErrCertificateTypesTooLong,
+    /// Public key must not be longer than 255 bytes.
+    #[error("public key must not be longer than 255 bytes")]
+    ErrPublicKeyTooLong,
     /// PSK Identity Hint provided but PSK is nil.
     #[error("PSK Identity Hint provided but PSK is nil")]
     ErrIdentityNoPsk,
     /// No certificate provided.
     #[error("no certificate provided")]
     ErrInvalidCertificate,
+    /// The certificate's public key algorithm OID does not match the signature scheme.
+    #[error("certificate OID does not match signature algorithm")]
+    ErrInvalidCertificateOID,
+    /// The peer's RSA public key exceeds the 8192-bit limit that bounds verification work.
+    #[error("peer RSA key exceeds 8192 bits")]
+    ErrPeerRSAKeyTooLarge,
     /// Cipher spec invalid.
     #[error("cipher spec invalid")]
     ErrInvalidCipherSpec,
@@ -1086,6 +1144,9 @@ pub enum Error {
     /// Invalid signature algorithm.
     #[error("invalid signature algorithm")]
     ErrInvalidSignatureAlgorithm,
+    /// Invalid or unencodable signature-hash algorithm pair.
+    #[error("invalid signature hash algorithm")]
+    ErrInvalidSignHashAlgorithm,
     /// Expected and actual key signature do not match.
     #[error("expected and actual key signature do not match")]
     ErrKeySignatureMismatch,
@@ -1148,6 +1209,83 @@ pub enum Error {
     /// Data length and declared length do not match.
     #[error("data length and declared length do not match")]
     ErrLengthMismatch,
+    /// The `key_share` extension is malformed.
+    #[error("invalid key_share format")]
+    ErrInvalidKeyShareFormat,
+    /// The `key_share` extension repeats a group.
+    #[error("duplicate key_share group")]
+    ErrDuplicateKeyShare,
+    /// The `supported_versions` extension is malformed.
+    #[error("invalid supported_versions format")]
+    ErrInvalidSupportedVersionsFormat,
+    /// A DTLS version outside the valid `legacy_version` range ([RFC 9147 §5.3]).
+    ///
+    /// [RFC 9147 §5.3]: https://datatracker.ietf.org/html/rfc9147#section-5.3
+    #[error("invalid dtls version was provided")]
+    ErrInvalidDtlsVersion,
+    /// The `pre_shared_key` extension is malformed.
+    #[error("invalid Pre-Shared Key extension format")]
+    ErrPreSharedKeyFormat,
+    /// The `psk_key_exchange_modes` extension is malformed.
+    #[error("invalid Pre-Shared Key Exchange Modes extension format")]
+    ErrPskKeyExchangeModesFormat,
+    /// The `psk_key_exchange_modes` extension carries no mode.
+    #[error("no mode set for the Pre-Shared Key Exchange Modes extension")]
+    ErrNoPskKeyExchangeMode,
+    /// The `early_data` extension is malformed.
+    #[error("invalid Early Data Indication extension format")]
+    ErrEarlyDataIndicationFormat,
+    /// The `certificate_authorities` extension is malformed.
+    #[error("invalid Certificate Authorities extension format")]
+    ErrInvalidCertificateAuthoritiesFormat,
+    /// An `oid_filters` entry carries no OID.
+    #[error("no oid set for a OID filter")]
+    ErrEmptyOidFilter,
+    /// The `oid_filters` extension is malformed.
+    #[error("invalid OID filters extension format")]
+    ErrOidFiltersFormat,
+    /// The `oid_filters` extension repeats an OID.
+    #[error("duplicate OID filters")]
+    ErrDuplicateOid,
+    /// The TLS 1.3 `cookie` extension is malformed.
+    #[error("invalid cookie format")]
+    ErrCookieExtFormat,
+    /// The `connection_id` extension is malformed.
+    #[error("invalid connection ID format")]
+    ErrInvalidConnectionIdFormat,
+    /// A `certificate_request_context` longer than its 1-byte length prefix allows.
+    #[error("certificate request context must not be longer than 255 bytes")]
+    ErrCertificateRequestContextTooLong,
+    /// A TLS 1.3 `Certificate` entry is malformed.
+    #[error("invalid certificate entry")]
+    ErrInvalidCertificateEntry,
+    /// A TLS 1.3 `Certificate` list longer than its 3-byte length prefix allows.
+    #[error("certificate list must not be longer than 2^24-1 bytes")]
+    ErrCertificateListTooLong,
+    /// A `certificate_request_context` that does not decode.
+    #[error("invalid certificate request context")]
+    ErrInvalidCertificateRequestContext,
+    /// A TLS 1.3 `CertificateRequest` without the required `signature_algorithms` extension.
+    #[error("signature_algorithms extension is required in CertificateRequest")]
+    ErrMissingSignatureAlgorithmsExtension,
+    /// An extensions block whose length is outside `<2..2^16-1>`.
+    #[error("extensions data must be between 2 and 2^16-1 bytes")]
+    ErrInvalidExtensionsLength,
+    /// HKDF was called without a hash function.
+    #[error("HKDF-Extract expected a non-nil hash function")]
+    ErrHkdfMissingHashFunction,
+    /// An HKDF-Expand-Label label shorter than the `opaque label<7..255>` minimum.
+    #[error("HKDF-Expand-Label expected a label with length >= 7")]
+    ErrHkdfLabelTooSmall,
+    /// An HKDF-Expand-Label label longer than the `opaque label<7..255>` maximum.
+    #[error("HKDF-Expand-Label expected a label with length <= 255")]
+    ErrHkdfLabelTooBig,
+    /// An HKDF-Expand-Label context longer than `opaque context<0..255>` allows.
+    #[error("HKDF-Expand-Label expected a context with length <= 255")]
+    ErrHkdfContextTooBig,
+    /// An HKDF-Expand-Label output longer than one expansion can produce.
+    #[error("HKDF-Expand-Label expected a length <= 65535")]
+    ErrHkdfLengthTooBig,
     /// Buffer not long enough to contain nonce.
     #[error("buffer not long enough to contain nonce")]
     ErrNotEnoughRoomForNonce,
@@ -1188,6 +1326,9 @@ pub enum Error {
         /// The configured maximum.
         max_size: usize,
     },
+    /// The handshake cache holds as many messages, or bytes, as it is allowed to.
+    #[error("handshake cache overflow")]
+    ErrHandshakeCacheOverflow,
     /// Client transport is not set yet.
     #[error("Client transport is not set yet")]
     ErrClientTransportNotSet,
@@ -1258,6 +1399,21 @@ pub enum Error {
     /// ChunkType is not of type ForwardTsn.
     #[error("ChunkType is not of type ForwardTsn")]
     ErrChunkTypeNotForwardTsn,
+    /// ChunkType is not of type I-FORWARD-TSN.
+    #[error("ChunkType is not of type I-FORWARD-TSN")]
+    ErrChunkTypeNotIForwardTsn,
+    /// An I-FORWARD-TSN chunk's stream list is not a whole number of 8-byte entries.
+    #[error("i-forward-tsn chunk invalid length")]
+    ErrIForwardTsnChunkInvalidLength,
+    /// An I-FORWARD-TSN chunk names more streams than a chunk can carry.
+    #[error("i-forward-tsn chunk contains too many streams")]
+    ErrIForwardTsnTooManyStreams,
+    /// A stream's reassembly queue holds more DATA entries than the configured limit.
+    #[error("reassembly queue data limit exceeded")]
+    ErrReassemblyQueueLimitExceeded,
+    /// A stream's reassembly queue holds more I-DATA messages than the configured limit.
+    #[error("reassembly queue i-data message identifier limit exceeded")]
+    ErrReassemblyQueueMidLimitExceeded,
     /// ChunkType is not of type HEARTBEAT.
     #[error("ChunkType is not of type HEARTBEAT")]
     ErrChunkTypeNotHeartbeat,
@@ -1276,6 +1432,12 @@ pub enum Error {
     /// Failed unmarshalling param in Heartbeat Chunk.
     #[error("failed unmarshalling param in Heartbeat Chunk")]
     ErrHeartbeatChunkUnmarshal,
+    /// Heartbeat has non-zero trailing bytes after last parameter.
+    #[error("heartbeat has non-zero trailing bytes after last parameter")]
+    ErrHeartbeatExtraNonZero,
+    /// Heartbeat marshal requires exactly one Heartbeat Info parameter.
+    #[error("heartbeat marshal requires exactly one Heartbeat Info parameter")]
+    ErrHeartbeatMarshalNoInfo,
     /// Unimplemented.
     #[error("unimplemented")]
     ErrUnimplemented,
@@ -1577,6 +1739,32 @@ pub enum Error {
     /// Unknow Protocol.
     #[error("Unknow Protocol")]
     UnknownProtocol,
+    /// The configuration requires RTP header extension encryption (RFC 9335) and the session
+    /// description did not negotiate it.
+    #[error("rtp header extension encryption required")]
+    ErrRtpHeaderEncryptionRequired,
+    /// The session description negotiated RTP header extension encryption for only some RTP media
+    /// sections; it is a property of the whole connection here.
+    #[error("rtp header extension encryption mixed mode not supported")]
+    ErrRtpHeaderEncryptionMixedModeNotSupported,
+    /// A Cryptex (RFC 9335) packet arrived on an SRTP context where Cryptex is disabled.
+    #[error("srtp: cryptex is disabled")]
+    ErrCryptexDisabled,
+    /// A packet with header extensions or CSRCs arrived unencrypted where Cryptex is required.
+    #[error("srtp: header extensions and CSRCs must be encrypted with Cryptex")]
+    ErrUnencryptedHeaderExtAndCsrcs,
+    /// Cryptex only protects RFC 8285 header extensions.
+    #[error("srtp: cryptex does not support this header extension format")]
+    ErrUnsupportedHeaderExtension,
+    /// An RTCP packet is longer than its 16-bit word-count length field can describe.
+    #[error("rtcp: invalid packet length")]
+    BadLength,
+    /// A data channel label is too long for the 16-bit length field of the OPEN message.
+    #[error("label is too long, must be less than 65536 characters")]
+    ErrTooLongLabel,
+    /// A data channel subprotocol is too long for the 16-bit length field of the OPEN message.
+    #[error("protocol is too long, must be less than 65536 characters")]
+    ErrTooLongProtocol,
 
     //Media
     /// Stream is nil.
@@ -1597,6 +1785,15 @@ pub enum Error {
     /// IVF version unknown, parser may not parse correctly.
     #[error("IVF version unknown, parser may not parse correctly")]
     ErrUnknownIVFVersion,
+    /// IVF timebase denominator or numerator is zero.
+    #[error("invalid media timebase")]
+    ErrInvalidMediaTimebase,
+    /// Malformed rtpdump data.
+    #[error("malformed rtpdump")]
+    ErrRtpDumpMalformed,
+    /// An rtpdump packet does not fit the format's 16-bit record length.
+    #[error("rtpdump packet too large for the 16-bit record length")]
+    ErrRtpDumpPacketTooLarge,
 
     /// File not opened.
     #[error("file not opened")]
@@ -1604,6 +1801,9 @@ pub enum Error {
     /// Invalid nil packet.
     #[error("invalid nil packet")]
     ErrInvalidNilPacket,
+    /// No IVF codec exists for the given MIME type.
+    #[error("no codec for this MimeType")]
+    ErrNoSuchCodec,
 
     /// Bad header signature.
     #[error("bad header signature")]
@@ -1626,6 +1826,33 @@ pub enum Error {
     /// Unsupported channel mapping family.
     #[error("unsupported channel mapping family")]
     ErrUnsupportedChannelMappingFamily,
+    /// Invalid channel count.
+    #[error("invalid channel count")]
+    ErrInvalidChannelCount,
+    /// Invalid channel mapping.
+    #[error("invalid channel mapping")]
+    ErrInvalidChannelMap,
+    /// Invalid OpusTags.
+    #[error("invalid OpusTags")]
+    ErrInvalidOpusTags,
+    /// Duplicate Ogg track SSRC.
+    #[error("duplicate Ogg track SSRC")]
+    ErrDuplicateTrackSSRC,
+    /// Duplicate Ogg track serial.
+    #[error("duplicate Ogg track serial")]
+    ErrDuplicateTrackSerial,
+    /// Cannot add Ogg tracks after writing has started.
+    #[error("cannot add Ogg tracks after writing has started")]
+    ErrTracksStarted,
+    /// RTP packet SSRC does not match Ogg track SSRC.
+    #[error("RTP packet SSRC does not match Ogg track SSRC")]
+    ErrPacketSSRCMismatch,
+    /// Invalid Opus packet.
+    #[error("invalid Opus packet")]
+    ErrInvalidOpusPacket,
+    /// Output not opened (the writer was closed).
+    #[error("output not opened")]
+    ErrOutputNotOpened,
 
     /// Data is not a H264 bitstream.
     #[error("data is not a H264 bitstream")]
@@ -1710,6 +1937,51 @@ pub enum Error {
     /// MDNS: empty builder msg.
     #[error("mDNS: empty builder msg")]
     ErrEmptyBuilderMsg,
+    /// MDNS: invalid DNS-SD service name.
+    #[error("mDNS: invalid DNS-SD service name")]
+    ErrInvalidServiceName,
+    /// MDNS: service instance name exceeds 63 bytes.
+    #[error("mDNS: service instance name exceeds 63 bytes")]
+    ErrInstanceNameTooLong,
+    /// MDNS: service instance name must not be empty.
+    #[error("mDNS: service instance name must not be empty")]
+    ErrInstanceNameEmpty,
+    /// MDNS: service instance name contains ASCII control character.
+    #[error("mDNS: service instance name contains ASCII control character")]
+    ErrInstanceNameHasControl,
+    /// MDNS: TXT record string exceeds 255 bytes.
+    #[error("mDNS: TXT record string exceeds 255 bytes")]
+    ErrTXTStringTooLong,
+    /// MDNS: TXT record key must not be empty.
+    #[error("mDNS: TXT record key must not be empty")]
+    ErrTXTKeyEmpty,
+    /// MDNS: TXT record key must not contain '='.
+    #[error("mDNS: TXT record key must not contain '='")]
+    ErrTXTKeyHasEquals,
+    /// MDNS: TXT record key must be printable US-ASCII (0x20-0x7E).
+    #[error("mDNS: TXT record key must be printable US-ASCII (0x20-0x7E)")]
+    ErrTXTKeyNotASCII,
+    /// MDNS: TXT record keys must be unique (case-insensitive).
+    #[error("mDNS: TXT record keys must be unique (case-insensitive)")]
+    ErrTXTDuplicateKey,
+    /// MDNS: TXT value is not valid UTF-8; the wire layer encodes strings.
+    #[error("mDNS: TXT value is not valid UTF-8; the wire layer encodes strings")]
+    ErrTXTValueNotUtf8,
+    /// MDNS: resource body is not PTR.
+    #[error("mDNS: resource body is not PTR")]
+    ErrNotPTRResource,
+    /// MDNS: resource body is not SRV.
+    #[error("mDNS: resource body is not SRV")]
+    ErrNotSRVResource,
+    /// MDNS: resource body is not TXT.
+    #[error("mDNS: resource body is not TXT")]
+    ErrNotTXTResource,
+    /// MDNS: address is not IPv4.
+    #[error("mDNS: address is not IPv4")]
+    ErrNotIPv4Address,
+    /// MDNS: address is not IPv6.
+    #[error("mDNS: address is not IPv6")]
+    ErrNotIPv6Address,
 
     //RTC
     /// ErrConnectionClosed indicates an operation executed after connection
@@ -1805,6 +2077,11 @@ pub enum Error {
     #[error("ice candidate pool size cannot be modified")]
     ErrModifyingICECandidatePoolSize,
 
+    /// ErrModifyingRTPHeaderEncryptionPolicy indicates that an attempt to modify
+    /// RTPHeaderEncryptionPolicy was made after PeerConnection has been initialized.
+    #[error("rtp header encryption policy cannot be modified")]
+    ErrModifyingRTPHeaderEncryptionPolicy,
+
     /// ErrStringSizeLimit indicates that the character size limit of string is
     /// exceeded. The limit is hardcoded to 65535 according to specifications.
     #[error("data channel label exceeds size limit")]
@@ -1826,6 +2103,11 @@ pub enum Error {
     /// ErrCodecNotFound is returned when a codec search to the Media Engine fails
     #[error("codec not found")]
     ErrCodecNotFound,
+
+    /// ErrCodecAlreadyRegistered is returned when a codec is registered with a payload type
+    /// another codec already uses
+    #[error("codec is already registered")]
+    ErrCodecAlreadyRegistered,
 
     /// ErrNoRemoteDescription indicates that an operation was rejected because
     /// the remote description is not set
@@ -2212,6 +2494,45 @@ pub enum Error {
     #[error("excessive retries in CreateOffer")]
     ErrExcessiveRetries,
 
+    /// An H.265 fragmentation unit arrived mid-NAL-unit with no start fragment before it.
+    #[error("expecting a fragmentation start unit")]
+    ErrH265ExpectedFragmentationStart,
+    /// An H.265 NAL unit's fragments are not a complete, ordered start-to-end sequence.
+    #[error("h265 fragmentation units are incomplete")]
+    ErrH265FragmentsIncomplete,
+    /// An H.266 aggregation packet or fragment set holds fewer than two NAL units.
+    #[error("h266 aggregation and fragmentation packets require at least 2 packets")]
+    ErrH266NotEnoughPackets,
+    /// An H.266 aggregation unit holds a packet that is not a single NAL unit.
+    #[error("invalid h266 packet type")]
+    ErrInvalidH266PacketType,
+    /// An H.266 NAL unit passed to aggregation is larger than the format's length field.
+    #[error("h266 packet passed in is larger than 65535 bytes")]
+    ErrH266PacketTooLarge,
+    /// An H.266 fragment set's first unit does not carry the start bit.
+    #[error("expecting the first h266 fragmentation packet")]
+    ErrH266FirstFragmentationUnitMissing,
+    /// An H.266 fragment set's last unit does not carry the end bit.
+    #[error("expecting the last h266 fragmentation packet")]
+    ErrH266LastFragmentationUnitMissing,
+    /// An H.266 fragmentation unit arrived mid-NAL-unit with no start fragment before it.
+    #[error("expecting a h266 fragmentation start unit")]
+    ErrH266ExpectedFragmentationStart,
+    /// An AV1 OBU header has its forbidden bit set.
+    #[error("invalid OBU header: forbidden bit is set")]
+    ErrInvalidObuHeader,
+    /// A VP9 frame header ended before all its fields were read.
+    #[error("not enough bits")]
+    ErrVp9NotEnoughBits,
+    /// A VP9 frame header does not start with the frame marker.
+    #[error("invalid frame marker")]
+    ErrVp9InvalidFrameMarker,
+    /// A VP9 key frame's sync code is wrong.
+    #[error("wrong frame sync byte")]
+    ErrVp9WrongFrameSyncByte,
+    /// An RTP packet has the padding bit set but a padding count of zero.
+    #[error("invalid RTP padding")]
+    ErrInvalidRtpPadding,
     /// Not long enough to be a RTP Packet.
     #[error("not long enough to be a RTP Packet")]
     ErrRTPTooShort,
@@ -2329,6 +2650,10 @@ pub enum Error {
     #[error("{0}")]
     /// An error that does not fit any other variant, carrying a description.
     Other(String),
+    /// A NACK generator or responder was configured with a buffer size that is not a power of
+    /// two in the supported range.
+    #[error("nack: invalid buffer size")]
+    ErrNackInvalidSize,
 }
 
 impl Error {

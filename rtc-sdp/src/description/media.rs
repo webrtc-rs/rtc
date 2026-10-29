@@ -7,6 +7,7 @@
 //!
 //! [`RangedPort`](crate::description::media::RangedPort) exists because a media section may claim consecutive ports (`<port>/<count>`),
 //! which RTP/RTCP without multiplexing needs.
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -109,7 +110,7 @@ impl MediaDescription {
                     merge_codecs(codec, &mut codecs);
                 }
             } else if attr.starts_with("rtcp-fb:")
-                && let Ok(codec) = parse_rtcp_fb(&attr)
+                && let Ok((codec, false)) = parse_rtcp_fb(&attr)
             {
                 merge_codecs(codec, &mut codecs);
             }
@@ -123,25 +124,25 @@ impl MediaDescription {
     pub fn new_jsep_media_description(codec_type: String, _codec_prefs: Vec<&str>) -> Self {
         MediaDescription {
             media_name: MediaName {
-                media: codec_type,
+                media: codec_type.into(),
                 port: RangedPort {
                     value: 9,
                     range: None,
                 },
                 protos: vec![
-                    "UDP".to_string(),
-                    "TLS".to_string(),
-                    "RTP".to_string(),
-                    "SAVPF".to_string(),
+                    SmolStr::new_static("UDP"),
+                    SmolStr::new_static("TLS"),
+                    SmolStr::new_static("RTP"),
+                    SmolStr::new_static("SAVPF"),
                 ],
                 formats: vec![],
             },
             media_title: None,
             connection_information: Some(ConnectionInformation {
-                network_type: "IN".to_string(),
-                address_type: "IP4".to_string(),
+                network_type: SmolStr::new_static("IN"),
+                address_type: SmolStr::new_static("IP4"),
                 address: Some(Address {
-                    address: "0.0.0.0".to_string(),
+                    address: SmolStr::new_static("0.0.0.0"),
                     ttl: None,
                     range: None,
                 }),
@@ -184,7 +185,9 @@ impl MediaDescription {
         channels: u16,
         fmtp: String,
     ) -> Self {
-        self.media_name.formats.push(payload_type.to_string());
+        self.media_name
+            .formats
+            .push(SmolStr::new(payload_type.to_string()));
         let rtpmap = if channels > 0 {
             format!("{payload_type} {name}/{clockrate}/{channels}")
         } else {
@@ -273,31 +276,33 @@ impl fmt::Display for RangedPort {
 #[derive(Debug, Default, Clone)]
 pub struct MediaName {
     /// The media type: `audio`, `video`, or `application` for data channels.
-    pub media: String,
+    pub media: SmolStr,
     /// The transport port, possibly a range.
     pub port: RangedPort,
     /// The transport protocol tokens, such as `UDP`, `TLS`, `RTP`, `SAVPF`.
-    pub protos: Vec<String>,
+    pub protos: Vec<SmolStr>,
     /// The payload types (for RTP media) or format tokens this section offers.
-    pub formats: Vec<String>,
+    pub formats: Vec<SmolStr>,
 }
 
 impl fmt::Display for MediaName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.media, self.port)?;
+        // A browser's video section lists dozens of payload types; each goes out as two plain
+        // string writes, not a trip through the formatting machinery.
+        f.write_str(&self.media)?;
+        f.write_str(" ")?;
+        write!(f, "{}", self.port)?;
 
-        let mut first = true;
+        let mut separator = " ";
         for part in &self.protos {
-            if first {
-                first = false;
-                write!(f, " {part}")?;
-            } else {
-                write!(f, "/{part}")?;
-            }
+            f.write_str(separator)?;
+            f.write_str(part)?;
+            separator = "/";
         }
 
         for part in &self.formats {
-            write!(f, " {part}")?;
+            f.write_str(" ")?;
+            f.write_str(part)?;
         }
 
         Ok(())

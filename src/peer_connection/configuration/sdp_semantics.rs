@@ -124,7 +124,7 @@ mod test {
     fn get_md_names(sdp: &SessionDescription) -> Vec<String> {
         sdp.media_descriptions
             .iter()
-            .map(|md| md.media_name.media.clone())
+            .map(|md| md.media_name.media.to_string())
             .collect()
     }
 

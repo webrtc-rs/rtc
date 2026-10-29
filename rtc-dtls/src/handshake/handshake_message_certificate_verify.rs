@@ -33,8 +33,15 @@ impl HandshakeMessageCertificateVerify {
     ///
     /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8(self.algorithm.hash as u8)?;
-        writer.write_u8(self.algorithm.signature as u8)?;
+        // CertificateVerify in DTLS 1.2 encodes the pair as one byte each, so a TLS 1.3 PSS
+        // scheme (a full `u16` value) or an unencodable pair is rejected, as in pion.
+        if self.algorithm.signature.is_pss() {
+            return Err(Error::ErrInvalidSignHashAlgorithm);
+        }
+        let [hash, signature] = self.algorithm.scheme_bytes()?;
+
+        writer.write_u8(hash)?;
+        writer.write_u8(signature)?;
         writer.write_u16::<BigEndian>(self.signature.len() as u16)?;
         writer.write_all(&self.signature)?;
 
@@ -47,17 +54,17 @@ impl HandshakeMessageCertificateVerify {
     ///
     /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
-        let hash_algorithm = reader.read_u8()?.into();
-        let signature_algorithm = reader.read_u8()?.into();
+        let scheme = reader.read_u16::<BigEndian>()?;
+        // The pair must be one this crate recognizes; pion rejects unknown pairs with
+        // errInvalidSignHashAlgorithm rather than carrying them into the handshake.
+        let algorithm = SignatureHashAlgorithm::from_scheme(scheme)
+            .map_err(|_| Error::ErrInvalidSignHashAlgorithm)?;
         let signature_length = reader.read_u16::<BigEndian>()? as usize;
         let mut signature = vec![0; signature_length];
         reader.read_exact(&mut signature)?;
 
         Ok(HandshakeMessageCertificateVerify {
-            algorithm: SignatureHashAlgorithm {
-                hash: hash_algorithm,
-                signature: signature_algorithm,
-            },
+            algorithm,
             signature,
         })
     }

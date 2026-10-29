@@ -697,7 +697,7 @@ impl RTCCertificate {
             let hashed = crypto
                 .hash(HashAlgorithm::Sha256, c.as_ref())
                 .map_err(crypto_error)?;
-            let values: Vec<String> = hashed.iter().map(|x| format! {"{x:02x}"}).collect();
+            let values: Vec<String> = hashed.iter().map(|x| format!("{x:02x}")).collect();
 
             fingerprints.push(RTCDtlsFingerprint {
                 algorithm: "sha-256".to_owned(),

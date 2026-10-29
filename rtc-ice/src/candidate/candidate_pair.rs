@@ -9,7 +9,7 @@
 //! media.
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Represent the ICE candidate pair state.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +79,11 @@ pub struct CandidatePair {
     pub(crate) binding_request_count: u16,
     pub(crate) state: CandidatePairState,
     pub(crate) nominated: bool,
+    /// A nomination arrived before this pair's own check succeeded; select the pair as soon
+    /// as it does (RFC 8445 §7.3.1.5).
+    pub(crate) nominate_on_binding_success: bool,
+    /// When the latest successful response arrived, for judging how fresh the pair is.
+    pub(crate) last_response_received_at: Option<Instant>,
 
     // STUN transaction stats
     /// Total number of STUN connectivity check requests sent (not including retransmissions).
@@ -154,6 +159,8 @@ impl CandidatePair {
             state: CandidatePairState::Waiting,
             binding_request_count: 0,
             nominated: false,
+            nominate_on_binding_success: false,
+            last_response_received_at: None,
             // STUN transaction stats
             requests_sent: 0,
             requests_received: 0,

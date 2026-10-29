@@ -1,3 +1,6 @@
+// The same module docs are rendered where a module is re-exported, and rustdoc judges a link
+// redundant from one place and necessary from the other.
+#![allow(rustdoc::redundant_explicit_links)]
 #![warn(rust_2018_idioms)]
 #![warn(missing_docs)]
 #![allow(dead_code)]
@@ -14,7 +17,7 @@
 //!   `marshal` one back, get and set header extensions by id.
 //! * [`packetizer`] — [`Packetizer`](packetizer::Packetizer), which fragments a frame into
 //!   MTU-sized payloads, and the per-codec [`Payloader`](packetizer::Payloader)
-//!   implementations in [`codec`] (VP8, VP9, H.264, H.265, AV1, Opus, G.711).
+//!   implementations in [`codec`] (VP8, VP9, H.264, H.265, H.266, AV1, Opus, G.711).
 //! * [`sequence`] — [`Sequencer`](sequence::Sequencer), for sequence numbers that start at a
 //!   random offset as the RFC requires.
 //! * [`extension`] — the typed header extensions: audio level ([RFC 6464]), video
@@ -56,7 +59,7 @@
 //! [RFC 8285]: https://datatracker.ietf.org/doc/html/rfc8285
 //! [RFC 6464]: https://datatracker.ietf.org/doc/html/rfc6464
 
-/// Per-codec payloaders and depacketizers (VP8, VP9, AV1, H.264, H.265, Opus, G.711).
+/// Per-codec payloaders and depacketizers (VP8, VP9, AV1, H.264, H.265, H.266, Opus, G.711).
 pub mod codec;
 /// The typed RTP header extensions ([RFC 8285]).
 ///

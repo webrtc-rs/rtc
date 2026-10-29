@@ -31,11 +31,11 @@ impl FixedBigInt {
         FixedBigInt {
             bits: vec![0; chunk_size],
             n,
-            msb_mask: if n.is_multiple_of(64) {
-                u64::MAX
-            } else {
-                (1 << (64 - n % 64)) - 1
-            },
+            // Only the low `n % 64` bits of the top word are inside the window (all of it
+            // when `n` is a multiple of 64, including n = 0 where the mask is irrelevant
+            // because `bit`/`set_bit` gate on `n`). Matches pion's
+            // `^uint64(0) >> ((64 - n%64) % 64)`.
+            msb_mask: u64::MAX >> ((64 - n % 64) % 64),
         }
     }
 

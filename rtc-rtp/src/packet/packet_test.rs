@@ -904,7 +904,8 @@ fn test_rfc8285_one_byte_extension_terminate_processing_when_reserved_id_encount
         "Extension should be empty for invalid ID"
     );
 
-    let payload = reserved_id_pkt.slice(17..);
+    // The payload starts after the whole extension block, however early parsing stopped.
+    let payload = reserved_id_pkt.slice(20..);
     assert_eq!(p.payload, payload, "p.payload must be same as payload");
 
     Ok(())
@@ -1260,5 +1261,513 @@ fn test_round_trip() -> Result<()> {
         payload, p.payload,
     );
 
+    Ok(())
+}
+
+#[test]
+fn test_unmarshal_reuse_matches_unmarshal_and_keeps_allocations() {
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(0x7e57);
+    let mut reused = Packet::default();
+    let mut capacity_seen = 0;
+    for round in 0..5_000 {
+        let mut header = Header {
+            version: 2,
+            marker: rng.random(),
+            payload_type: rng.random_range(0..128),
+            sequence_number: rng.random(),
+            timestamp: rng.random(),
+            ssrc: rng.random(),
+            csrc: (0..rng.random_range(0..3)).map(|_| rng.random()).collect(),
+            ..Default::default()
+        };
+        if rng.random_bool(0.6) {
+            header.extension = true;
+            header.extension_profile = EXTENSION_PROFILE_ONE_BYTE;
+            for id in 1..=rng.random_range(1..4u8) {
+                let _ = header.set_extension(id, Bytes::from(vec![id; rng.random_range(1..=4)]));
+            }
+        }
+        let packet = Packet {
+            header,
+            payload: Bytes::from(
+                (0..rng.random_range(0..40))
+                    .map(|i| i as u8)
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        let mut raw = packet.marshal().unwrap().to_vec();
+        // Now and then corrupt it, so the error paths agree too.
+        if rng.random_bool(0.2) && !raw.is_empty() {
+            let i = rng.random_range(0..raw.len());
+            raw[i] = rng.random();
+        }
+        let raw = Bytes::from(raw);
+
+        let fresh = Packet::unmarshal(&mut raw.clone());
+        let status = reused.unmarshal_reuse(&raw);
+        match (fresh, status) {
+            (Ok(expected), Ok(())) => {
+                assert_eq!(reused, expected, "round {round}: {raw:02x?}");
+                capacity_seen = capacity_seen.max(reused.header.extensions.capacity());
+            }
+            (Err(expected), Err(got)) => assert_eq!(got, expected, "round {round}: {raw:02x?}"),
+            (a, b) => panic!("round {round}: unmarshal {a:?} but unmarshal_reuse {b:?}"),
+        }
+    }
+    // The extension table was reused, not rebuilt: it only ever grows.
+    assert!(reused.header.extensions.capacity() >= capacity_seen);
+}
+
+// pion TestRFC8285ClearExtensions.
+#[test]
+fn test_rfc_8285_clear_extensions() -> Result<()> {
+    let mut header = Header {
+        marker: true,
+        extension: true,
+        extension_profile: 0xBEDE,
+        extensions: vec![
+            Extension {
+                id: 1,
+                payload: Bytes::from_static(&[0xAA]),
+            },
+            Extension {
+                id: 2,
+                payload: Bytes::from_static(&[0xBB]),
+            },
+        ],
+        version: 2,
+        payload_type: 96,
+        sequence_number: 27023,
+        timestamp: 3653407706,
+        ssrc: 476325762,
+        ..Default::default()
+    };
+
+    assert!(header.get_extension(1).is_some());
+    assert!(header.get_extension(2).is_some());
+    header.clear_extensions();
+    assert!(header.get_extension(1).is_none());
+    assert!(header.get_extension(2).is_none());
+    assert!(!header.extension, "the extension flag should be cleared");
+    assert!(header.extensions.is_empty());
+    assert_eq!(0, header.extension_profile, "the profile should be reset");
+    Ok(())
+}
+
+// pion TestRFC8285OneByteExtensionTerminateProcessingWhenPaddingWithSizeEncountered:
+// a one-byte element with id 0 and a non-zero length ends the extension block;
+// the rest of the block is not an extension.
+#[test]
+fn test_rfc_8285_one_byte_extension_terminate_processing_when_padding_with_size_encountered()
+-> Result<()> {
+    let raw = vec![
+        0x90, 0xe0, 0x69, 0x8f, 0xd9, 0xc2, 0x93, 0xda, 0x1c, 0x64, //
+        0x27, 0x82, 0xBE, 0xDE, 0x00, 0x01, 0x01, 0xAA, 0x98, 0x36, 0xbe, 0x88, 0x9e,
+    ];
+    let packet = Packet::unmarshal(&mut &raw[..])?;
+    assert!(
+        packet.header.extensions.is_empty(),
+        "extensions should be empty for a non-zero padding-size element"
+    );
+    assert_eq!(&raw[20..], &packet.payload[..]);
+    Ok(())
+}
+
+// pion TestUnmarshal_{OneByte,TwoByte,NonStandard,Empty*}ExtensionWithoutRTPPayload:
+// a header extension block with nothing after it parses.
+#[test]
+fn test_unmarshal_extensions_without_rtp_payload() -> Result<()> {
+    let cases: Vec<Vec<u8>> = vec![
+        // One-byte, id 0 with length (terminates), then data.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0xBE, 0xDE, 0x00, 0x01, 0x02, 0x01, 0x02, 0x03,
+        ],
+        // Two-byte, id 2 len 2, then data.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0x10, 0x00, 0x00, 0x01, 0x02, 0x02, 0x02, 0x03,
+        ],
+        // Non-standard profile 0xAAAA, opaque payload.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0xAA, 0xAA, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04,
+        ],
+        // Empty one-byte block.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0xBE, 0xDE, 0x00, 0x00,
+        ],
+        // Empty two-byte block.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0x10, 0x00, 0x00, 0x00,
+        ],
+        // Empty non-standard block.
+        vec![
+            0x10, 0x64, 0x57, 0x49, 0x00, 0x00, 0x01, 0x90, 0x12, 0x34, 0xAB, 0xCD, //
+            0xAA, 0xAA, 0x00, 0x00,
+        ],
+    ];
+    for raw in cases {
+        assert!(
+            Packet::unmarshal(&mut &raw[..]).is_ok(),
+            "should unmarshal {:02x?}",
+            raw
+        );
+    }
+    Ok(())
+}
+
+// pion TestCloneHeader: a clone is independent of later changes to the
+// original (pion mutates the original's slices; rtc-rtp replaces through
+// `set_extension`/`csrc.push`, which never touches the clone's state).
+#[test]
+fn test_clone_header() {
+    let mut header = Header {
+        marker: true,
+        extension: true,
+        extension_profile: 1,
+        extensions: vec![Extension {
+            id: 0,
+            payload: Bytes::from_static(&[0xFF, 0xFF, 0xFF, 0xFF]),
+        }],
+        version: 2,
+        payload_type: 96,
+        sequence_number: 27023,
+        timestamp: 3653407706,
+        ssrc: 476325762,
+        ..Default::default()
+    };
+    let clone = header.clone();
+    assert_eq!(header, clone);
+
+    header.csrc.push(1);
+    assert_ne!(clone.csrc.len(), header.csrc.len());
+    // pion mutates the original's extension payload in place; rtc-rtp's
+    // payloads are `Bytes` (immutable), so the equivalent is replacing the
+    // element payload directly.
+    header.extensions[0].payload = Bytes::from_static(&[0x1F]);
+    assert_eq!(
+        Some(Bytes::from_static(&[0xFF, 0xFF, 0xFF, 0xFF])),
+        clone.get_extension(0),
+        "the clone's extension should be unchanged"
+    );
+    assert_eq!(
+        Some(Bytes::from_static(&[0x1F])),
+        header.get_extension(0),
+        "the original was changed"
+    );
+}
+
+// pion TestClonePacket.
+#[test]
+fn test_clone_packet() {
+    let raw = vec![
+        0x90, 0xe0, 0x69, 0x8f, 0xd9, 0xc2, 0x93, 0xda, 0x1c, 0x64, //
+        0x27, 0x82, 0xBE, 0xDE, 0x00, 0x01, 0x50, 0xAA, 0x00, 0x00, //
+        0x98, 0x36, 0xbe, 0x88, 0x9e,
+    ];
+    let packet = Packet {
+        payload: Bytes::copy_from_slice(&raw[20..]),
+        ..Packet::default()
+    };
+
+    let clone = packet.clone();
+    assert_eq!(packet, clone);
+
+    // Replacing the original's payload cannot disturb the clone (pion mutates
+    // the slice in place; `Bytes` is replaced, never mutated).
+    let mut packet = packet;
+    packet.payload = Bytes::from_static(&[0x1F]);
+    assert_ne!(clone.payload, Bytes::from_static(&[0x1F]));
+}
+
+// pion TestMarshalRTPPacketFuncs: the header/packet marshal-size helpers agree
+// with what lands on the wire (pion: MarshalPacketTo / PacketMarshalSize /
+// HeaderAndPacketMarshalSize; rtc-rtp: Packet::marshal_to / marshal_size and
+// Header::marshal_size).
+#[test]
+fn test_marshal_rtp_packet_funcs() -> Result<()> {
+    // Packet with only padding.
+    let raw = vec![
+        0xb0, 0xe0, 0x69, 0x8f, 0xd9, 0xc2, 0x93, 0xda, 0x1c, 0x64, //
+        0x27, 0x82, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, //
+        0x00, 0x00, 0x00, 0x00, 0x05,
+    ];
+    let packet = Packet {
+        header: Header {
+            padding: true,
+            marker: true,
+            extension: true,
+            extension_profile: 1,
+            extensions: vec![Extension {
+                id: 0,
+                payload: Bytes::from_static(&[0xFF, 0xFF, 0xFF, 0xFF]),
+            }],
+            version: 2,
+            payload_type: 96,
+            sequence_number: 27023,
+            timestamp: 3653407706,
+            ssrc: 476325762,
+            padding_size: 5,
+            ..Default::default()
+        },
+        payload: Bytes::new(),
+    };
+
+    let mut buf = vec![0u8; 100];
+    let n = packet.marshal_to(&mut buf)?;
+    assert_eq!(raw.len(), n);
+    assert_eq!(&raw[..], &buf[..n]);
+    assert_eq!(n, packet.marshal_size());
+    assert_eq!(packet.header.marshal_size() + packet.payload.len() + 5, n);
+    Ok(())
+}
+
+// pion TestDeprecatedPaddingSizeField, adapted: rtc-rtp has no deprecated
+// Packet-level PaddingSize (the header field is the only one), so the port
+// pins that the header field survives a marshal and a clone.
+#[test]
+fn test_deprecated_padding_size_field() -> Result<()> {
+    let raw = vec![
+        0xb0, 0xe0, 0x69, 0x8f, 0xd9, 0xc2, 0x93, 0xda, 0x1c, 0x64, //
+        0x27, 0x82, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, //
+        0x00, 0x00, 0x00, 0x00, 0x05,
+    ];
+    let mut packet = Packet {
+        header: Header {
+            padding: true,
+            marker: true,
+            extension: true,
+            extension_profile: 1,
+            extensions: vec![Extension {
+                id: 0,
+                payload: Bytes::from_static(&[0xFF, 0xFF, 0xFF, 0xFF]),
+            }],
+            version: 2,
+            payload_type: 96,
+            sequence_number: 27023,
+            timestamp: 3653407706,
+            ssrc: 476325762,
+            padding_size: 5,
+            ..Default::default()
+        },
+        payload: Bytes::new(),
+    };
+
+    let mut buf = BytesMut::with_capacity(packet.marshal_size());
+    buf.resize(packet.marshal_size(), 0);
+    let n = packet.marshal_to(&mut buf)?;
+    assert_eq!(&raw[..], &buf[..n]);
+    assert_eq!(raw.len(), packet.marshal_size());
+
+    // rtc-rtp keeps the header's padding_size after marshalling, so a second
+    // marshal produces the same bytes (pion clears its deprecated packet-level
+    // field instead, which would change the padding on re-marshal).
+    let mut buf2 = BytesMut::with_capacity(packet.marshal_size());
+    buf2.resize(packet.marshal_size(), 0);
+    let n2 = packet.marshal_to(&mut buf2)?;
+    assert_eq!(n, n2);
+    assert_eq!(&buf[..], &buf2[..]);
+
+    let clone = packet.clone();
+    assert_eq!(5, clone.header.padding_size);
+    let _ = &mut packet;
+    Ok(())
+}
+
+// Found by a differential run against pion v1.10.6: switching profile after an
+// extension was set used to leave stale padding that marshaled an extra word.
+#[test]
+fn test_profile_switch_pads_like_pion() -> Result<()> {
+    use shared::marshal::Marshal;
+
+    let mut header = Header {
+        version: 2,
+        payload_type: 96,
+        sequence_number: 1,
+        timestamp: 2,
+        ssrc: 3,
+        ..Default::default()
+    };
+    header.set_extension(14, Bytes::from_static(&[0x98]))?;
+    header.set_extension_with_profile(
+        14,
+        Bytes::from_static(&[0xac, 0xbf, 0x7e, 0x7d]),
+        EXTENSION_PROFILE_TWO_BYTE,
+    )?;
+    let raw = header.marshal()?;
+    assert_eq!(
+        raw.as_ref(),
+        &[
+            0x90, 0x60, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0x10, 0x00, 0, 2, 0x0e, 4, 0xac, 0xbf, 0x7e,
+            0x7d, 0, 0
+        ][..]
+    );
+    assert_eq!(raw.len(), header.marshal_size());
+
+    // Deleting down to the last extension leaves no stale padding either.
+    header.set_extension(1, Bytes::from_static(&[1, 2, 3]))?;
+    header.del_extension(14)?;
+    let raw = header.marshal()?;
+    assert_eq!(raw.len(), 12 + 4 + 8);
+    Ok(())
+}
+
+// pion TestSetExtensionWithProfile.
+#[test]
+fn test_set_extension_with_profile() -> Result<()> {
+    // Upgrade: a payload over 16 bytes forces the two-byte profile.
+    {
+        let mut header = Header::default();
+        header.set_extension(1, Bytes::from(vec![0u8; 2]))?;
+        header.set_extension(2, Bytes::from(vec![0u8; 3]))?;
+        header.set_extension_with_profile(
+            3,
+            Bytes::from(vec![0u8; 20]),
+            EXTENSION_PROFILE_TWO_BYTE,
+        )?;
+        assert_eq!(EXTENSION_PROFILE_TWO_BYTE, header.extension_profile);
+    }
+
+    // Upgrade: an id above 14 forces the two-byte profile.
+    {
+        let mut header = Header::default();
+        header.set_extension(1, Bytes::from(vec![0u8; 2]))?;
+        header.set_extension(2, Bytes::from(vec![0u8; 3]))?;
+        header.set_extension_with_profile(
+            16,
+            Bytes::from(vec![0u8; 4]),
+            EXTENSION_PROFILE_TWO_BYTE,
+        )?;
+        assert_eq!(EXTENSION_PROFILE_TWO_BYTE, header.extension_profile);
+    }
+
+    // Downgrade: a two-byte header re-encoded under the one-byte profile.
+    {
+        let raw = vec![
+            0x90, 0x60, 0x00, 0x01, // V=2, X=1, CC=0; M=0, PT=96; sequence=1
+            0x00, 0x00, 0x00, 0x01, // timestamp=1
+            0x12, 0x34, 0x56, 0x78, // SSRC
+            0x10, 0x00, 0x00, 0x01, // two-byte profile, 1 word
+            0x01, 0x02, 0x00, 0x01, // id=1, len=2, data=00 01
+        ];
+        let mut header = Header::unmarshal(&mut &raw[..])?;
+        assert_eq!(EXTENSION_PROFILE_TWO_BYTE, header.extension_profile);
+
+        header.set_extension_with_profile(
+            1,
+            Bytes::from_static(&[0x02, 0x03]),
+            EXTENSION_PROFILE_ONE_BYTE,
+        )?;
+        assert_eq!(EXTENSION_PROFILE_ONE_BYTE, header.extension_profile);
+
+        let mut buf = BytesMut::with_capacity(header.marshal_size());
+        buf.resize(header.marshal_size(), 0);
+        let n = header.marshal_to(&mut buf)?;
+        assert_eq!(n, buf.len());
+        assert_eq!(
+            &[
+                0x90, 0x60, 0x00, 0x01, //
+                0x00, 0x00, 0x00, 0x01, //
+                0x12, 0x34, 0x56, 0x78, //
+                0xbe, 0xde, 0x00, 0x01, //
+                0x11, 0x02, 0x03, 0x00,
+            ][..],
+            &buf[..]
+        );
+    }
+
+    // A downgrade that an existing extension cannot fit is refused, and the
+    // header is left untouched.
+    {
+        let mut header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 20,
+                payload: Bytes::from_static(&[0x01]),
+            }],
+            ..Header::default()
+        };
+        assert!(
+            header
+                .set_extension_with_profile(
+                    1,
+                    Bytes::from_static(&[0x02]),
+                    EXTENSION_PROFILE_ONE_BYTE
+                )
+                .is_err()
+        );
+        assert_eq!(EXTENSION_PROFILE_TWO_BYTE, header.extension_profile);
+    }
+    Ok(())
+}
+
+// pion TestMarshalSizePanic: a header with the extension flag set but no
+// extensions sizes and marshals without panicking (pion issue #315).
+#[test]
+fn test_marshal_size_panic() {
+    let header = Header {
+        extension: true,
+        ..Header::default()
+    };
+    assert_eq!(16, header.marshal_size());
+}
+
+// pion TestMarshalToPanic.
+#[test]
+fn test_marshal_to_panic() -> Result<()> {
+    let header = Header {
+        extension: true,
+        ..Header::default()
+    };
+    let mut buf = vec![0u8; 16];
+    let n = header.marshal_to(&mut buf)?;
+    assert_eq!(16, n);
+    Ok(())
+}
+
+// pion TestMarshalToInitializesPadding: padding octets are written (zeroes and
+// the count in the last one) and nothing beyond the packet is touched.
+#[test]
+fn test_marshal_to_initializes_padding() -> Result<()> {
+    for padding_size in [0u8, 1, 4, 255] {
+        let packet = Packet {
+            header: Header {
+                version: 2,
+                padding: padding_size > 0,
+                padding_size,
+                ..Header::default()
+            },
+            payload: Bytes::from_static(&[1, 2, 3]),
+        };
+
+        // A fresh allocation provides the expected wire encoding.
+        let expected = packet.marshal()?;
+        assert_eq!(
+            expected.len(),
+            packet.marshal_size(),
+            "padding {padding_size}"
+        );
+        if padding_size > 0 {
+            assert_eq!(padding_size, expected[expected.len() - 1]);
+        }
+
+        // MarshalTo into a dirty buffer writes exactly the packet and leaves
+        // the tail untouched (reusing buffers once exposed media data).
+        let mut buf = vec![0xa5u8; expected.len() + 16];
+        let n = packet.marshal_to(&mut buf)?;
+        assert_eq!(expected.len(), n, "padding {padding_size}");
+        assert_eq!(&expected[..], &buf[..n], "padding {padding_size}");
+        assert_eq!(
+            &vec![0xa5u8; 16][..],
+            &buf[n..],
+            "bytes beyond the packet must be untouched"
+        );
+    }
     Ok(())
 }

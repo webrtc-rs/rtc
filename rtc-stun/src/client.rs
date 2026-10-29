@@ -6,7 +6,6 @@
 use bytes::BytesMut;
 use shared::error::*;
 use std::collections::{HashMap, VecDeque};
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
@@ -200,7 +199,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedMessage, ()> for Client {
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
         self.observe(msg.now);
         let mut stun_msg = Message::new();
-        let mut reader = BufReader::new(&msg.message[..]);
+        let mut reader = &msg.message[..];
         stun_msg.read_from(&mut reader)?;
         self.agent.handle_event(ClientAgent::Process(stun_msg))
     }

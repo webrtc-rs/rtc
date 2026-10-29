@@ -7,9 +7,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, codec_parameters_fuzzy_search, find_rtx_payload_type,
 };
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodecParameters, RtpCodecKind};
-use crate::rtp_transceiver::{
-    PayloadType, RTCRtpTransceiverDirection, RTCRtpTransceiverInit, fmtp,
-};
+use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use interceptor::Interceptor;
 use log::trace;
 use sdp::MediaDescription;
@@ -33,8 +31,13 @@ pub(crate) struct RTCRtpTransceiverInternal {
     receiver: Option<RTCRtpReceiverInternal>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
+    /// The direction the remote last declared for this transceiver's section in an offer, or
+    /// `Unspecified` when we are the offerer and have not heard it.
+    current_remote_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
     stopped: bool,
+    /// Whether RTP header extensions and CSRCs of this transceiver are encrypted (RFC 9335).
+    rtp_header_encryption_negotiated: bool,
     /// Whether this transceiver was implicitly created while applying a remote offer
     /// (as opposed to being created by the application via `add_track`/`add_transceiver_*`).
     /// Used by rollback (RFC 9429, Section 5.7): transceivers created by a remote offer that
@@ -77,15 +80,16 @@ impl RTCRtpTransceiverInternal {
             } else {
                 None
             },
-            receiver: if init.direction.has_recv() {
-                Some(RTCRtpReceiverInternal::new(kind, vec![]))
-            } else {
-                None
-            },
+            // Always present, whatever the initial direction: a transceiver created `sendonly`
+            // (the local half of a `recvonly` offer, say) becomes able to receive when a later
+            // negotiation makes it `sendrecv`, and with no receiver it never could.
+            receiver: Some(RTCRtpReceiverInternal::new(kind, vec![])),
             direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
+            current_remote_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
+            rtp_header_encryption_negotiated: false,
             created_by_remote_description: false,
         }
     }
@@ -165,6 +169,36 @@ impl RTCRtpTransceiverInternal {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
+    pub(crate) fn current_remote_direction(&self) -> RTCRtpTransceiverDirection {
+        self.current_remote_direction
+    }
+
+    pub(crate) fn set_current_remote_direction(&mut self, direction: RTCRtpTransceiverDirection) {
+        self.current_remote_direction = direction;
+    }
+
+    /// Whether `add_track` may put a new sender on this transceiver (pion `isSendAllowed`, a
+    /// relaxed form of W3C addTrack step 5): it has no sender, is not stopped, was not sending in
+    /// the last negotiation, and the remote can receive.
+    pub(crate) fn is_send_allowed(&self, kind: RtpCodecKind) -> bool {
+        if self.stopped() || self.kind() != kind || self.sender().is_some() {
+            return false;
+        }
+        // A removal that has not been negotiated yet leaves the transceiver sending as far as the
+        // peer knows, so it cannot be handed to another track.
+        if matches!(
+            self.current_direction(),
+            RTCRtpTransceiverDirection::Sendrecv | RTCRtpTransceiverDirection::Sendonly
+        ) {
+            return false;
+        }
+        // A remote that only sends (or is inactive) cannot be sent to.
+        !matches!(
+            self.current_remote_direction(),
+            RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Inactive
+        )
+    }
+
     pub(crate) fn current_direction(&self) -> RTCRtpTransceiverDirection {
         self.current_direction
     }
@@ -281,6 +315,14 @@ impl RTCRtpTransceiverInternal {
         self.current_direction = RTCRtpTransceiverDirection::Unspecified;
     }
 
+    pub(crate) fn rtp_header_encryption_negotiated(&self) -> bool {
+        self.rtp_header_encryption_negotiated
+    }
+
+    pub(crate) fn set_rtp_header_encryption_negotiated(&mut self, negotiated: bool) {
+        self.rtp_header_encryption_negotiated = negotiated;
+    }
+
     pub(crate) fn set_current_direction(&mut self, d: RTCRtpTransceiverDirection) {
         let previous: RTCRtpTransceiverDirection = self.current_direction;
         self.current_direction = d;
@@ -298,6 +340,8 @@ impl RTCRtpTransceiverInternal {
         media_engine: &MediaEngine,
     ) -> Result<()> {
         let mut remote_codecs = codecs_from_media_description(media)?;
+        let offered_payloads: std::collections::HashSet<PayloadType> =
+            remote_codecs.iter().map(|c| c.payload_type).collect();
 
         // make a copy as this slice is modified
         let mut left_codecs = media_engine.get_codecs_by_kind(self.kind);
@@ -322,8 +366,11 @@ impl RTCRtpTransceiverInternal {
                     continue;
                 }
 
-                let (match_codec, match_type) =
-                    codec_parameters_fuzzy_search(&remote_codec.rtp_codec, &left_codecs);
+                let (match_codec, match_type) = match_codec_with_payload_identity(
+                    remote_codec,
+                    &left_codecs,
+                    &offered_payloads,
+                );
                 if match_type == match_filter {
                     pass_mapping.insert(0, (remote_codec.payload_type, match_codec.payload_type));
 
@@ -337,26 +384,12 @@ impl RTCRtpTransceiverInternal {
                     // removed matched codec for next round
                     remote_codecs.remove(remote_codec_idx);
 
-                    let needle_fmtp = fmtp::parse(
-                        match_codec.rtp_codec.mime_type.as_str(),
-                        //match_codec.RTPCodecCapability.ClockRate,
-                        //match_codec.RTPCodecCapability.Channels,
-                        match_codec.rtp_codec.sdp_fmtp_line.as_str(),
-                    );
-
-                    for left_codec_idx in (0..left_codecs.len()).rev() {
-                        let left_codec = &left_codecs[left_codec_idx];
-                        let left_codec_fmtp = fmtp::parse(
-                            left_codec.rtp_codec.mime_type.as_str(),
-                            //left_codec.RTPCodecCapability.ClockRate,
-                            //left_codec.RTPCodecCapability.Channels,
-                            left_codec.rtp_codec.sdp_fmtp_line.as_str(),
-                        );
-
-                        if needle_fmtp.match_fmtp(&*left_codec_fmtp) {
-                            left_codecs.remove(left_codec_idx);
-                            break;
-                        }
+                    // Remove the codec we selected, not a different equivalent format.
+                    if let Some(left_codec_idx) = left_codecs
+                        .iter()
+                        .position(|c| c.payload_type == match_codec.payload_type)
+                    {
+                        left_codecs.remove(left_codec_idx);
                     }
                 }
             }
@@ -389,4 +422,35 @@ impl RTCRtpTransceiverInternal {
 
         self.set_codec_preferences(filtered_codecs, media_engine)
     }
+}
+
+/// When equivalent payloads are offered together (for example H265 levels), preserve their
+/// identities. If the canonical payload is absent from this media section, retain the existing
+/// remapping to codecs negotiated by earlier sections (pion `matchCodecWithPayloadIdentity`).
+fn match_codec_with_payload_identity(
+    remote_codec: &RTCRtpCodecParameters,
+    local_codecs: &[RTCRtpCodecParameters],
+    offered_payloads: &std::collections::HashSet<PayloadType>,
+) -> (RTCRtpCodecParameters, CodecMatch) {
+    let (match_codec, match_type) =
+        codec_parameters_fuzzy_search(&remote_codec.rtp_codec, local_codecs);
+    if match_type != CodecMatch::Exact
+        || match_codec.payload_type == remote_codec.payload_type
+        || !offered_payloads.contains(&match_codec.payload_type)
+    {
+        return (match_codec, match_type);
+    }
+
+    if let Some(codec) = local_codecs
+        .iter()
+        .find(|c| c.payload_type == remote_codec.payload_type)
+    {
+        let (_, identity_match) =
+            codec_parameters_fuzzy_search(&remote_codec.rtp_codec, std::slice::from_ref(codec));
+        if identity_match == CodecMatch::Exact {
+            return (codec.clone(), CodecMatch::Exact);
+        }
+    }
+
+    (match_codec, match_type)
 }

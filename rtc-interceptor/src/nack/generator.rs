@@ -11,6 +11,10 @@ use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+/// Decides which remote streams this generator tracks, on top of the NACK feedback check.
+/// pion's `GeneratorStreamsFilter`.
+pub type GeneratorStreamsFilter = Box<dyn Fn(&StreamInfo) -> bool + Send + Sync>;
+
 /// Builder for the NackGeneratorInterceptor.
 ///
 /// # Example
@@ -36,6 +40,8 @@ pub struct NackGeneratorBuilder {
     skip_last_n: u16,
     /// Maximum number of NACKs to send per missing packet (0 = unlimited).
     max_nacks_per_packet: u16,
+    /// Extra per-stream gate, applied on top of the NACK feedback check.
+    streams_filter: Option<GeneratorStreamsFilter>,
 }
 
 impl Default for NackGeneratorBuilder {
@@ -45,6 +51,7 @@ impl Default for NackGeneratorBuilder {
             interval: Duration::from_millis(100),
             skip_last_n: 0,
             max_nacks_per_packet: 0,
+            streams_filter: None,
         }
     }
 }
@@ -86,13 +93,39 @@ impl NackGeneratorBuilder {
         self
     }
 
+    /// Restrict which remote streams are tracked, on top of the NACK feedback check.
+    ///
+    /// pion's `GeneratorStreamsFilter`: the predicate returns `true` for streams that should
+    /// generate NACKs. Without one, every stream negotiating `nack` feedback is tracked.
+    pub fn with_streams_filter(mut self, filter: GeneratorStreamsFilter) -> Self {
+        self.streams_filter = Some(filter);
+        self
+    }
+
+    /// Build the interceptor, rejecting a buffer size that could never retransmit anything.
+    ///
+    /// pion fails construction with `ErrInvalidSize`; the infallible [`Self::build`] keeps its
+    /// historic shape and instead yields an interceptor that tracks nothing, so callers that
+    /// prefer a loud mistake use this.
+    pub fn try_build(self) -> Result<NackGeneratorInterceptor, Error> {
+        if !super::receive_log::is_valid_size(self.size) {
+            return Err(Error::ErrNackInvalidSize);
+        }
+        Ok(self.build())
+    }
+
     /// Build the interceptor.
+    ///
+    /// A size the receive log cannot hold (not a power of two in range) yields an interceptor
+    /// that tracks no streams at all; [`Self::try_build`] turns the same configuration into an
+    /// error instead.
     pub fn build(self) -> NackGeneratorInterceptor {
         NackGeneratorInterceptor::new(
             self.size,
             self.interval,
             self.skip_last_n,
             self.max_nacks_per_packet,
+            self.streams_filter,
         )
     }
 }
@@ -108,6 +141,8 @@ pub struct NackGeneratorInterceptor {
     interval: Duration,
     skip_last_n: u16,
     max_nacks_per_packet: u16,
+    /// Extra per-stream gate from the builder, applied with the NACK feedback check.
+    streams_filter: Option<GeneratorStreamsFilter>,
 
     /// Next timeout for NACK generation
     next_timeout: Option<Instant>,
@@ -128,13 +163,20 @@ pub struct NackGeneratorInterceptor {
 }
 
 impl NackGeneratorInterceptor {
-    fn new(size: u16, interval: Duration, skip_last_n: u16, max_nacks_per_packet: u16) -> Self {
+    fn new(
+        size: u16,
+        interval: Duration,
+        skip_last_n: u16,
+        max_nacks_per_packet: u16,
+        streams_filter: Option<GeneratorStreamsFilter>,
+    ) -> Self {
         Self {
             read_queue: VecDeque::new(),
             size,
             interval,
             skip_last_n,
             max_nacks_per_packet,
+            streams_filter,
             next_timeout: None,
             sender_ssrc: rand::random(),
             receive_logs: HashMap::new(),
@@ -259,8 +301,17 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NackGeneratorInterceptor {
 }
 
 impl Interceptor for NackGeneratorInterceptor {
+    fn writes_pass_through(&self) -> bool {
+        true
+    }
+
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        if stream_supports_nack(info)
+        let passes_filter = self
+            .streams_filter
+            .as_ref()
+            .is_none_or(|filter| filter(info));
+        if passes_filter
+            && stream_supports_nack(info)
             && let Some(receive_log) = ReceiveLog::new(self.size)
         {
             self.receive_logs.insert(info.ssrc, receive_log);

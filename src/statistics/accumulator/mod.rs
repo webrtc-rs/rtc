@@ -34,6 +34,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId, SSRC};
 use crate::statistics::StatsSelector;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use ice::CandidatePairStats;
+use rustc_hash::FxHashMap;
 use sctp::StreamId;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -63,7 +64,7 @@ pub(crate) struct RTCStatsAccumulator {
     pub(crate) transport: TransportStatsAccumulator,
 
     /// ICE candidate pairs keyed by pair ID.
-    pub(crate) ice_candidate_pairs: HashMap<String, IceCandidatePairAccumulator>,
+    pub(crate) ice_candidate_pairs: FxHashMap<String, IceCandidatePairAccumulator>,
 
     /// Local ICE candidates keyed by candidate ID.
     pub(crate) local_candidates: HashMap<String, IceCandidateAccumulator>,
@@ -78,13 +79,13 @@ pub(crate) struct RTCStatsAccumulator {
     pub(crate) codecs: HashMap<String, CodecStatsAccumulator>,
 
     /// Data channel stats keyed by channel ID.
-    pub(crate) data_channels: HashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
+    pub(crate) data_channels: FxHashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
 
     /// Inbound RTP stream accumulators keyed by SSRC.
-    pub(crate) inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,
+    pub(crate) inbound_rtp_streams: FxHashMap<SSRC, InboundRtpStreamAccumulator>,
 
     /// Outbound RTP stream accumulators keyed by SSRC.
-    pub(crate) outbound_rtp_streams: HashMap<SSRC, OutboundRtpStreamAccumulator>,
+    pub(crate) outbound_rtp_streams: FxHashMap<SSRC, OutboundRtpStreamAccumulator>,
 
     /// Media source stats keyed by track ID.
     pub(crate) media_sources: HashMap<String, MediaSourceStatsAccumulator>,
@@ -94,10 +95,10 @@ pub(crate) struct RTCStatsAccumulator {
 
     // Reverse lookup maps for O(1) RTX/FEC SSRC detection
     /// Maps RTX SSRC to primary SSRC for O(1) lookup.
-    rtx_ssrc_to_primary: HashMap<SSRC, SSRC>,
+    rtx_ssrc_to_primary: FxHashMap<SSRC, SSRC>,
 
     /// Maps FEC SSRC to primary SSRC for O(1) lookup.
-    fec_ssrc_to_primary: HashMap<SSRC, SSRC>,
+    fec_ssrc_to_primary: FxHashMap<SSRC, SSRC>,
 }
 
 /// Asserts a stats record was stamped with `expected`, ignoring the wall-clock half.

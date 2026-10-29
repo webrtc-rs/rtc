@@ -42,6 +42,8 @@ pub(crate) enum ParamType {
     /// Padding (0x8005)
     SupportedExt,
     /// Supported Extensions (0x8008) [RFCRFC5061]
+    ZeroChecksumAcceptable,
+    /// Zero Checksum Acceptable (0x8001) [RFC 9653]
     ForwardTsnSupp,
     /// Forward TSN supported (0xC000) [RFCRFC3758]
     AddIpAddr,
@@ -83,6 +85,7 @@ impl fmt::Display for ParamType {
             ParamType::ReqHmacAlgo => "Requested HMAC Algorithm Parameter",
             ParamType::Padding => "Padding",
             ParamType::SupportedExt => "Supported Extensions",
+            ParamType::ZeroChecksumAcceptable => "Zero checksum acceptable",
             ParamType::ForwardTsnSupp => "Forward TSN supported",
             ParamType::AddIpAddr => "Add IP IP",
             ParamType::DelIpaddr => "Delete IP IP",
@@ -118,6 +121,7 @@ impl From<u16> for ParamType {
             32772 => ParamType::ReqHmacAlgo,
             32773 => ParamType::Padding,
             32776 => ParamType::SupportedExt,
+            32769 => ParamType::ZeroChecksumAcceptable,
             49152 => ParamType::ForwardTsnSupp,
             49153 => ParamType::AddIpAddr,
             49154 => ParamType::DelIpaddr,
@@ -151,6 +155,7 @@ impl From<ParamType> for u16 {
             ParamType::ReqHmacAlgo => 32772,
             ParamType::Padding => 32773,
             ParamType::SupportedExt => 32776,
+            ParamType::ZeroChecksumAcceptable => 32769,
             ParamType::ForwardTsnSupp => 49152,
             ParamType::AddIpAddr => 49153,
             ParamType::DelIpaddr => 49154,

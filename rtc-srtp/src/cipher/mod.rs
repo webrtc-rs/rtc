@@ -50,11 +50,133 @@ pub(crate) trait Cipher: Send {
     /// Retrieved RTCP index.
     fn get_rtcp_index(&self, input: &[u8]) -> usize;
 
-    /// Encrypt RTP payload.
-    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    /// Protects, in place, the RTP packet that occupies `buf[start..]`: encrypts its payload and
+    /// appends the authentication tag, so `buf[start..]` becomes the SRTP packet.
+    ///
+    /// On error the contents of `buf[start..]` are unspecified; callers that must preserve the
+    /// buffer truncate it back to `start`.
+    fn encrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()>;
 
-    /// Decrypt RTP payload.
-    fn decrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
+    /// Verifies and decrypts, in place, the SRTP packet that occupies `buf[start..]`, removing
+    /// the authentication tag, so `buf[start..]` becomes the plain RTP packet.
+    ///
+    /// Authentication is checked before anything is decrypted, so a forged packet leaves the
+    /// buffer as it was (AES-GCM is the exception: its contents are unspecified on failure).
+    fn decrypt_rtp_in_place(
+        &mut self,
+        buf: &mut BytesMut,
+        start: usize,
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()>;
+
+    /// Encrypt an RTP packet, appending the protected packet to `dst`.
+    ///
+    /// On error `dst` is left as it was.
+    fn encrypt_rtp_into(
+        &mut self,
+        dst: &mut BytesMut,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        let start = dst.len();
+        dst.reserve(payload.len() + self.rtp_auth_tag_len().max(self.aead_auth_tag_len()));
+        dst.extend_from_slice(payload);
+        let result = self.encrypt_rtp_in_place(dst, start, header, roc);
+        if result.is_err() {
+            dst.truncate(start);
+        }
+        result
+    }
+
+    /// Decrypt an SRTP packet, appending the plain packet to `dst`.
+    ///
+    /// On error `dst` is left as it was.
+    fn decrypt_rtp_into(
+        &mut self,
+        dst: &mut BytesMut,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<()> {
+        let start = dst.len();
+        dst.reserve(payload.len());
+        dst.extend_from_slice(payload);
+        let result = self.decrypt_rtp_in_place(dst, start, header, roc);
+        if result.is_err() {
+            dst.truncate(start);
+        }
+        result
+    }
+
+    /// Encrypt an RTP packet into a new buffer.
+    fn encrypt_rtp(
+        &mut self,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<BytesMut> {
+        let mut dst = BytesMut::with_capacity(
+            payload.len() + self.rtp_auth_tag_len().max(self.aead_auth_tag_len()),
+        );
+        self.encrypt_rtp_into(&mut dst, payload, header, roc)?;
+        Ok(dst)
+    }
+
+    /// Decrypt an SRTP packet into a new buffer.
+    fn decrypt_rtp(
+        &mut self,
+        payload: &[u8],
+        header: &rtp::header::HeaderSummary,
+        roc: u32,
+    ) -> Result<BytesMut> {
+        let mut dst = BytesMut::with_capacity(payload.len());
+        self.decrypt_rtp_into(&mut dst, payload, header, roc)?;
+        Ok(dst)
+    }
+
+    /// Whether the RTP authentication tag is a MAC over the packet as it is sent (AES-CM with
+    /// HMAC), as opposed to coming out of a single sealing operation over the header and payload
+    /// (AEAD). Cryptex needs to know: it rearranges the packet to encrypt it, but the MAC covers
+    /// the packet as sent.
+    fn authenticates_wire_layout(&self) -> bool {
+        false
+    }
+
+    /// Applies the payload keystream to `buf[header.header_len..]`. Encrypting and decrypting are
+    /// the same operation. Only for ciphers where [`authenticates_wire_layout`] is true.
+    ///
+    /// [`authenticates_wire_layout`]: Self::authenticates_wire_layout
+    fn apply_rtp_keystream(
+        &mut self,
+        _buf: &mut [u8],
+        _header: &rtp::header::HeaderSummary,
+        _roc: u32,
+    ) -> Result<()> {
+        Err(Error::Other("not a counter-mode cipher".to_owned()))
+    }
+
+    /// Appends the authentication tag of the packet at `buf[start..]`.
+    fn append_rtp_auth_tag(&mut self, _buf: &mut BytesMut, _start: usize, _roc: u32) -> Result<()> {
+        Err(Error::Other("not a MAC-authenticated cipher".to_owned()))
+    }
+
+    /// Checks the authentication tag at the end of the packet at `buf[start..]` and removes it.
+    fn verify_and_strip_rtp_auth_tag(
+        &mut self,
+        _buf: &mut BytesMut,
+        _start: usize,
+        _roc: u32,
+    ) -> Result<()> {
+        Err(Error::Other("not a MAC-authenticated cipher".to_owned()))
+    }
 
     /// Encrypt RTCP payload.
     fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;

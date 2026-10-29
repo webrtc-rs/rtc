@@ -47,6 +47,15 @@ pub trait Packetizer: Send + Sync + fmt::Debug {
     fn packetize(&mut self, now: Instant, payload: &Bytes, samples: u32) -> Result<Vec<Packet>>;
     /// Advances the timestamp without sending anything, for dropped or silent frames.
     fn skip_samples(&mut self, skipped_samples: u32);
+    /// Generates `samples` padding-only packets (pion's `GeneratePadding`):
+    /// each carries only padding — no payload — with the latest timestamp, so
+    /// the stream keeps its packet pace without any media.
+    ///
+    /// The default is no padding, for custom packetizers that cannot make any.
+    fn generate_padding(&mut self, samples: u32) -> Vec<Packet> {
+        let _ = samples;
+        vec![]
+    }
     /// Clones this packetizer behind a trait object.
     fn clone_to(&self) -> Box<dyn Packetizer>;
 }
@@ -174,6 +183,31 @@ impl Packetizer for PacketizerImpl {
     /// RTP payloads produced have a gap in timestamps
     fn skip_samples(&mut self, skipped_samples: u32) {
         self.timestamp = self.timestamp.wrapping_add(skipped_samples);
+    }
+
+    fn generate_padding(&mut self, samples: u32) -> Vec<Packet> {
+        // Guard against an empty payload.
+        if samples == 0 {
+            return vec![];
+        }
+
+        (0..samples)
+            .map(|_| Packet {
+                header: Header {
+                    version: 2,
+                    padding: true,
+                    extension: false,
+                    marker: false,
+                    payload_type: self.payload_type,
+                    sequence_number: self.sequencer.next_sequence_number(),
+                    timestamp: self.timestamp, // the latest timestamp
+                    ssrc: self.ssrc,
+                    padding_size: 255,
+                    ..Default::default()
+                },
+                payload: Bytes::new(),
+            })
+            .collect()
     }
 
     fn clone_to(&self) -> Box<dyn Packetizer> {

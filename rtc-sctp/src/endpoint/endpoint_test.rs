@@ -22,6 +22,7 @@ use crate::chunk::{
     PROTOCOL_VIOLATION, UNRECOGNIZED_CHUNK_TYPE,
 };
 use crate::packet::{CommonHeader, Packet};
+use crate::param::param_heartbeat_info::ParamHeartbeatInfo;
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
 use crate::param::param_reconfig_response::ParamReconfigResponse;
 use assert_matches::assert_matches;
@@ -33,6 +34,8 @@ use std::ops::RangeFrom;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::{cmp, mem, net::UdpSocket, time::Duration};
+
+mod interleaving;
 
 lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
@@ -118,19 +121,16 @@ impl TestEndpoint {
             }
         }
 
-        while self.inbound.front().map_or(false, |x| x.0 <= now) {
+        while self.inbound.front().is_some_and(|x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some((ch, event)) = self.endpoint.handle(recv_time, remote, ecn, packet.into()) {
+            if let Some((ch, event)) = self.endpoint.handle(recv_time, remote, ecn, packet) {
                 match event {
                     DatagramEvent::NewAssociation(conn) => {
                         self.associations.insert(ch, conn);
                         self.accepted = Some(ch);
                     }
                     DatagramEvent::AssociationEvent(event) => {
-                        self.conn_events
-                            .entry(ch)
-                            .or_insert_with(VecDeque::new)
-                            .push_back(event);
+                        self.conn_events.entry(ch).or_default().push_back(event);
                     }
                 }
             }
@@ -138,7 +138,7 @@ impl TestEndpoint {
 
         let mut endpoint_events: Vec<(AssociationHandle, EndpointEvent)> = vec![];
         for (ch, conn) in self.associations.iter_mut() {
-            if self.timeout.map_or(false, |x| x <= now) {
+            if self.timeout.is_some_and(|x| x <= now) {
                 self.timeout = None;
                 conn.handle_timeout(now);
             }
@@ -205,6 +205,13 @@ struct Pair {
     client: TestEndpoint,
     time: Instant,
     latency: Duration, // One-way
+    /// Decides, from the index of each datagram the client sends, whether the network drops it.
+    client_loss: Option<Box<dyn FnMut(usize) -> bool>>,
+    client_datagrams: usize,
+    /// Every datagram each side put on the wire, dropped ones included, for tests that look
+    /// at which chunks were sent.
+    client_wire: Vec<Bytes>,
+    server_wire: Vec<Bytes>,
 }
 
 impl Pair {
@@ -241,6 +248,10 @@ impl Pair {
             client: TestEndpoint::new(client, client_addr),
             time: Instant::now(),
             latency: Duration::new(0, 0),
+            client_loss: None,
+            client_datagrams: 0,
+            client_wire: vec![],
+            server_wire: vec![],
         }
     }
 
@@ -284,6 +295,16 @@ impl Pair {
         for x in self.client.outbound.drain(..) {
             if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
+                    let index = self.client_datagrams;
+                    self.client_datagrams += 1;
+                    self.client_wire.push(content.clone());
+                    if self
+                        .client_loss
+                        .as_mut()
+                        .is_some_and(|dropped| dropped(index))
+                    {
+                        continue;
+                    }
                     if let Some(ref socket) = self.client.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }
@@ -304,6 +325,7 @@ impl Pair {
         for x in self.server.outbound.drain(..) {
             if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
+                    self.server_wire.push(content.clone());
                     if let Some(ref socket) = self.server.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }
@@ -345,12 +367,12 @@ impl Pair {
     fn finish_connect(&mut self, client_ch: AssociationHandle, server_ch: AssociationHandle) {
         assert_matches!(
             self.client_conn_mut(client_ch).poll(),
-            Some(Event::Connected { .. })
+            Some(Event::Connected)
         );
 
         assert_matches!(
             self.server_conn_mut(server_ch).poll(),
-            Some(Event::Connected { .. })
+            Some(Event::Connected)
         );
     }
 
@@ -425,7 +447,7 @@ fn establish_session_pair(
     {
         let s1 = pair.server_conn_mut(server_ch).accept_stream().unwrap();
         if si != s1.stream_identifier {
-            return Err(Error::Other("si should match".to_owned()).into());
+            return Err(Error::Other("si should match".to_owned()));
         }
     }
     pair.drive();
@@ -435,15 +457,15 @@ fn establish_session_pair(
     let n = chunks.read(&mut buf)?;
 
     if n != hello_msg.len() {
-        return Err(Error::Other("received data must by 3 bytes".to_owned()).into());
+        return Err(Error::Other("received data must by 3 bytes".to_owned()));
     }
 
     if chunks.ppi != PayloadProtocolIdentifier::Dcep {
-        return Err(Error::Other("unexpected ppi".to_owned()).into());
+        return Err(Error::Other("unexpected ppi".to_owned()));
     }
 
-    if &buf[..n] != &hello_msg {
-        return Err(Error::Other("received data mismatch".to_owned()).into());
+    if buf[..n] != hello_msg[..] {
+        return Err(Error::Other("received data mismatch".to_owned()));
     }
     pair.drive();
 
@@ -579,8 +601,8 @@ fn test_assoc_reliable_ordered_reordered() -> Result<()> {
 
     let si: u16 = 2;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -663,12 +685,12 @@ fn test_assoc_reliable_ordered_fragmented_then_defragmented() -> Result<()> {
 
     let si: u16 = 3;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
     let mut sbufl = vec![0u8; 2000];
-    for i in 0..sbufl.len() {
-        sbufl[i] = (i & 0xff) as u8;
+    for (i, b) in sbufl.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -727,12 +749,12 @@ fn test_assoc_reliable_unordered_fragmented_then_defragmented() -> Result<()> {
 
     let si: u16 = 4;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
     let mut sbufl = vec![0u8; 2000];
-    for i in 0..sbufl.len() {
-        sbufl[i] = (i & 0xff) as u8;
+    for (i, b) in sbufl.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -791,8 +813,8 @@ fn test_assoc_reliable_unordered_ordered() -> Result<()> {
 
     let si: u16 = 5;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1014,8 +1036,8 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
 
     let si: u16 = 1;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1170,8 +1192,8 @@ fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
 
     let si: u16 = 1;
     let mut sbuf = vec![0u8; 2000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1253,8 +1275,8 @@ fn test_assoc_unreliable_rexmit_unordered_no_fragment() -> Result<()> {
 
     let si: u16 = 2;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1331,8 +1353,8 @@ fn test_assoc_unreliable_rexmit_unordered_fragment() -> Result<()> {
 
     let si: u16 = 1;
     let mut sbuf = vec![0u8; 2000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1426,8 +1448,8 @@ fn test_assoc_timed_reliability_bounds_time_spent_in_pending_queue() -> Result<(
     let stall = Duration::from_secs(1);
 
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -1740,8 +1762,7 @@ fn test_assoc_timed_reliability_does_not_fast_retransmit_after_lifetime() -> Res
 /// expired message until a ForwardTSN tells it to skip, so the sender has to notice
 /// the expiry on the same T3 that decided not to retransmit — not on the next,
 /// backed-off one.
-#[test]
-fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() -> Result<()> {
+fn timed_reliability_forwards_past_expired(rack: bool) -> Result<(usize, Duration, u64, u64)> {
     let si: u16 = 11;
     let lifetime_ms: u32 = 100;
     let stale = Bytes::from_static(b"AAAA");
@@ -1749,6 +1770,7 @@ fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() ->
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    pair.client_conn_mut(client_ch).rack.enabled = rack;
 
     // Ordered, so the peer is head-of-line blocked behind the expired message.
     pair.client_stream(client_ch, si)?.set_reliability_params(
@@ -1801,13 +1823,40 @@ fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() ->
         len,
         "the expired message must not be delivered; only the fresh one may be"
     );
+    let mut stats = pair.client_conn_mut(client_ch).stats;
+    Ok((
+        len,
+        at,
+        stats.get_num_t3timeouts(),
+        stats.get_num_pto_probes(),
+    ))
+}
+
+/// With only T3-rtx to recover (RACK off), the ForwardTSN that unblocks the stream must be sent by
+/// the T3 that skipped the expired message, not by the next one.
+#[test]
+fn test_assoc_timed_reliability_forwards_past_expired_without_extra_backoff() -> Result<()> {
+    let (_, at, t3, _) = timed_reliability_forwards_past_expired(false)?;
     assert_eq!(
-        1,
-        pair.client_conn_mut(client_ch).stats.get_num_t3timeouts(),
+        1, t3,
         "the ForwardTSN that unblocks the stream must be sent by the T3 that skipped \
          the expired message, not by the next one; the fresh message arrived at {at:?}"
     );
+    Ok(())
+}
 
+/// With RACK-TLP the same stall ends at the tail-loss probe, long before any retransmission
+/// timeout: the probe re-sends the newest outstanding chunk, which is expired, so the sender
+/// forwards past it instead and the fresh message is delivered.
+#[test]
+fn test_assoc_timed_reliability_forwards_past_expired_at_the_tail_loss_probe() -> Result<()> {
+    let (_, at, t3, probes) = timed_reliability_forwards_past_expired(true)?;
+    assert_eq!(0, t3, "no retransmission timeout should have been needed");
+    assert!(probes >= 1, "the probe is what unblocked it");
+    assert!(
+        at < Duration::from_millis(900),
+        "the fresh message must not wait for a one-second timeout: arrived at {at:?}"
+    );
     Ok(())
 }
 
@@ -1932,8 +1981,8 @@ fn test_assoc_unreliable_rexmit_timed_ordered() -> Result<()> {
 
     let si: u16 = 3;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -2010,8 +2059,8 @@ fn test_assoc_unreliable_rexmit_timed_unordered() -> Result<()> {
 
     let si: u16 = 3;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
@@ -2107,8 +2156,8 @@ fn test_assoc_congestion_control_fast_retransmission() -> Result<()> {
 
     let si: u16 = 6;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, 0)?;
@@ -2200,8 +2249,8 @@ fn test_assoc_congestion_control_congestion_avoidance() -> Result<()> {
     let n_packets_to_send: u32 = 2000;
 
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) =
@@ -2330,8 +2379,8 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
     let n_packets_to_send: u32 = 130;
 
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) =
@@ -2439,8 +2488,8 @@ fn test_assoc_delayed_ack() -> Result<()> {
     let si: u16 = 6;
     let mut sbuf = vec![0u8; 1000];
     let mut rbuf = vec![0u8; 1500];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::AlwaysDelay, 0)?;
@@ -2942,7 +2991,13 @@ fn test_association_handle_packet_before_init() -> Result<()> {
                     destination_port: 1,
                     verification_tag: 0,
                 },
-                chunks: vec![Box::new(ChunkHeartbeat::default())],
+                chunks: vec![Box::new(ChunkHeartbeat {
+                    // A marshaled HEARTBEAT must carry exactly one Heartbeat
+                    // Info parameter (pion: ErrHeartbeatMarshalNoInfo).
+                    params: vec![Box::new(ParamHeartbeatInfo {
+                        heartbeat_information: Bytes::new(),
+                    })],
+                })],
             },
         ),
         (
@@ -3033,7 +3088,7 @@ fn test_association_handle_packet_before_init() -> Result<()> {
                     destination_port: 1,
                     verification_tag: 0,
                 },
-                chunks: vec![Box::new(ChunkShutdownAck::default())],
+                chunks: vec![Box::new(ChunkShutdownAck)],
             },
         ),
         (
@@ -3044,7 +3099,7 @@ fn test_association_handle_packet_before_init() -> Result<()> {
                     destination_port: 1,
                     verification_tag: 0,
                 },
-                chunks: vec![Box::new(ChunkShutdownComplete::default())],
+                chunks: vec![Box::new(ChunkShutdownComplete)],
             },
         ),
     ];
@@ -3094,8 +3149,8 @@ fn test_association_handle_packet_before_init() -> Result<()> {
 fn test_old_rtx_on_regular_acks() -> Result<()> {
     let si: u16 = 6;
     let mut sbuf = vec![0u8; 1000];
-    for i in 0..sbuf.len() {
-        sbuf[i] = (i & 0xff) as u8;
+    for (i, b) in sbuf.iter_mut().enumerate() {
+        *b = (i & 0xff) as u8;
     }
 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, 0)?;
@@ -3116,7 +3171,7 @@ fn test_old_rtx_on_regular_acks() -> Result<()> {
         pair.client.drive(pair.time, pair.server.addr);
 
         // drop a few transmits
-        if i >= 5 && i < 10 {
+        if (5..10).contains(&i) {
             pair.client.outbound.clear();
         }
 
@@ -3503,10 +3558,10 @@ fn deliver_to_server_rtc_style(
     let client_addr = pair.client.addr;
 
     while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
-        if let Some((ch, event)) =
-            pair.server
-                .endpoint
-                .handle(recv_time, client_addr, ecn, packet.into())
+        if let Some((ch, event)) = pair
+            .server
+            .endpoint
+            .handle(recv_time, client_addr, ecn, packet)
         {
             match event {
                 DatagramEvent::NewAssociation(conn) => {
@@ -3822,10 +3877,10 @@ fn deliver_to_server_rtc_style_no_read(pair: &mut Pair, server_ch: AssociationHa
     let client_addr = pair.client.addr;
     let mut n = 0;
     while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
-        if let Some((ch, event)) =
-            pair.server
-                .endpoint
-                .handle(recv_time, client_addr, ecn, packet.into())
+        if let Some((ch, event)) = pair
+            .server
+            .endpoint
+            .handle(recv_time, client_addr, ecn, packet)
         {
             match event {
                 DatagramEvent::NewAssociation(conn) => {
@@ -3922,5 +3977,331 @@ fn test_abort_closes_both_sides() -> Result<()> {
 
     // Idempotent: the association is already closed.
     pair.client_conn_mut(client_ch).abort()?;
+    Ok(())
+}
+
+/// The association-level byte counters and congestion getters back the
+/// `sctp-transport` stats entry. `bytes_sent`/`bytes_received` count user payload
+/// once per DATA chunk — retransmissions do not re-count — and `cwnd`/`rwnd`/`mtu`
+/// must be readable while established so a stats snapshot can report live state.
+#[test]
+fn test_association_stats_count_payload_and_expose_congestion_state() -> Result<()> {
+    let si: u16 = 1;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    let before_client = pair.client_conn_mut(client_ch).stats().get_bytes_sent();
+    let before_server = pair.server_conn_mut(server_ch).stats().get_bytes_received();
+    // The DCEP handshake and the stream-open traffic already counted:
+    assert!(before_client > 0, "handshake user data must be counted");
+    assert!(before_server > 0, "handshake user data must be counted");
+
+    let payload = Bytes::from(vec![0xABu8; 1024]);
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+    pair.drive();
+
+    // Read it out so the server's reassembly delivers; counters are recorded at
+    // chunk acceptance, which happened during drive.
+    let mut buf = vec![0u8; 2048];
+    let chunks = pair
+        .server_stream(server_ch, si)?
+        .read_sctp()?
+        .expect("the payload must arrive");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(n, 1024, "the payload must be intact");
+    pair.drive();
+
+    let client = pair.client_conn_mut(client_ch);
+    assert_eq!(
+        client.stats().get_bytes_sent(),
+        before_client + 1024,
+        "sent bytes must count the payload exactly once"
+    );
+    assert!(
+        client.stats().get_bytes_sent() >= 1024,
+        "sent bytes must at least cover the payload"
+    );
+
+    let server = pair.server_conn_mut(server_ch);
+    assert_eq!(
+        server.stats().get_bytes_received(),
+        before_server + 1024,
+        "received bytes must count the payload exactly once"
+    );
+
+    // Congestion state is live and readable while established. cwnd is seeded at
+    // handshake, rwnd once a SACK arrives (establish_session_pair drove several),
+    // and mtu is fixed by config. All three must be non-zero on an established pair.
+    let client = pair.client_conn_mut(client_ch);
+    assert!(client.cwnd() > 0, "cwnd must be positive while established");
+    assert!(client.mtu() > 0, "mtu must be positive");
+    let server = pair.server_conn_mut(server_ch);
+    assert!(
+        server.rwnd() > 0,
+        "rwnd must be positive after the client's SACK advertised receive credit"
+    );
+    Ok(())
+}
+
+// ───────────────────────── RFC 9653: zero checksum ─────────────────────────
+
+/// A pair whose two TransportConfigs apply `f`, with the standard session established on
+/// stream 1.
+fn zero_checksum_pair(
+    enable_on_client: bool,
+    enable_on_server: bool,
+) -> Result<(Pair, AssociationHandle, AssociationHandle)> {
+    let mut pair = Pair::new(
+        EndpointConfig::default(),
+        ServerConfig {
+            transport: Arc::new(
+                TransportConfig::default().with_enable_zero_checksum(enable_on_server),
+            ),
+            ..Default::default()
+        },
+    );
+    let (client_ch, server_ch) = pair.connect_with(ClientConfig {
+        transport: Arc::new(TransportConfig::default().with_enable_zero_checksum(enable_on_client)),
+    });
+    pair.client_conn_mut(client_ch).ack_mode = AckMode::NoDelay;
+    pair.server_conn_mut(server_ch).ack_mode = AckMode::NoDelay;
+    establish_session_pair(&mut pair, client_ch, server_ch, 1)?;
+    Ok((pair, client_ch, server_ch))
+}
+
+/// The checksum field (bytes 8..12, little-endian) of every raw datagram queued for the
+/// receiving side, tagged with the first chunk type byte.
+///
+/// Read *after* `drive_client()` and *before* the receiving side processes them: that is
+/// where the bytes are exactly what went on the wire, neither queued nor consumed yet.
+fn checksums_in_flight_to_server(pair: &Pair) -> Vec<(u8, u32)> {
+    pair.server
+        .inbound
+        .iter()
+        .map(|(_, _, bytes)| {
+            // The first chunk's type byte sits right after the 12-byte common header.
+            (
+                bytes[12],
+                u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+            )
+        })
+        .collect()
+}
+
+/// Both ends advertising the capability (RFC 9653) must negotiate it in both directions,
+/// actually drop the CRC from their DATA packets, and still deliver every byte — DTLS
+/// already integrity-protects the datagram, so nothing else may change.
+#[test]
+fn test_zero_checksum_negotiated_pair_sends_and_receives() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(true, true)?;
+
+    assert!(
+        pair.client_conn_mut(client_ch).send_zero_checksum,
+        "client must send zero-checksum: the server advertised the DTLS EDMID"
+    );
+    assert!(
+        pair.server_conn_mut(server_ch).send_zero_checksum,
+        "server must send zero-checksum: the client advertised the DTLS EDMID"
+    );
+
+    let payload = Bytes::from(vec![0xCDu8; 512]);
+    let now = pair.time;
+    pair.client_stream(client_ch, 1)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+    pair.drive_client();
+
+    // The packets now queued for the server are exactly what went on the wire.
+    let in_flight = checksums_in_flight_to_server(&pair);
+    assert!(!in_flight.is_empty(), "the client must have sent packets");
+    for (_chunk_type, checksum) in &in_flight {
+        assert_eq!(*checksum, 0, "negotiated packets must carry checksum 0");
+    }
+
+    pair.drive();
+
+    let mut buf = vec![0u8; 1024];
+    let chunks = pair
+        .server_stream(server_ch, 1)?
+        .read_sctp()?
+        .expect("the payload must arrive over zero-checksum packets");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(n, 512);
+    assert_eq!(&buf[..n], &payload[..]);
+    Ok(())
+}
+
+/// Without the option both flags stay off and packets are CRC'd as before — the default
+/// behavior is byte-identical to what a peer without RFC 9653 expects.
+#[test]
+fn test_zero_checksum_disabled_by_default() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(false, false)?;
+
+    assert!(!pair.client_conn_mut(client_ch).send_zero_checksum);
+    assert!(!pair.server_conn_mut(server_ch).send_zero_checksum);
+
+    let payload = Bytes::from_static(b"still crc'd");
+    let now = pair.time;
+    pair.client_stream(client_ch, 1)?.write_sctp(
+        now,
+        &payload,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+    pair.drive_client();
+
+    let in_flight = checksums_in_flight_to_server(&pair);
+    assert!(!in_flight.is_empty());
+    for (_chunk_type, checksum) in &in_flight {
+        assert_ne!(*checksum, 0, "un-negotiated packets must carry a real CRC");
+    }
+
+    pair.drive();
+
+    let mut buf = vec![0u8; 64];
+    let chunks = pair
+        .server_stream(server_ch, 1)?
+        .read_sctp()?
+        .expect("payload arrives");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(&buf[..n], &payload[..]);
+    Ok(())
+}
+
+/// One end enabled: the enabled end accepts zero-checksum packets but the other never
+/// advertises, so nothing on the wire changes. The flags must reflect exactly that.
+#[test]
+fn test_zero_checksum_one_sided_negotiation() -> Result<()> {
+    let (mut pair, client_ch, server_ch) = zero_checksum_pair(true, false)?;
+
+    // Client advertised; the server (answering) learned it may send zeros...
+    assert!(pair.server_conn_mut(server_ch).send_zero_checksum);
+    // ...but the server's own INIT-ACK carried no parameter (its config is off), so the
+    // client never gained permission.
+    assert!(!pair.client_conn_mut(client_ch).send_zero_checksum);
+    // The client's acceptance is config-driven and armed: should the server choose to
+    // send zeros, they will be taken.
+    assert!(pair.client_conn_mut(client_ch).recv_zero_checksum);
+    assert!(!pair.server_conn_mut(server_ch).recv_zero_checksum);
+    Ok(())
+}
+
+/// The parse layer: strict rejects a zero field, lenient takes it flagged, and a lenient
+/// parse still verifies a nonzero checksum. Handshake chunks stay verified even lenient.
+#[test]
+fn test_zero_checksum_parse_strict_and_lenient() -> Result<()> {
+    use crate::chunk::chunk_payload_data::ChunkPayloadData;
+
+    let packet = Packet {
+        common_header: CommonHeader {
+            source_port: 5000,
+            destination_port: 5000,
+            verification_tag: 12345,
+        },
+        chunks: vec![Box::new(ChunkPayloadData {
+            stream_identifier: 1,
+            ..Default::default()
+        })],
+    };
+    let crc_bytes = packet.marshal()?;
+    let raw = crc_bytes.clone();
+    assert!(
+        PartialDecode::unmarshal(&raw).is_ok(),
+        "a real CRC must parse strictly"
+    );
+    assert!(
+        PartialDecode::unmarshal_lenient(&raw).is_ok(),
+        "...and leniently"
+    );
+
+    let zero_bytes = packet.marshal_opt(true)?;
+    assert_ne!(&zero_bytes[8..12], &crc_bytes[8..12]);
+    let raw_zero = zero_bytes.clone();
+    assert!(
+        PartialDecode::unmarshal(&raw_zero).is_err(),
+        "strict must reject a zero checksum"
+    );
+    let lenient = PartialDecode::unmarshal_lenient(&raw_zero)
+        .expect("lenient accepts the zero-checksum form");
+    assert!(lenient.checksum_is_zero);
+
+    let tampered = {
+        let mut b = crc_bytes.to_vec();
+        b[20] ^= 0xFF;
+        Bytes::from(b)
+    };
+    assert!(PartialDecode::unmarshal(&tampered).is_err());
+    assert!(
+        PartialDecode::unmarshal_lenient(&tampered).is_err(),
+        "lenient is not lenient about a broken nonzero checksum"
+    );
+    Ok(())
+}
+
+/// Sends a few hundred messages across a 10 ms round trip that loses two datagrams in every 23,
+/// and reports how long (virtual time) the server needs to receive all of them, plus how many
+/// retransmission timeouts the client hit.
+fn lossy_bulk_transfer(rack: bool) -> Result<(Duration, u64)> {
+    let si: u16 = 7;
+    let total = 300;
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+    pair.latency = Duration::from_millis(5);
+    pair.client_conn_mut(client_ch).rack.enabled = rack;
+    pair.server_conn_mut(server_ch).rack.enabled = rack;
+    pair.client_loss = Some(Box::new(|n| n % 23 == 5 || n % 23 == 6));
+
+    let started = pair.time;
+    let payload = Bytes::from(vec![0x42; 1000]);
+    for _ in 0..total {
+        let now = pair.time;
+        pair.client_stream(client_ch, si)?.write_sctp(
+            now,
+            &payload,
+            PayloadProtocolIdentifier::Binary,
+        )?;
+    }
+
+    let mut received = 0;
+    for _ in 0..100_000 {
+        pair.step();
+        while pair.server_stream(server_ch, si)?.read_sctp()?.is_some() {
+            received += 1;
+        }
+        if received == total {
+            break;
+        }
+    }
+    assert_eq!(
+        total, received,
+        "every message must arrive despite the loss"
+    );
+    let mut stats = pair.client_conn_mut(client_ch).stats;
+    Ok((
+        pair.time.duration_since(started),
+        stats.get_num_t3timeouts(),
+    ))
+}
+
+/// The point of RACK-TLP: a lossy path costs round trips, not retransmission timeouts. The same
+/// transfer over the same lossy path finishes several times faster with it, and without any T3.
+#[test]
+fn test_assoc_lossy_transfer_recovers_in_round_trips_with_rack() -> Result<()> {
+    let (with_rack, t3_with_rack) = lossy_bulk_transfer(true)?;
+    let (without_rack, t3_without_rack) = lossy_bulk_transfer(false)?;
+    assert!(
+        t3_with_rack < t3_without_rack || t3_without_rack == 0,
+        "RACK must not need more retransmission timeouts: {t3_with_rack} vs {t3_without_rack}"
+    );
+    assert!(
+        with_rack * 2 <= without_rack,
+        "with RACK-TLP {with_rack:?} (T3 x{t3_with_rack}), without {without_rack:?} (T3 x{t3_without_rack})"
+    );
     Ok(())
 }

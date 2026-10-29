@@ -5,7 +5,7 @@ use shared::{
     marshal::{Marshal, MarshalSize, Unmarshal},
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes};
 use std::any::Any;
 use std::fmt;
 
@@ -80,17 +80,11 @@ impl Unmarshal for RawPacket {
             return Err(Error::PacketTooShort);
         }
 
-        let h = Header::unmarshal(raw_packet)?;
+        // Validate the header, but keep the packet's bytes exactly as received.
+        let raw = raw_packet.copy_to_bytes(raw_packet.remaining());
+        Header::unmarshal(&mut raw.clone())?;
 
-        let raw_hdr = h.marshal()?;
-        let raw_body = raw_packet.copy_to_bytes(raw_packet.remaining());
-        // Preallocate the exact size and bulk-copy: `BytesMut::extend` resolves to
-        // `Extend<u8>` here, copying a byte at a time and growing via reallocation.
-        let mut raw = BytesMut::with_capacity(raw_hdr.len() + raw_body.len());
-        raw.extend_from_slice(&raw_hdr);
-        raw.extend_from_slice(&raw_body);
-
-        Ok(RawPacket(raw.freeze()))
+        Ok(RawPacket(raw))
     }
 }
 

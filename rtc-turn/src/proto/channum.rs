@@ -40,7 +40,7 @@ impl fmt::Display for ChannelNumber {
 impl Setter for ChannelNumber {
     /// Adds `CHANNEL-NUMBER` to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {
-        let mut v = vec![0; CHANNEL_NUMBER_SIZE];
+        let mut v = [0u8; CHANNEL_NUMBER_SIZE];
         v[..2].copy_from_slice(&self.0.to_be_bytes());
         // v[2:4] are zeroes (RFFU = 0)
         m.add(ATTR_CHANNEL_NUMBER, &v);
@@ -51,7 +51,7 @@ impl Setter for ChannelNumber {
 impl Getter for ChannelNumber {
     /// Decodes `CHANNEL-NUMBER` from message.
     fn get_from(&mut self, m: &Message) -> Result<()> {
-        let v = m.get(ATTR_CHANNEL_NUMBER)?;
+        let v = m.get_value(ATTR_CHANNEL_NUMBER)?;
 
         check_size(ATTR_CHANNEL_NUMBER, v.len(), CHANNEL_NUMBER_SIZE)?;
 

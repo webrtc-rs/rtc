@@ -1,8 +1,12 @@
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
 use crate::TimerConfig;
+use crate::association::timer::DEFAULT_RTO_MAX;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU16;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// MTU for inbound packet (from DTLS)
 pub(crate) const RECEIVE_MTU: usize = 8192;
@@ -21,6 +25,10 @@ pub(crate) const INITIAL_MTU: u32 = 1191;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;
+/// Chunk header plus the fixed I-DATA header ([RFC 8260]): four bytes more than DATA.
+///
+/// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+pub(crate) const I_DATA_CHUNK_HEADER_SIZE: u32 = 20;
 /// Floor for [`max_payload_size_for_mtu`]: the smallest representable padded
 /// DATA packet — the 12-byte common header, the 16-byte DATA chunk header, and
 /// a 1..=4-byte payload padded to the 4-byte chunk boundary.
@@ -51,6 +59,22 @@ pub fn max_payload_size_for_mtu(mtu: u32) -> u32 {
 }
 pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
 
+/// How the sender shares the wire between streams once user message interleaving ([RFC 8260])
+/// is negotiated. Without it, a message must be sent in full before the next one starts.
+///
+/// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamScheduler {
+    /// One chunk from each backlogged stream in turn.
+    RoundRobin,
+    /// Weighted fair queueing: backlogged streams share the wire in proportion to their weights
+    /// (see [`TransportConfig::with_stream_scheduler_weight`]); every stream weighs 1 unless
+    /// set otherwise. This is the default, as in pion.
+    #[default]
+    WeightedFairQueueing,
+}
+
 /// Config collects the arguments to create_association construction into
 /// a single structure
 #[derive(Debug, Clone)]
@@ -61,6 +85,57 @@ pub struct TransportConfig {
     max_num_outbound_streams: u16,
     max_num_inbound_streams: u16,
     timer_config: TimerConfig,
+    /// Whether packets carrying a zero checksum are accepted, per [RFC 9653].
+    ///
+    /// Off by default: it is only sound when the SCTP packets ride inside an
+    /// integrity-protected transport — for WebRTC, DTLS. On an association carrying it,
+    /// incoming packets whose checksum field is zero skip the CRC-32C (the DTLS record
+    /// MAC already covers them bit-for-bit), and the INIT/INIT-ACK advertises the
+    /// capability to the peer. Outgoing packets go zero-checksum once the *peer*
+    /// advertised the capability — see the association's `send_zero_checksum`.
+    enable_zero_checksum: bool,
+    /// Whether RACK-TLP loss detection ([RFC 8985]) is used. On by default.
+    ///
+    /// [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+    enable_rack: bool,
+    /// Upper bound of the retransmission timeout, as pion's `SetSCTPRTOMax`.
+    ///
+    /// [`Duration::ZERO`] (the default) keeps the RFC 9260 recommended 60 s.
+    /// The value floors at 1 ms when set: the RTO arithmetic is whole
+    /// milliseconds, and a configured sub-millisecond ceiling would otherwise
+    /// round back up to the 60 s default.
+    rto_max: Duration,
+    /// Congestion-window floor, as pion's `SetSCTPMinCwnd`.
+    ///
+    /// `0` (the default) keeps the RFC 9260 resets (`cwnd = mtu` on a T3-rtx
+    /// timeout, `cwnd = ssthresh` on fast recovery). Non-zero raises every
+    /// congestion-window write to at least this many bytes — including the
+    /// initial `min(4*MTU, max(2*MTU, 4380))`.
+    min_cwnd: u32,
+    /// Bundling budget for fast retransmissions, as pion's `SetSCTPFastRtxWnd`.
+    ///
+    /// The effective budget is `max(MTU, fast_rtx_wnd)` bytes: `0` (the
+    /// default) retransmits within one MTU-sized packet as before, larger
+    /// values let a single fast-retransmit flight carry more of the chunks
+    /// reported missing by three gap reports.
+    fast_rtx_wnd: u32,
+    /// Congestion-window growth per round trip in congestion avoidance, as
+    /// pion's `SetSCTPCwndCAStep`.
+    ///
+    /// The effective step is `max(MTU, cwnd_ca_step)`: `0` (the default) keeps
+    /// the RFC 9260 `cwnd += MTU` growth.
+    cwnd_ca_step: u32,
+    /// Whether user message interleaving ([RFC 8260]) is offered to the peer. Off by default:
+    /// browsers do not speak I-DATA, so offering it changes nothing against them, and a peer
+    /// that offers it only gets it if this side does too.
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    enable_interleaving: bool,
+    stream_scheduler: StreamScheduler,
+    stream_scheduler_weights: BTreeMap<u16, NonZeroU16>,
+    /// Cap on the DATA entries (or I-DATA messages) queued per stream awaiting reassembly;
+    /// zero disables the cap.
+    max_reassembly_queue_entries: u32,
 }
 
 impl Default for TransportConfig {
@@ -72,6 +147,16 @@ impl Default for TransportConfig {
             max_num_outbound_streams: u16::MAX,
             max_num_inbound_streams: u16::MAX,
             timer_config: TimerConfig::default(),
+            enable_zero_checksum: false,
+            enable_rack: true,
+            rto_max: Duration::ZERO,
+            min_cwnd: 0,
+            fast_rtx_wnd: 0,
+            cwnd_ca_step: 0,
+            enable_interleaving: false,
+            stream_scheduler: StreamScheduler::default(),
+            stream_scheduler_weights: BTreeMap::new(),
+            max_reassembly_queue_entries: 0,
         }
     }
 }
@@ -81,6 +166,44 @@ impl TransportConfig {
     pub fn with_sctp_port(mut self, value: u16) -> Self {
         self.sctp_port = value;
         self
+    }
+
+    /// Accepts packets with a zero checksum, per [RFC 9653], and advertises that in
+    /// INIT/INIT-ACK.
+    ///
+    /// Only sound when the association rides a transport that already integrity-protects
+    /// every packet — WebRTC's DTLS. This is the receive half: it covers what *this*
+    /// endpoint will accept. The transmit half turns on when the peer advertises the
+    /// capability in its own INIT/INIT-ACK.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub fn with_enable_zero_checksum(mut self, value: bool) -> Self {
+        self.enable_zero_checksum = value;
+        self
+    }
+
+    /// Turns RACK-TLP loss detection ([RFC 8985]) on or off. It is on by default.
+    ///
+    /// RACK declares a chunk lost once a later-sent chunk has been delivered and a round trip
+    /// plus a small reordering allowance has passed, and a tail-loss probe fires after about two
+    /// round trips of silence — so a lost tail costs milliseconds instead of a one-second
+    /// retransmission timeout. Disabling it leaves only the classic fast retransmit (three gap
+    /// reports) and the T3-rtx timer.
+    ///
+    /// [RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+    pub fn with_enable_rack(mut self, value: bool) -> Self {
+        self.enable_rack = value;
+        self
+    }
+
+    /// Whether RACK-TLP loss detection is enabled.
+    pub fn enable_rack(&self) -> bool {
+        self.enable_rack
+    }
+
+    /// Whether this configuration accepts zero-checksum packets ([RFC 9653]).
+    pub fn enable_zero_checksum(&self) -> bool {
+        self.enable_zero_checksum
     }
 
     /// Sets the advertised receive window (a_rwnd), bounding how much unacknowledged data a peer
@@ -105,6 +228,84 @@ impl TransportConfig {
     /// Sets how many inbound streams this endpoint will accept.
     pub fn with_max_num_inbound_streams(mut self, value: u16) -> Self {
         self.max_num_inbound_streams = value;
+        self
+    }
+
+    /// Sets the upper bound of the retransmission timeout; zero keeps the default.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPRTOMax`: the RTO manager's estimate clamp, the
+    /// backoff ceiling, and the retransmission timers' exponential doubling are all capped by
+    /// this value. `Duration::ZERO` keeps the RFC 9260 recommended 60 s.
+    pub fn with_rto_max(mut self, value: Duration) -> Self {
+        self.rto_max = value;
+        self
+    }
+
+    /// Sets the congestion-window floor in bytes; zero keeps the RFC resets.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPMinCwnd`: with a non-zero value the congestion
+    /// window never drops below it — T3-rtx timeouts, fast-recovery resets and the initial
+    /// window are all raised to the floor. `0` preserves the previous behaviour exactly.
+    pub fn with_min_cwnd(mut self, value: u32) -> Self {
+        self.min_cwnd = value;
+        self
+    }
+
+    /// Sets the fast-retransmission bundling budget in bytes; zero keeps one MTU.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPFastRtxWnd`: the budget for a fast-retransmit
+    /// flight is `max(MTU, fast_rtx_wnd)` bytes. `0` preserves the previous MTU-sized
+    /// bundling exactly.
+    pub fn with_fast_rtx_wnd(mut self, value: u32) -> Self {
+        self.fast_rtx_wnd = value;
+        self
+    }
+
+    /// Sets the congestion-avoidance growth step in bytes; zero keeps `cwnd += MTU`.
+    ///
+    /// Mirrors pion's `SettingEngine.SetSCTPCwndCAStep`: each congestion-avoidance increase
+    /// grows the window by `max(MTU, cwnd_ca_step)` bytes. `0` preserves the previous
+    /// behaviour exactly.
+    pub fn with_cwnd_ca_step(mut self, value: u32) -> Self {
+        self.cwnd_ca_step = value;
+        self
+    }
+
+    /// Offers user message interleaving ([RFC 8260]) to the peer: I-DATA and I-FORWARD-TSN in
+    /// place of DATA and FORWARD-TSN. It is used only when the peer offers it too, so an
+    /// association with a peer that does not stays on plain DATA. Off by default.
+    ///
+    /// With interleaving, fragments of different messages (on different streams, or on the same
+    /// one) may share the wire: a large message no longer holds up everything behind it. How the
+    /// streams take turns is [`with_stream_scheduler`](Self::with_stream_scheduler).
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    pub fn with_enable_interleaving(mut self, value: bool) -> Self {
+        self.enable_interleaving = value;
+        self
+    }
+
+    /// Selects how interleaved streams share the wire; see [`StreamScheduler`]. Has no effect
+    /// unless interleaving is negotiated.
+    pub fn with_stream_scheduler(mut self, value: StreamScheduler) -> Self {
+        self.stream_scheduler = value;
+        self
+    }
+
+    /// Sets a stream's weight for [`StreamScheduler::WeightedFairQueueing`] and selects that
+    /// scheduler. A stream with twice the weight gets twice the share of the wire while several
+    /// streams have data waiting.
+    pub fn with_stream_scheduler_weight(mut self, stream_id: u16, weight: NonZeroU16) -> Self {
+        self.stream_scheduler = StreamScheduler::WeightedFairQueueing;
+        self.stream_scheduler_weights.insert(stream_id, weight);
+        self
+    }
+
+    /// Caps how many DATA entries (or I-DATA messages) a stream may hold while waiting for the
+    /// rest of their message; a peer that exceeds it is aborted with a protocol violation.
+    /// Mirrors pion's `WithMaxReassemblyQueueEntries`. Zero, the default, means no cap.
+    pub fn with_max_reassembly_queue_entries(mut self, value: u32) -> Self {
+        self.max_reassembly_queue_entries = value;
         self
     }
 
@@ -142,6 +343,65 @@ impl TransportConfig {
     /// The configured retransmission limits.
     pub fn timer_config(&self) -> TimerConfig {
         self.timer_config
+    }
+
+    /// The configured RTO ceiling. Zero means "not set".
+    pub fn rto_max(&self) -> Duration {
+        self.rto_max
+    }
+
+    /// The configured RTO ceiling in whole milliseconds, defaulting to 60 s when unset.
+    ///
+    /// This is the form the RTO arithmetic consumes: a set value below one
+    /// millisecond reads as 1 ms, not as the default.
+    pub(crate) fn rto_max_millis(&self) -> u64 {
+        if self.rto_max.is_zero() {
+            DEFAULT_RTO_MAX
+        } else {
+            (self.rto_max.as_millis() as u64).max(1)
+        }
+    }
+
+    /// The configured congestion-window floor in bytes; `0` means no floor.
+    pub fn min_cwnd(&self) -> u32 {
+        self.min_cwnd
+    }
+
+    /// The configured fast-retransmission bundling budget; `0` means one MTU.
+    pub fn fast_rtx_wnd(&self) -> u32 {
+        self.fast_rtx_wnd
+    }
+
+    /// The configured congestion-avoidance growth step; `0` means one MTU.
+    pub fn cwnd_ca_step(&self) -> u32 {
+        self.cwnd_ca_step
+    }
+
+    /// Whether user message interleaving ([RFC 8260]) is offered to the peer.
+    ///
+    /// [RFC 8260]: https://www.rfc-editor.org/rfc/rfc8260.html
+    pub fn enable_interleaving(&self) -> bool {
+        self.enable_interleaving
+    }
+
+    /// The configured stream scheduler.
+    pub fn stream_scheduler(&self) -> StreamScheduler {
+        self.stream_scheduler
+    }
+
+    /// The weight set for a stream with
+    /// [`with_stream_scheduler_weight`](Self::with_stream_scheduler_weight), if any.
+    pub fn stream_scheduler_weight(&self, stream_id: u16) -> Option<NonZeroU16> {
+        self.stream_scheduler_weights.get(&stream_id).copied()
+    }
+
+    pub(crate) fn stream_scheduler_weights(&self) -> &BTreeMap<u16, NonZeroU16> {
+        &self.stream_scheduler_weights
+    }
+
+    /// The configured reassembly queue cap; `0` means none.
+    pub fn max_reassembly_queue_entries(&self) -> u32 {
+        self.max_reassembly_queue_entries
     }
 }
 
@@ -305,6 +565,25 @@ mod tests {
         let padded_chunk =
             (DATA_CHUNK_HEADER_SIZE + config.get_max_payload_size()).next_multiple_of(4);
         assert!(COMMON_HEADER_SIZE + padded_chunk <= INITIAL_MTU);
+    }
+
+    #[test]
+    fn sctp_tuning_knobs_default_to_the_previous_behaviour() {
+        // pion parity: every knob is opt-in, and 0/unset must reproduce the
+        // hard-coded values the association used before they existed.
+        let config = TransportConfig::default();
+        assert_eq!(config.rto_max(), Duration::ZERO);
+        assert_eq!(config.rto_max_millis(), DEFAULT_RTO_MAX);
+        assert_eq!(config.min_cwnd(), 0);
+        assert_eq!(config.fast_rtx_wnd(), 0);
+        assert_eq!(config.cwnd_ca_step(), 0);
+
+        // A set RTO ceiling below one millisecond must not round back up to
+        // the 60 s default.
+        let config = TransportConfig::default().with_rto_max(Duration::from_micros(500));
+        assert_eq!(config.rto_max_millis(), 1);
+        let config = TransportConfig::default().with_rto_max(Duration::from_secs(2));
+        assert_eq!(config.rto_max_millis(), 2000);
     }
 
     #[test]

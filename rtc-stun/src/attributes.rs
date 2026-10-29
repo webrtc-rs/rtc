@@ -21,24 +21,43 @@ use shared::error::*;
 
 use std::fmt;
 
-/// Attributes is list of message attributes.
+/// Where one attribute's value sits in the encoded message.
+#[derive(Default, PartialEq, Eq, Debug, Clone, Copy)]
+pub(crate) struct Span {
+    pub(crate) typ: AttrType,
+    /// Offset of the value in [`Message::raw`].
+    pub(crate) start: u32,
+    pub(crate) len: u16,
+}
+
+/// The attributes of a message, as positions in its encoded bytes.
+///
+/// Like pion's `Message.Attributes`, which slices `Message.Raw`, an attribute here is a
+/// `(type, offset, length)` triple and owns no bytes; read them through [`Message`], with
+/// [`iter_attributes`](Message::iter_attributes) or
+/// [`find_attribute`](Message::find_attribute). Adding one therefore copies the value once.
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
-pub struct Attributes(pub Vec<RawAttribute>);
+pub struct Attributes(pub(crate) Vec<Span>);
 
 impl Attributes {
-    /// get returns first attribute from list by the type.
-    /// If attribute is present the RawAttribute is returned and the
-    /// boolean is true. Otherwise the returned RawAttribute will be
-    /// empty and boolean will be false.
-    pub fn get(&self, t: AttrType) -> (RawAttribute, bool) {
-        for candidate in &self.0 {
-            if candidate.typ == t {
-                return (candidate.clone(), true);
-            }
-        }
-
-        (RawAttribute::default(), false)
+    /// How many attributes there are.
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// An attribute of a [`Message`]: its type and its value, borrowed from the message's bytes.
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub struct AttributeRef<'a> {
+    /// Which attribute this is.
+    pub typ: AttrType,
+    /// The value, without padding.
+    pub value: &'a [u8],
 }
 
 /// AttrType is attribute type.
@@ -65,6 +84,8 @@ impl fmt::Display for AttrType {
             ATTR_USE_CANDIDATE => "USE-CANDIDATE",
             ATTR_ICE_CONTROLLED => "ICE-CONTROLLED",
             ATTR_ICE_CONTROLLING => "ICE-CONTROLLING",
+            ATTR_DTLS_IN_STUN => "DTLS-IN-STUN",
+            ATTR_DTLS_IN_STUN_ACK => "DTLS-IN-STUN-ACKNOWLEDGEMENT",
             ATTR_CHANNEL_NUMBER => "CHANNEL-NUMBER",
             ATTR_LIFETIME => "LIFETIME",
             ATTR_XOR_PEER_ADDRESS => "XOR-PEER-ADDRESS",
@@ -142,6 +163,11 @@ pub const ATTR_ICE_CONTROLLED: AttrType = AttrType(0x8029);
 pub const ATTR_ICE_CONTROLLING: AttrType = AttrType(0x802A);
 /// NETWORK-COST.
 pub const ATTR_NETWORK_COST: AttrType = AttrType(0xC057);
+/// DTLS-IN-STUN: DTLS handshake records carried inside connectivity checks
+/// (draft-ietf-mmusic-dtls-in-stun, "SPED").
+pub const ATTR_DTLS_IN_STUN: AttrType = AttrType(0xC070);
+/// DTLS-IN-STUN-ACKNOWLEDGEMENT: the DTLS-in-STUN packets a peer has received.
+pub const ATTR_DTLS_IN_STUN_ACK: AttrType = AttrType(0xC071);
 
 /// Attributes from RFC 5766 TURN.
 /// CHANNEL-NUMBER.

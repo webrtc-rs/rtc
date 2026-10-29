@@ -1,25 +1,32 @@
 use crate::{
     AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher, CryptoError,
-    SecretVec, StreamCipher, StreamCipherAlgorithm,
+    StreamCipher, StreamCipherAlgorithm,
 };
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit};
+use aes::cipher::array::{Array, ArraySize};
+use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, InnerIvInit, KeyInit};
 use aes::{Aes128, Aes256};
 use ccm::Ccm;
-use ccm::aead::AeadInPlace;
+use ccm::aead::AeadInOut;
 use ccm::consts::{U8, U12, U16};
 use ctr::cipher::StreamCipher as CtrStreamCipher;
+use ctr::{CtrCore, flavors};
 use md5::{Digest, Md5};
+
+#[cfg(test)]
+mod common_test;
 
 const AES_BLOCK_LEN: usize = 16;
 const CCM_NONCE_LEN: usize = 12;
 
 type Aes128Ccm = Ccm<Aes128, U16, U12>;
 type Aes128Ccm8 = Ccm<Aes128, U8, U12>;
+type Aes256Ccm8 = Ccm<Aes256, U8, U12>;
 
 // SRTP counter mode (RFC 3711 section 4.1.1) is AES-CTR with a big-endian 128-bit counter.
-type Aes128Ctr = ctr::Ctr128BE<Aes128>;
-type Aes256Ctr = ctr::Ctr128BE<Aes256>;
+type Aes128Ctr<'a> = ctr::Ctr128BE<&'a Aes128>;
+type Aes256Ctr<'a> = ctr::Ctr128BE<&'a Aes256>;
+
+type Block = Array<u8, U16>;
 
 /// Fills `output` from the thread-local CSPRNG shared by the built-in providers.
 ///
@@ -53,13 +60,13 @@ pub(crate) fn block_encrypt(
             check_key_len(16, key.len())?;
             Aes128::new_from_slice(key)
                 .map_err(|_| invalid_key(16, key.len()))?
-                .encrypt_block(GenericArray::from_mut_slice(block));
+                .encrypt_block(block_mut(block)?);
         }
         BlockCipherAlgorithm::Aes256 => {
             check_key_len(32, key.len())?;
             Aes256::new_from_slice(key)
                 .map_err(|_| invalid_key(32, key.len()))?
-                .encrypt_block(GenericArray::from_mut_slice(block));
+                .encrypt_block(block_mut(block)?);
         }
     }
     Ok(())
@@ -69,20 +76,17 @@ pub(crate) fn new_stream_cipher(
     algorithm: StreamCipherAlgorithm,
     key: &[u8],
 ) -> Result<Box<dyn StreamCipher>, CryptoError> {
-    let bits = match algorithm {
+    let cipher = match algorithm {
         StreamCipherAlgorithm::Aes128Ctr => {
             check_key_len(16, key.len())?;
-            AesKeyBits::Aes128
+            AesCtr::Aes128(Aes128::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?)
         }
         StreamCipherAlgorithm::Aes256Ctr => {
             check_key_len(32, key.len())?;
-            AesKeyBits::Aes256
+            AesCtr::Aes256(Aes256::new_from_slice(key).map_err(|_| invalid_key(32, key.len()))?)
         }
     };
-    Ok(Box::new(AesCtr {
-        key: SecretVec::new(key.to_vec()),
-        bits,
-    }))
+    Ok(Box::new(cipher))
 }
 
 pub(crate) fn new_cbc(
@@ -90,6 +94,9 @@ pub(crate) fn new_cbc(
     key: &[u8],
 ) -> Result<Box<dyn CbcCipher>, CryptoError> {
     match algorithm {
+        CbcAlgorithm::Aes128Cbc => Ok(Box::new(AesCbc {
+            key: ExpandedAesKey::new_128(key)?,
+        })),
         CbcAlgorithm::Aes256Cbc => Ok(Box::new(AesCbc {
             key: ExpandedAesKey::new_256(key)?,
         })),
@@ -100,14 +107,23 @@ pub(crate) fn new_ccm(
     algorithm: AeadAlgorithm,
     key: &[u8],
 ) -> Result<Box<dyn AeadCipher>, CryptoError> {
-    check_key_len(16, key.len())?;
     let cipher = match algorithm {
         AeadAlgorithm::Aes128Ccm => {
+            check_key_len(16, key.len())?;
             CommonCcm::Full(Aes128Ccm::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?)
         }
-        AeadAlgorithm::Aes128Ccm8 => CommonCcm::Short(
-            Aes128Ccm8::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
-        ),
+        AeadAlgorithm::Aes128Ccm8 => {
+            check_key_len(16, key.len())?;
+            CommonCcm::Short(
+                Aes128Ccm8::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
+            )
+        }
+        AeadAlgorithm::Aes256Ccm8 => {
+            check_key_len(32, key.len())?;
+            CommonCcm::Short256(
+                Aes256Ccm8::new_from_slice(key).map_err(|_| invalid_key(32, key.len()))?,
+            )
+        }
         _ => {
             return Err(CryptoError::UnsupportedAlgorithm(
                 crate::CryptoAlgorithm::Aead(algorithm),
@@ -118,14 +134,21 @@ pub(crate) fn new_ccm(
 }
 
 // Stores an expanded key inside an already boxed cipher object, avoiding another allocation in
-// every constructed state object. Only AES-256 is needed: `CbcAlgorithm` has a single variant,
-// and CTR now goes through the `ctr` crate.
+// every constructed state object.
 #[allow(clippy::large_enum_variant)]
 enum ExpandedAesKey {
+    Aes128(Aes128),
     Aes256(Aes256),
 }
 
 impl ExpandedAesKey {
+    fn new_128(key: &[u8]) -> Result<Self, CryptoError> {
+        check_key_len(16, key.len())?;
+        Ok(Self::Aes128(
+            Aes128::new_from_slice(key).map_err(|_| invalid_key(16, key.len()))?,
+        ))
+    }
+
     fn new_256(key: &[u8]) -> Result<Self, CryptoError> {
         check_key_len(32, key.len())?;
         Ok(Self::Aes256(
@@ -135,13 +158,15 @@ impl ExpandedAesKey {
 
     fn encrypt(&self, block: &mut [u8; AES_BLOCK_LEN]) {
         match self {
-            Self::Aes256(cipher) => cipher.encrypt_block(GenericArray::from_mut_slice(block)),
+            Self::Aes128(cipher) => cipher.encrypt_block(block.into()),
+            Self::Aes256(cipher) => cipher.encrypt_block(block.into()),
         }
     }
 
     fn decrypt(&self, block: &mut [u8; AES_BLOCK_LEN]) {
         match self {
-            Self::Aes256(cipher) => cipher.decrypt_block(GenericArray::from_mut_slice(block)),
+            Self::Aes128(cipher) => cipher.decrypt_block(block.into()),
+            Self::Aes256(cipher) => cipher.decrypt_block(block.into()),
         }
     }
 }
@@ -149,37 +174,35 @@ impl ExpandedAesKey {
 /// AES counter mode.
 ///
 /// Delegates to the `ctr` crate rather than driving `encrypt_block` once per 16-byte block, which
-/// defeats the batching that lets AES-NI / ARMv8 crypto instructions pipeline. Measured ~9-10%
-/// faster on a 1200-byte SRTP payload and ~8-10% slower on a two-block RTCP packet, where the
-/// per-call setup dominates; RTP traffic dominates in practice. See
-/// `rtc-srtp/benches/README.md`.
+/// defeats the batching that lets AES-NI / ARMv8 crypto instructions pipeline.
 ///
-/// The key is retained rather than pre-expanded because `ctr::Ctr128BE` owns its own cipher
-/// state and is constructed per call. It is held in a [`SecretVec`] so it is zeroized on drop.
-struct AesCtr {
-    key: SecretVec,
-    bits: AesKeyBits,
-}
-
-#[derive(Clone, Copy)]
-enum AesKeyBits {
-    Aes128,
-    Aes256,
+/// The key schedule is expanded once, when the cipher is built, and borrowed for every call.
+/// Re-deriving it per packet (`Ctr128BE::new`) cost a full key expansion — ~180 ns for AES-128 on
+/// the hardware backends, several times that on the software one — on every SRTP packet, which is
+/// a visible share of a 1200-byte packet and most of a two-block RTCP packet. The expanded key is
+/// zeroized on drop by the `aes` crate.
+///
+/// The variants differ in size, but the cipher already lives behind one `Box<dyn StreamCipher>`;
+/// boxing the key again would add a pointer chase to every packet to save a few hundred bytes
+/// per context.
+#[allow(clippy::large_enum_variant)]
+enum AesCtr {
+    Aes128(Aes128),
+    Aes256(Aes256),
 }
 
 impl StreamCipher for AesCtr {
     fn apply_keystream(&mut self, iv: &[u8], data: &mut [u8]) -> Result<(), CryptoError> {
         check_nonce_len(AES_BLOCK_LEN, iv.len())?;
-        let nonce = GenericArray::from_slice(iv);
-        let key = self.key.as_ref();
-        match self.bits {
-            AesKeyBits::Aes128 => {
-                let mut stream = Aes128Ctr::new(GenericArray::from_slice(key), nonce);
-                stream.apply_keystream(data);
+        let nonce = block_ref(iv)?;
+        match self {
+            Self::Aes128(cipher) => {
+                let core = CtrCore::<_, flavors::Ctr128BE>::inner_iv_init(&*cipher, nonce);
+                Aes128Ctr::from_core(core).apply_keystream(data);
             }
-            AesKeyBits::Aes256 => {
-                let mut stream = Aes256Ctr::new(GenericArray::from_slice(key), nonce);
-                stream.apply_keystream(data);
+            Self::Aes256(cipher) => {
+                let core = CtrCore::<_, flavors::Ctr128BE>::inner_iv_init(&*cipher, nonce);
+                Aes256Ctr::from_core(core).apply_keystream(data);
             }
         }
         Ok(())
@@ -235,16 +258,21 @@ impl CbcCipher for AesCbc {
     }
 }
 
+// The AES-256 variant is larger than the AES-128 ones, but as with `AesCtr` above the cipher
+// already lives behind one `Box<dyn AeadCipher>`; boxing it again would add a pointer chase to
+// every packet.
+#[allow(clippy::large_enum_variant)]
 enum CommonCcm {
     Full(Aes128Ccm),
     Short(Aes128Ccm8),
+    Short256(Aes256Ccm8),
 }
 
 impl AeadCipher for CommonCcm {
     fn tag_len(&self) -> usize {
         match self {
             Self::Full(_) => 16,
-            Self::Short(_) => 8,
+            Self::Short(_) | Self::Short256(_) => 8,
         }
     }
 
@@ -260,20 +288,30 @@ impl AeadCipher for CommonCcm {
         match self {
             Self::Full(cipher) => {
                 let tag = cipher
-                    .encrypt_in_place_detached(
-                        GenericArray::from_slice(nonce),
+                    .encrypt_inout_detached(
+                        array_ref(nonce, invalid_nonce)?,
                         aad,
-                        plaintext_and_ciphertext,
+                        plaintext_and_ciphertext.into(),
                     )
                     .map_err(|_| CryptoError::AuthenticationFailed)?;
                 tag_out.copy_from_slice(&tag);
             }
             Self::Short(cipher) => {
                 let tag = cipher
-                    .encrypt_in_place_detached(
-                        GenericArray::from_slice(nonce),
+                    .encrypt_inout_detached(
+                        array_ref(nonce, invalid_nonce)?,
                         aad,
-                        plaintext_and_ciphertext,
+                        plaintext_and_ciphertext.into(),
+                    )
+                    .map_err(|_| CryptoError::AuthenticationFailed)?;
+                tag_out.copy_from_slice(&tag);
+            }
+            Self::Short256(cipher) => {
+                let tag = cipher
+                    .encrypt_inout_detached(
+                        array_ref(nonce, invalid_nonce)?,
+                        aad,
+                        plaintext_and_ciphertext.into(),
                     )
                     .map_err(|_| CryptoError::AuthenticationFailed)?;
                 tag_out.copy_from_slice(&tag);
@@ -293,23 +331,56 @@ impl AeadCipher for CommonCcm {
         check_tag_len(self.tag_len(), tag.len())?;
         match self {
             Self::Full(cipher) => cipher
-                .decrypt_in_place_detached(
-                    GenericArray::from_slice(nonce),
+                .decrypt_inout_detached(
+                    array_ref(nonce, invalid_nonce)?,
                     aad,
-                    ciphertext_and_plaintext,
-                    GenericArray::from_slice(tag),
+                    ciphertext_and_plaintext.into(),
+                    array_ref(tag, tag_error)?,
                 )
                 .map_err(|_| CryptoError::AuthenticationFailed),
             Self::Short(cipher) => cipher
-                .decrypt_in_place_detached(
-                    GenericArray::from_slice(nonce),
+                .decrypt_inout_detached(
+                    array_ref(nonce, invalid_nonce)?,
                     aad,
-                    ciphertext_and_plaintext,
-                    GenericArray::from_slice(tag),
+                    ciphertext_and_plaintext.into(),
+                    array_ref(tag, tag_error)?,
+                )
+                .map_err(|_| CryptoError::AuthenticationFailed),
+            Self::Short256(cipher) => cipher
+                .decrypt_inout_detached(
+                    array_ref(nonce, invalid_nonce)?,
+                    aad,
+                    ciphertext_and_plaintext.into(),
+                    array_ref(tag, tag_error)?,
                 )
                 .map_err(|_| CryptoError::AuthenticationFailed),
         }
     }
+}
+
+/// Views `bytes` as a fixed-size array, reporting a length mismatch through `err` rather than
+/// panicking. Callers have normally length-checked already; this keeps the conversion total.
+fn array_ref<N: ArraySize>(
+    bytes: &[u8],
+    err: fn(usize, usize) -> CryptoError,
+) -> Result<&Array<u8, N>, CryptoError> {
+    <&Array<u8, N>>::try_from(bytes).map_err(|_| err(N::USIZE, bytes.len()))
+}
+
+fn block_ref(bytes: &[u8]) -> Result<&Block, CryptoError> {
+    array_ref(bytes, invalid_nonce)
+}
+
+fn block_mut(bytes: &mut [u8]) -> Result<&mut Block, CryptoError> {
+    let actual = bytes.len();
+    <&mut Block>::try_from(bytes).map_err(|_| CryptoError::OutputTooSmall {
+        required: AES_BLOCK_LEN,
+        actual,
+    })
+}
+
+fn tag_error(expected: usize, actual: usize) -> CryptoError {
+    CryptoError::InvalidTagLength { expected, actual }
 }
 
 fn check_blocks(blocks: &[u8]) -> Result<(), CryptoError> {

@@ -1,5 +1,5 @@
 use crate::{
-    goodbye::*, header::*, payload_feedbacks::full_intra_request::*,
+    application_defined::*, goodbye::*, header::*, payload_feedbacks::full_intra_request::*,
     payload_feedbacks::picture_loss_indication::*,
     payload_feedbacks::receiver_estimated_maximum_bitrate::*,
     payload_feedbacks::slice_loss_indication::*, raw_packet::*, receiver_report::*,
@@ -96,43 +96,64 @@ pub(crate) fn unmarshaller<B>(raw_data: &mut B) -> Result<Box<dyn Packet>>
 where
     B: Buf,
 {
-    let h = Header::unmarshal(raw_data)?;
+    // Fast path: the whole packet is in the buffer's first chunk (always so for `&[u8]`, `Bytes`
+    // and `BytesMut`), so the packet is parsed straight from that slice. Reading through a
+    // `chain` of header and body instead costs a bounds check and a branch per field.
+    let chunk = raw_data.chunk();
+    if chunk.len() >= HEADER_LENGTH {
+        let h = Header::unmarshal(&mut &chunk[..HEADER_LENGTH])?;
+        let total = HEADER_LENGTH + (h.length as usize) * 4;
+        if chunk.len() >= total {
+            let p = parse_packet(&h, &mut &chunk[..total])?;
+            raw_data.advance(total);
+            return Ok(p);
+        }
+    }
+
+    // Keep the header's wire bytes: a packet type this crate does not model must survive as a
+    // RawPacket byte for byte, and `PacketType` cannot represent it.
+    if raw_data.remaining() < HEADER_LENGTH {
+        return Err(Error::PacketTooShort);
+    }
+    let mut header_buf = [0u8; HEADER_LENGTH];
+    raw_data.copy_to_slice(&mut header_buf);
+    let h = Header::unmarshal(&mut header_buf.as_slice())?;
 
     let length = (h.length as usize) * 4;
     if length > raw_data.remaining() {
         return Err(Error::PacketTooShort);
     }
 
-    // Re-serialize the just-parsed header into a stack buffer rather than a fresh
-    // heap `BytesMut` (`h.marshal()`), then chain it with the body so the
-    // sub-packet unmarshaller re-reads the same bytes -- one fewer heap
-    // allocation per RTCP sub-packet on the receive path.
-    let mut header_buf = [0u8; HEADER_LENGTH];
-    h.marshal_to(&mut header_buf[..])?;
     let mut in_packet = header_buf.as_slice().chain(raw_data.take(length));
+    parse_packet(&h, &mut in_packet)
+}
 
+/// Parses one packet of the type `h` announces from `in_packet`, which holds the whole packet
+/// header included.
+fn parse_packet<B: Buf>(h: &Header, in_packet: &mut B) -> Result<Box<dyn Packet>> {
     let p: Box<dyn Packet> = match h.packet_type {
-        PacketType::SenderReport => Box::new(SenderReport::unmarshal(&mut in_packet)?),
-        PacketType::ReceiverReport => Box::new(ReceiverReport::unmarshal(&mut in_packet)?),
-        PacketType::SourceDescription => Box::new(SourceDescription::unmarshal(&mut in_packet)?),
-        PacketType::Goodbye => Box::new(Goodbye::unmarshal(&mut in_packet)?),
+        PacketType::SenderReport => Box::new(SenderReport::unmarshal(in_packet)?),
+        PacketType::ReceiverReport => Box::new(ReceiverReport::unmarshal(in_packet)?),
+        PacketType::SourceDescription => Box::new(SourceDescription::unmarshal(in_packet)?),
+        PacketType::Goodbye => Box::new(Goodbye::unmarshal(in_packet)?),
 
         PacketType::TransportSpecificFeedback => match h.count {
-            FORMAT_TLN => Box::new(TransportLayerNack::unmarshal(&mut in_packet)?),
-            FORMAT_RRR => Box::new(RapidResynchronizationRequest::unmarshal(&mut in_packet)?),
-            FORMAT_TCC => Box::new(TransportLayerCc::unmarshal(&mut in_packet)?),
-            FORMAT_CCFB => Box::new(CcFeedbackReport::unmarshal(&mut in_packet)?),
-            _ => Box::new(RawPacket::unmarshal(&mut in_packet)?),
+            FORMAT_TLN => Box::new(TransportLayerNack::unmarshal(in_packet)?),
+            FORMAT_RRR => Box::new(RapidResynchronizationRequest::unmarshal(in_packet)?),
+            FORMAT_TCC => Box::new(TransportLayerCc::unmarshal(in_packet)?),
+            FORMAT_CCFB => Box::new(CcFeedbackReport::unmarshal(in_packet)?),
+            _ => Box::new(RawPacket::unmarshal(in_packet)?),
         },
         PacketType::PayloadSpecificFeedback => match h.count {
-            FORMAT_PLI => Box::new(PictureLossIndication::unmarshal(&mut in_packet)?),
-            FORMAT_SLI => Box::new(SliceLossIndication::unmarshal(&mut in_packet)?),
-            FORMAT_REMB => Box::new(ReceiverEstimatedMaximumBitrate::unmarshal(&mut in_packet)?),
-            FORMAT_FIR => Box::new(FullIntraRequest::unmarshal(&mut in_packet)?),
-            _ => Box::new(RawPacket::unmarshal(&mut in_packet)?),
+            FORMAT_PLI => Box::new(PictureLossIndication::unmarshal(in_packet)?),
+            FORMAT_SLI => Box::new(SliceLossIndication::unmarshal(in_packet)?),
+            FORMAT_REMB => Box::new(ReceiverEstimatedMaximumBitrate::unmarshal(in_packet)?),
+            FORMAT_FIR => Box::new(FullIntraRequest::unmarshal(in_packet)?),
+            _ => Box::new(RawPacket::unmarshal(in_packet)?),
         },
-        PacketType::ExtendedReport => Box::new(ExtendedReport::unmarshal(&mut in_packet)?),
-        _ => Box::new(RawPacket::unmarshal(&mut in_packet)?),
+        PacketType::ExtendedReport => Box::new(ExtendedReport::unmarshal(in_packet)?),
+        PacketType::ApplicationDefined => Box::new(ApplicationDefined::unmarshal(in_packet)?),
+        _ => Box::new(RawPacket::unmarshal(in_packet)?),
     };
 
     Ok(p)
@@ -143,6 +164,55 @@ mod test {
     use super::*;
     use crate::reception_report::*;
     use bytes::Bytes;
+
+    /// A packet split across two buffers takes the slower path that cannot borrow the whole
+    /// packet from one slice; it must produce exactly what the contiguous fast path does, for
+    /// every place the split can fall.
+    #[test]
+    fn test_unmarshal_is_the_same_for_split_and_contiguous_buffers() -> Result<()> {
+        let packets: Vec<Box<dyn Packet>> = vec![
+            Box::new(ReceiverReport {
+                ssrc: 0x902f9e2e,
+                reports: vec![ReceptionReport {
+                    ssrc: 0xbc5e9a40,
+                    last_sequence_number: 0x46e1,
+                    jitter: 273,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            Box::new(SourceDescription {
+                chunks: vec![SourceDescriptionChunk {
+                    source: 0x902f9e2e,
+                    items: vec![SourceDescriptionItem {
+                        sdes_type: SdesType::SdesCname,
+                        text: Bytes::from_static(b"{9c00eb92-1afb-9d49}"),
+                    }],
+                }],
+            }),
+            Box::new(Goodbye {
+                sources: vec![0x902f9e2e],
+                reason: Bytes::from_static(b"bye"),
+            }),
+            Box::new(PictureLossIndication {
+                sender_ssrc: 1,
+                media_ssrc: 2,
+            }),
+        ];
+        let raw = marshal(&packets)?.freeze();
+
+        let expected = unmarshal(&mut raw.clone())?;
+        assert_eq!(expected.len(), packets.len());
+        for split in 0..=raw.len() {
+            let mut chained = raw.slice(..split).chain(raw.slice(split..));
+            let got = unmarshal(&mut chained)?;
+            assert_eq!(got.len(), expected.len(), "split at {split}");
+            for (a, b) in got.iter().zip(&expected) {
+                assert!(a.equal(b.as_ref()), "split at {split}: {a:?} != {b:?}");
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_packet_unmarshal() {

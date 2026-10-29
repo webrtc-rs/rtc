@@ -18,7 +18,16 @@ use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParam
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::Interceptor;
 use shared::error::Result;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long a contributing or synchronization source is remembered after its last
+/// contribution.
+///
+/// The W3C `getContributingSources` contract is "the most recent 10 seconds of RTP packets"
+/// ([RTCRtpReceiver.getContributingSources]). Older entries must not be returned.
+///
+/// [RTCRtpReceiver.getContributingSources]: https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-getcontributingsources
+pub(crate) const SOURCE_MEMORY_WINDOW: Duration = Duration::from_secs(10);
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
 ///
@@ -35,6 +44,9 @@ pub(crate) struct RTCRtpReceiverInternal {
     track: MediaStreamTrack,
     contributing_sources: Vec<RTCRtpContributingSource>,
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
+    /// The instant of the first packet this receiver saw, the origin `timestamp` on
+    /// contributing/synchronization source entries counts from.
+    clock_origin: Option<Instant>,
     jitter_buffer_target: Duration,
 
     receive_codings: Vec<RTCRtpCodingParameters>,
@@ -50,6 +62,7 @@ impl RTCRtpReceiverInternal {
             track: Default::default(),
             contributing_sources: vec![],
             synchronization_sources: vec![],
+            clock_origin: None,
             jitter_buffer_target: Default::default(),
             receive_codings,
 
@@ -123,6 +136,83 @@ impl RTCRtpReceiverInternal {
         &self,
     ) -> impl Iterator<Item = &RTCRtpContributingSource> {
         self.contributing_sources.iter()
+    }
+
+    /// Records a received RTP packet's sources, maintaining the
+    /// [`getContributingSources`](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-getcontributingsources)
+    /// and [`getSynchronizationSources`](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-getsynchronizationsources)
+    /// lists.
+    ///
+    /// The W3C contract for both lists is "the most recent [`SOURCE_MEMORY_WINDOW`] of
+    /// RTP packets", so entries whose last contribution is older than the window are
+    /// dropped here rather than accumulating for the lifetime of the receiver.
+    ///
+    /// `timestamp` on each entry is the time since this receiver's first packet — the
+    /// sans-io receiver has no wall clock to be relative to, and a monotonic, per-receiver
+    /// origin is stable across `Instant` drift and identical for both lists.
+    pub(crate) fn on_rtp_packet(&mut self, now: Instant, header: &rtp::Header) {
+        let origin = *self.clock_origin.get_or_insert(now);
+        let elapsed = now.saturating_duration_since(origin);
+
+        // The packet's SSRC is the synchronization source; every CSRC listed in the
+        // header contributed to it (RFC 3550 §5.1).
+        Self::record_source(
+            &mut self.synchronization_sources,
+            header.ssrc,
+            elapsed,
+            header.timestamp,
+        );
+        for &csrc in &header.csrc {
+            Self::record_source(
+                &mut self.contributing_sources,
+                csrc,
+                elapsed,
+                header.timestamp,
+            );
+        }
+
+        self.prune_sources(now);
+    }
+
+    /// Updates one source entry: bumps its counters and last-seen fields, or creates it.
+    ///
+    /// An associated function rather than a method: the caller passes the list to update,
+    /// which would otherwise borrow `self` twice.
+    fn record_source(
+        sources: &mut Vec<RTCRtpContributingSource>,
+        source: u32,
+        timestamp: Duration,
+        rtp_timestamp: u32,
+    ) {
+        if let Some(entry) = sources.iter_mut().find(|s| s.source == source) {
+            entry.timestamp = timestamp;
+            entry.rtp_timestamp = rtp_timestamp;
+            entry.packets_contributed_to = entry.packets_contributed_to.saturating_add(1);
+        } else {
+            sources.push(RTCRtpContributingSource {
+                timestamp,
+                source,
+                audio_level: 0.0,
+                rtp_timestamp,
+                packets_contributed_to: 1,
+            });
+        }
+    }
+
+    /// Drops entries from both source lists that have not contributed within the
+    /// memory window. `clock_origin` is absent only before the first packet, and
+    /// `record_source` always runs first, so there is nothing to prune in that case.
+    fn prune_sources(&mut self, now: Instant) {
+        let Some(origin) = self.clock_origin else {
+            return;
+        };
+        let cutoff = now
+            .checked_sub(SOURCE_MEMORY_WINDOW)
+            .unwrap_or(origin)
+            .saturating_duration_since(origin);
+        self.contributing_sources.retain(|s| s.timestamp >= cutoff);
+        self.synchronization_sources
+            .retain(|s| s.timestamp >= cutoff);
     }
 
     pub(crate) fn get_synchronization_sources(
@@ -657,5 +747,101 @@ mod repair_association_test {
         assert_eq!(None, media.payload_type_fec);
         assert_eq!(None, media.ssrc_rtx);
         assert_eq!(None, media.payload_type_rtx);
+    }
+}
+
+#[cfg(test)]
+mod source_tracking_test {
+    //! Contributing and synchronization source lists (the W3C `getContributingSources` /
+    //! `getSynchronizationSources` contract): recorded per packet, aged out after
+    //! [`SOURCE_MEMORY_WINDOW`](super::SOURCE_MEMORY_WINDOW).
+
+    use super::{RTCRtpReceiverInternal, RtpCodecKind};
+    use std::time::{Duration, Instant};
+
+    fn header(ssrc: u32, csrcs: &[u32]) -> rtp::Header {
+        let mut header = rtp::Header::default();
+        header.ssrc = ssrc;
+        header.timestamp = 1000;
+        header.csrc = csrcs.to_vec();
+        header
+    }
+
+    #[test]
+    fn a_packet_records_its_synchronization_source() {
+        let mut receiver = RTCRtpReceiverInternal::new(RtpCodecKind::Audio, vec![]);
+        let now = Instant::now();
+        receiver.on_rtp_packet(now, &header(0xDEAD_BEEF, &[]));
+
+        let sources: Vec<_> = receiver.get_synchronization_sources().collect();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].source, 0xDEAD_BEEF);
+        assert_eq!(sources[0].rtp_timestamp, 1000);
+        // First packet: timestamp is the origin itself, i.e. zero elapsed.
+        assert_eq!(sources[0].timestamp, Duration::ZERO);
+        // No CSRCs in the header, so the contributing list stays empty.
+        assert_eq!(receiver.get_contributing_sources().count(), 0);
+    }
+
+    #[test]
+    fn csrcs_are_recorded_and_counted_per_packet() {
+        let mut receiver = RTCRtpReceiverInternal::new(RtpCodecKind::Audio, vec![]);
+        let start = Instant::now();
+
+        receiver.on_rtp_packet(start, &header(1, &[11, 22]));
+        receiver.on_rtp_packet(start + Duration::from_millis(20), &header(1, &[11]));
+        receiver.on_rtp_packet(start + Duration::from_millis(40), &header(1, &[22]));
+
+        let csrcs: Vec<_> = receiver.get_contributing_sources().collect();
+        assert_eq!(csrcs.len(), 2, "two distinct contributing sources");
+
+        let eleven = csrcs.iter().find(|s| s.source == 11).expect("csrc 11");
+        assert_eq!(eleven.packets_contributed_to, 2, "csrc 11 in two packets");
+        let twenty_two = csrcs.iter().find(|s| s.source == 22).expect("csrc 22");
+        assert_eq!(
+            twenty_two.packets_contributed_to, 2,
+            "csrc 22 in two packets"
+        );
+
+        // Timestamps are relative to the receiver's first packet, and advance with it.
+        assert_eq!(eleven.timestamp, Duration::from_millis(20));
+        assert_eq!(twenty_two.timestamp, Duration::from_millis(40));
+
+        // The synchronization source saw all three packets.
+        let ssrc_entry = receiver
+            .get_synchronization_sources()
+            .next()
+            .expect("ssrc entry");
+        assert_eq!(ssrc_entry.source, 1);
+        assert_eq!(ssrc_entry.packets_contributed_to, 3);
+        assert_eq!(ssrc_entry.timestamp, Duration::from_millis(40));
+    }
+
+    #[test]
+    fn sources_age_out_after_the_memory_window() {
+        let mut receiver = RTCRtpReceiverInternal::new(RtpCodecKind::Audio, vec![]);
+        let start = Instant::now();
+
+        receiver.on_rtp_packet(start, &header(1, &[11]));
+        // 10 s later, exactly at the window edge: still remembered...
+        receiver.on_rtp_packet(start + Duration::from_secs(10), &header(1, &[]));
+        assert_eq!(receiver.get_contributing_sources().count(), 1);
+        // ...and its last-seen advanced to the second packet, which carried no CSRC.
+        let entry = receiver
+            .get_contributing_sources()
+            .next()
+            .expect("csrc 11 still in the window");
+        assert_eq!(entry.packets_contributed_to, 1);
+
+        // Past the edge entirely, the entry is dropped by the next update.
+        receiver.on_rtp_packet(
+            start + Duration::from_secs(10) + Duration::from_millis(1),
+            &header(1, &[]),
+        );
+        assert_eq!(
+            receiver.get_contributing_sources().count(),
+            0,
+            "a source that has not contributed within 10 s is forgotten"
+        );
     }
 }

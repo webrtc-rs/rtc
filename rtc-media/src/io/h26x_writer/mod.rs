@@ -16,6 +16,73 @@ const NALU_TTYPE_SPS: u32 = 7;
 const NALU_TYPE_BITMASK: u32 = 0x1F;
 const ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
+/// H.265 RTP aggregation packet NAL type (RFC 7798).
+const H265_TYPE_AP: u8 = 48;
+/// H.265 RTP fragmentation unit NAL type (RFC 7798).
+const H265_TYPE_FU: u8 = 49;
+
+/// Whether an H.265 NAL unit type starts a decodable key frame: the parameter sets and the
+/// IDR pictures (pion's `isKeyFrameNalu`).
+fn is_key_frame_nalu_h265(nalu_type: u8) -> bool {
+    matches!(nalu_type, 32 | 33 | 34 | 19 | 20) // VPS, SPS, PPS, IDR_W_RADL, IDR_N_LP
+}
+
+/// Whether an H.265 RTP payload starts a key frame: a key-frame NAL directly, or an
+/// aggregation/fragmentation packet carrying one (pion's h265writer `isKeyFrame`).
+fn is_key_frame_h265(data: &[u8]) -> bool {
+    if data.len() < 2 {
+        return false;
+    }
+
+    // NAL unit type is bits 1..6 of the first byte.
+    let nalu_type = (data[0] & 0x7E) >> 1;
+    if is_key_frame_nalu_h265(nalu_type) {
+        return true;
+    }
+
+    match nalu_type {
+        H265_TYPE_AP => check_aggregation_packet_for_key_frame(data),
+        H265_TYPE_FU => {
+            // The fragmented NAL's type rides in the FU header's low 6 bits (RFC 7798:
+            // S|E|FuType). pion's h265writer extracts it with the NAL-header mask instead
+            // (`& 0x7E >> 1`), which mis-reads real FU headers — rtc uses the correct mask,
+            // matching the RFC 7798 packetizer in rtc-rtp.
+            if data.len() < 3 {
+                return false;
+            }
+            is_key_frame_nalu_h265(data[2] & 0x3F)
+        }
+        _ => false,
+    }
+}
+
+/// Whether any NAL unit inside an H.265 aggregation packet is a key frame: walk the
+/// 2-byte-size-prefixed NAL list after the 2-byte payload header.
+fn check_aggregation_packet_for_key_frame(data: &[u8]) -> bool {
+    let mut offset = 2; // skip the payload header
+
+    while offset < data.len() {
+        if offset + 2 > data.len() {
+            break;
+        }
+
+        let nalu_size = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+        offset += 2;
+
+        if offset + nalu_size > data.len() {
+            break;
+        }
+
+        if nalu_size > 0 && is_key_frame_nalu_h265((data[offset] & 0x7E) >> 1) {
+            return true;
+        }
+
+        offset += nalu_size;
+    }
+
+    false
+}
+
 fn rebuild_h265_nalu_header(
     payload_header: rtp::codec::h265::H265NALUHeader,
     fu_type: u8,
@@ -65,6 +132,9 @@ pub struct H26xWriter<W: Write> {
     has_key_frame: bool,
     // H265-specific fields
     buffer: BytesMut,
+    /// Whether an H.265 key frame has been seen yet: like the H.264 path, packets before the
+    // first key frame are discarded (a decoder cannot start mid-GOP).
+    h265_has_key_frame: bool,
 }
 
 impl<W: Write> H26xWriter<W> {
@@ -81,6 +151,7 @@ impl<W: Write> H26xWriter<W> {
             is_hevc,
             has_key_frame: false,
             buffer: BytesMut::new(),
+            h265_has_key_frame: false,
         }
     }
 }
@@ -130,6 +201,14 @@ impl<W: Write> H26xWriter<W> {
     }
 
     fn write_h265(&mut self, packet: &rtp::Packet) -> Result<()> {
+        if !self.h265_has_key_frame {
+            self.h265_has_key_frame = is_key_frame_h265(&packet.payload);
+            if !self.h265_has_key_frame {
+                // Key frame not seen yet: discarding packet (a decoder cannot start mid-GOP).
+                return Ok(());
+            }
+        }
+
         // Depacketize the H265 RTP packet
         let _data = self
             .packet

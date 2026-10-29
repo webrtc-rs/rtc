@@ -126,6 +126,14 @@ pub const SDES_MAX_OCTET_COUNT: usize = (1 << 8) - 1;
 /// The smallest valid FIR packet, in bytes.
 pub const FIR_MIN_OCTET_COUNT: usize = 20;
 
+/// The length field of a packet of `size` bytes: its size in 32-bit words, minus one.
+///
+/// A packet longer than 0x10000 words cannot be described by the 16-bit field, and writing it
+/// anyway would put a header on the wire that disagrees with the packet behind it.
+pub(crate) fn length_field(size: usize) -> Result<u16> {
+    u16::try_from((size / 4).saturating_sub(1)).map_err(|_| Error::BadLength)
+}
+
 /// A Header is the common header shared by all RTCP packets
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct Header {

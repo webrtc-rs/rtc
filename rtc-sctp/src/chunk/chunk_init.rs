@@ -281,13 +281,19 @@ impl Chunk for ChunkInit {
 }
 
 impl ChunkInit {
-    pub(crate) fn set_supported_extensions(&mut self) {
+    /// Advertise the extensions this endpoint supports. User message interleaving (RFC 8260) is
+    /// advertised only on request: peers that do not know I-DATA ignore the chunk types, but
+    /// advertising it is a promise to accept I-DATA, so it stays off unless configured.
+    pub(crate) fn set_supported_extensions(&mut self, interleaving: bool) {
         // RFC5061 https://tools.ietf.org/html/rfc6525#section-5.2
         // An implementation supporting this (Supported Extensions Parameter)
         // extension MUST list the ASCONF, the ASCONF-ACK, and the AUTH chunks
         // in its INIT and INIT-ACK parameters.
-        self.params.push(Box::new(ParamSupportedExtensions {
-            chunk_types: vec![CT_RECONFIG, CT_FORWARD_TSN],
-        }));
+        let mut chunk_types = vec![CT_RECONFIG, CT_FORWARD_TSN];
+        if interleaving {
+            chunk_types.extend([CT_IDATA, CT_IFORWARD_TSN]);
+        }
+        self.params
+            .push(Box::new(ParamSupportedExtensions { chunk_types }));
     }
 }

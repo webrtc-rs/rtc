@@ -2,9 +2,9 @@ use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::sctp::SCTP_MAX_CHANNELS;
+use rustc_hash::FxHashMap;
 use sctp::StreamId;
 use shared::error::{Error, Result};
-use std::collections::HashMap;
 
 /// Every data channel on a peer connection, indexed by both of its identifiers.
 ///
@@ -22,13 +22,13 @@ use std::collections::HashMap;
 /// every event name a channel by handle, while SCTP hands us a stream id.
 #[derive(Default)]
 pub(crate) struct DataChannelRegistry {
-    channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    channels: FxHashMap<RTCDataChannelId, RTCDataChannelInternal>,
 
     /// Wire stream id -> handle, for every channel that has been assigned one. Doubles as the
     /// authoritative "which stream ids are taken" set consulted when assigning new ones: it is
     /// fed by all three channel origins (locally deferred, out-of-band, and accepted from the
     /// peer), so a generated id cannot collide with one the peer opened first.
-    by_stream: HashMap<StreamId, RTCDataChannelId>,
+    by_stream: FxHashMap<StreamId, RTCDataChannelId>,
 
     /// Monotonic handle counter. Never decremented, never reused.
     next_handle: RTCDataChannelId,
@@ -37,8 +37,8 @@ pub(crate) struct DataChannelRegistry {
 impl DataChannelRegistry {
     pub(crate) fn new() -> Self {
         Self {
-            channels: HashMap::new(),
-            by_stream: HashMap::new(),
+            channels: FxHashMap::default(),
+            by_stream: FxHashMap::default(),
             next_handle: 0,
         }
     }
@@ -118,7 +118,7 @@ impl DataChannelRegistry {
     /// Handles of channels still awaiting a stream id, in creation order.
     ///
     /// Ascending handle order is creation order, because handles are issued monotonically.
-    /// Sorting matters: `channels` is a `HashMap`, so without it two runs of the same program
+    /// Sorting matters: `channels` is a hash map, so without it two runs of the same program
     /// would hand out different stream ids.
     pub(crate) fn pending_stream_id_handles(&self) -> Vec<RTCDataChannelId> {
         let mut handles: Vec<_> = self

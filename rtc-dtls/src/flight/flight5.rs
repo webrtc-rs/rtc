@@ -1,6 +1,7 @@
 use super::flight3::*;
 use super::*;
 use crate::change_cipher_spec::ChangeCipherSpec;
+use crate::config::log_master_secret;
 use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
@@ -19,7 +20,6 @@ use shared::error::Error;
 
 use crate::config::HandshakeConfig;
 use std::fmt;
-use std::io::{BufReader, BufWriter};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flight5;
@@ -163,6 +163,21 @@ impl Flight for Flight5 {
             }
         }
 
+        // Once the server's Finished checks out, the application gets the final say, as in
+        // pion: a fatal `bad_certificate` alert goes out and the callback's error is returned
+        // locally.
+        if let Some(verify_connection) = &cfg.verify_connection
+            && let Err(err) = verify_connection(state)
+        {
+            return Err((
+                Some(Alert {
+                    alert_level: AlertLevel::Fatal,
+                    alert_description: AlertDescription::BadCertificate,
+                }),
+                Some(err),
+            ));
+        }
+
         Ok(Box::new(Flight5 {}))
     }
 
@@ -172,20 +187,41 @@ impl Flight for Flight5 {
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Vec<Packet>, (Option<Alert>, Option<Error>)> {
-        let certificate = if !cfg.local_certificates.is_empty() {
-            let cert = match cfg.get_certificate(&cfg.server_name) {
-                Ok(cert) => cert,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::HandshakeFailure,
-                        }),
-                        Some(err),
-                    ));
+        // A CertificateRequest is answered with a certificate — chosen by `get_client_certificate`
+        // when configured, else from the local certificates — or with an empty list, as pion
+        // answers when it holds nothing acceptable.
+        let certificate = if state.remote_requested_certificate {
+            if let Some(get_client_certificate) = &cfg.get_client_certificate {
+                let info = state.remote_certificate_request.clone().unwrap_or_default();
+                match get_client_certificate(&info) {
+                    Ok(certificate) => Some(certificate),
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::HandshakeFailure,
+                            }),
+                            Some(err),
+                        ));
+                    }
                 }
-            };
-            Some(cert)
+            } else if !cfg.local_certificates.is_empty() {
+                let cert = match cfg.get_certificate(&cfg.server_name) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::HandshakeFailure,
+                            }),
+                            Some(err),
+                        ));
+                    }
+                };
+                Some(cert)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -269,7 +305,7 @@ impl Flight for Flight5 {
                 return Err((alert, err));
             }
         } else {
-            let mut reader = BufReader::new(server_key_exchange_data.as_slice());
+            let mut reader = server_key_exchange_data.as_slice();
             let raw_handshake = match Handshake::unmarshal(&mut reader) {
                 Ok(h) => h,
                 Err(err) => {
@@ -318,7 +354,7 @@ impl Flight for Flight5 {
 
             let mut raw = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+                let mut writer = &mut raw;
                 if let Err(err) = h.marshal(&mut writer) {
                     return Err((
                         Some(Alert {
@@ -342,7 +378,11 @@ impl Flight for Flight5 {
         // If the client has sent a certificate with signing ability, a digitally-signed
         // CertificateVerify message is sent to explicitly verify possession of the
         // private key in the certificate.
-        if state.remote_requested_certificate && !cfg.local_certificates.is_empty() {
+        if state.remote_requested_certificate
+            && certificate
+                .as_ref()
+                .is_some_and(|cert| !cert.certificate.is_empty())
+        {
             let mut plain_text = cache.pull_and_merge(&[
                 HandshakeCachePullRule {
                     typ: HandshakeType::ClientHello,
@@ -396,22 +436,32 @@ impl Flight for Flight5 {
 
             plain_text.extend_from_slice(&merged);
 
-            // Find compatible signature scheme
-            let signature_hash_algo = match select_signature_scheme(
-                &cfg.local_signature_schemes,
-                &certificate.as_ref().unwrap().private_key,
-            ) {
-                Ok(s) => s,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::InsufficientSecurity,
-                        }),
-                        Some(err),
-                    ));
-                }
-            };
+            // Find a compatible signature scheme: honor local policy while retaining the
+            // peer's preference order, as pion does.
+            let peer_schemes: &[SignatureHashAlgorithm] = state
+                .remote_certificate_request
+                .as_ref()
+                .map(|request| request.signature_hash_algorithms.as_slice())
+                .unwrap_or(&[]);
+            let schemes: Vec<SignatureHashAlgorithm> = peer_schemes
+                .iter()
+                .filter(|scheme| cfg.local_signature_schemes.contains(scheme))
+                .copied()
+                .collect();
+            let signature_hash_algo =
+                match select_signature_scheme(&schemes, &certificate.as_ref().unwrap().private_key)
+                {
+                    Ok(s) => s,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::InsufficientSecurity,
+                            }),
+                            Some(err),
+                        ));
+                    }
+                };
 
             let cert_verify = match generate_certificate_verify(
                 &plain_text,
@@ -464,7 +514,7 @@ impl Flight for Flight5 {
 
             let mut raw = vec![];
             {
-                let mut writer = BufWriter::<&mut Vec<u8>>::new(raw.as_mut());
+                let mut writer = &mut raw;
                 if let Err(err) = h.marshal(&mut writer) {
                     return Err((
                         Some(Alert {
@@ -615,12 +665,12 @@ fn initalize_cipher_suite(
 
     let mut client_random = vec![];
     {
-        let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+        let mut writer = &mut client_random;
         let _ = state.local_random.marshal(&mut writer);
     }
     let mut server_random = vec![];
     {
-        let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+        let mut writer = &mut server_random;
         let _ = state.remote_random.marshal(&mut writer);
     }
 
@@ -682,6 +732,11 @@ fn initalize_cipher_suite(
             };
         }
     }
+
+    // Report the session keys to the key logger, if one is configured, after either
+    // master-secret derivation path. `client_random` here is our own random: flight 5 is
+    // the client's post-ServerHelloDone flight.
+    log_master_secret(cfg, &client_random, &state.master_secret);
 
     if cfg.local_psk_callback.is_none() {
         // Verify that the pair of hash algorithm and signiture is listed.

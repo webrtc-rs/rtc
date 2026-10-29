@@ -7,12 +7,12 @@ use rtc_stun::attributes::{
     ATTR_REALM, ATTR_SOFTWARE, ATTR_USERNAME, ATTR_XORMAPPED_ADDRESS,
 };
 use rtc_stun::error_code::{CODE_STALE_NONCE, ErrorCode, ErrorCodeAttribute};
-use rtc_stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
+use rtc_stun::fingerprint::FINGERPRINT;
 use rtc_stun::integrity::MessageIntegrity;
 use rtc_stun::message::TransactionId;
 use rtc_stun::message::{
-    ATTRIBUTE_HEADER_SIZE, BINDING_REQUEST, CLASS_REQUEST, Getter, MESSAGE_HEADER_SIZE,
-    METHOD_BINDING, Message, MessageType, Setter, is_stun_message,
+    BINDING_REQUEST, CLASS_REQUEST, Getter, METHOD_BINDING, Message, MessageType, Setter,
+    is_stun_message,
 };
 use rtc_stun::textattrs::{Nonce, Realm, Software, Username};
 use rtc_stun::uattrs::UnknownAttributes;
@@ -174,9 +174,7 @@ fn benchmark_fingerprint(c: &mut Criterion) {
             b.iter(|| {
                 let _ = FINGERPRINT.add_to(&mut m);
                 m.write_length();
-                m.length -= (ATTRIBUTE_HEADER_SIZE + FINGERPRINT_SIZE) as u32;
-                m.raw.drain(m.length as usize + MESSAGE_HEADER_SIZE..);
-                m.attributes.0.drain(m.attributes.0.len() - 1..);
+                m.pop_attribute();
             })
         });
     }

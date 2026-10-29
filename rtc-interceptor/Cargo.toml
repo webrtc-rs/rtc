@@ -3,6 +3,7 @@ name = "rtc-interceptor"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "RTC Interceptor in Rust"
 license.workspace = true
 documentation = "https://docs.rs/rtc-interceptor"
@@ -10,6 +11,10 @@ homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
+
+[features]
+# Exposes the TWCC recorder, which the benchmark harness times against pion's, as `bench`.
+bench = []
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
@@ -21,6 +26,7 @@ rand.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 
 [[bench]]
 name = "congestion_control"

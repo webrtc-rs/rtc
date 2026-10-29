@@ -279,3 +279,85 @@ fn test_verify_data() -> Result<()> {
 
     Ok(())
 }
+
+// Port of pion `TestEncryptionKeys_String`: the formatted output names every key this structure
+// carries. The exact layout is this crate's (`EncryptionKeys:` header, snake_case labels, Rust
+// slice debug formatting) rather than pion's Go `%#v` spelling.
+#[test]
+fn test_encryption_keys_string() {
+    let ek = EncryptionKeys {
+        master_secret: vec![0x01, 0x02],
+        client_mac_key: vec![0x03],
+        server_mac_key: vec![0x04],
+        client_write_key: vec![0x05, 0x06, 0x07],
+        server_write_key: vec![0x08],
+        client_write_iv: vec![0x09, 0x0a],
+        server_write_iv: vec![0x0b],
+    };
+    let s = ek.to_string();
+
+    assert!(s.starts_with("EncryptionKeys:\n"), "got: {s}");
+    assert!(s.contains("- master_secret: [1, 2]"), "got: {s}");
+    assert!(s.contains("- client_mackey: [3]"), "got: {s}");
+    assert!(s.contains("- server_mackey: [4]"), "got: {s}");
+    assert!(s.contains("- client_write_key: [5, 6, 7]"), "got: {s}");
+    assert!(s.contains("- server_write_key: [8]"), "got: {s}");
+    assert!(s.contains("- client_write_iv: [9, 10]"), "got: {s}");
+    assert!(s.contains("- server_write_iv: [11]"), "got: {s}");
+}
+
+// Port of pion `TestPreMasterSecret_InvalidCurve`: a curve this crate does not implement cannot
+// reach the premaster-secret computation. pion's `PreMasterSecret(nil, nil, Curve(0))` fails in
+// `toECDH` with `errInvalidNamedCurve`; here the same check runs when the keypair is generated,
+// which is the only way `prf_pre_master_secret` gets one.
+#[test]
+fn test_pre_master_secret_invalid_curve() -> Result<()> {
+    let provider = crypto::default_provider().map_err(|e| Error::Crypto(e.to_string()))?;
+
+    let invalid = NamedCurve::from(0); // not a supported curve
+    assert!(matches!(
+        invalid.crypto_algorithm(),
+        Err(Error::ErrInvalidNamedCurve)
+    ));
+    assert!(matches!(
+        invalid.generate_keypair_with_crypto(provider.crypto()),
+        Err(Error::ErrInvalidNamedCurve)
+    ));
+
+    Ok(())
+}
+
+// Port of pion `TestPreMasterSecret_NewPublicKeyError`: a public key that is not a valid point
+// on the curve fails the premaster-secret computation (pion's `ec.NewPublicKey`).
+#[test]
+fn test_pre_master_secret_new_public_key_error() -> Result<()> {
+    let provider = crypto::default_provider().map_err(|e| Error::Crypto(e.to_string()))?;
+    let mut keypair = NamedCurve::P256.generate_keypair_with_crypto(provider.crypto())?;
+
+    // Invalid but wrong length for a P-256 point.
+    let invalid_pub = [0x04, 0x01, 0x02];
+    assert!(prf_pre_master_secret(&invalid_pub, &mut keypair, NamedCurve::P256).is_err());
+
+    Ok(())
+}
+
+// Port of pion `TestPreMasterSecret_P256_Success_CaseHit`: the P-256 branch produces a non-empty
+// shared secret, and the exact match is checked between the two sides of the exchange (pion
+// compares against `ecdh.P256`'s `ECDH`; both sides here run through the same provider).
+#[test]
+fn test_pre_master_secret_p256_success_case_hit() -> Result<()> {
+    let provider = crypto::default_provider().map_err(|e| Error::Crypto(e.to_string()))?;
+    let mut alice = NamedCurve::P256.generate_keypair_with_crypto(provider.crypto())?;
+    let mut bob = NamedCurve::P256.generate_keypair_with_crypto(provider.crypto())?;
+    let alice_public = alice.public_key.clone();
+    let bob_public = bob.public_key.clone();
+
+    let secret = prf_pre_master_secret(&bob_public, &mut alice, NamedCurve::P256)?;
+    assert!(!secret.is_empty(), "shared secret should not be empty");
+    assert_eq!(secret.len(), 32, "a P-256 x-coordinate is 32 bytes");
+
+    let reverse = prf_pre_master_secret(&alice_public, &mut bob, NamedCurve::P256)?;
+    assert_eq!(secret, reverse, "both sides derive the same secret");
+
+    Ok(())
+}

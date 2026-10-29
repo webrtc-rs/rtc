@@ -8,6 +8,643 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `rtc-turn`: TCP allocations ([RFC 6062]). `Client::allocate_tcp`, `Relay::connect` and
+  `Relay::connection_bind`, with the events `ConnectResponse`, `ConnectError`,
+  `ConnectionBindResponse`, `ConnectionBindError` and `ConnectionAttempt`. The server accepts a TCP
+  `Allocate` over a TCP control connection (`442` over UDP), `Connect` (the peer is permitted; `446`
+  for a duplicate, `447` on failure or timeout) and `ConnectionBind` (the credentials must be the
+  allocation's, and an id is spent once), and hands the socket work to the application through
+  additive events: `BindRelayTcp`, `ConnectPeer`, `BindData`, `ClosePeer`, answered with
+  `Server::{peer_connected, peer_connect_failed, peer_accepted, peer_closed}`. New attribute
+  `CONNECTION-ID`. ChannelBind, Send and ChannelData are refused on a TCP allocation.
+- `rtc-ice`: `address_rewrite` (pion's `AddressRewriteRule`, the 1:1 NAT case): replace or append
+  host, server-reflexive and relay candidates for external addresses, scoped by local address, CIDR,
+  interface, network type and port. The caller applies it to each gathered host candidate, since the
+  agent never gathers. `attributes::dtls_in_stun`: `DTLS-IN-STUN` and `DTLS-IN-STUN-ACKNOWLEDGEMENT`.
+- `rtc-sdp`: `SessionDescription::unmarshal_slice`, parsing in-memory input without copying it.
+- `rtc-turn`: `ChannelData::parse` (borrows the payload) and `ChannelData::encode_into`.
+- Differential tests against pion, each with its Go oracle under `tests/oracle`: mDNS (against
+  `x/net/dns/dnsmessage`), ICE candidate parsing, the TURN attribute and ChannelData codec, and the
+  NACK receive log and send buffer. `benchmarks/pion-compare` gains DTLS, SCTP, ICE, TWCC, DCEP and
+  mDNS rows; `benchmarks/turn-load` compares the TURN servers on real sockets.
+- `rtc-interceptor`: `CongestionControlBuilder::with_twcc_only`, to record only the streams that
+  negotiated transport-wide CC. By default every stream is recorded, for RFC 8888 feedback; an
+  endpoint that gets only transport-wide feedback (a browser's) has no use for the records of a
+  stream like audio, which costs three map insertions per 20 ms packet.
+- `rtc-interceptor`, `rtc`: `KeyframeRequestForwarderInterceptor` at the new `Slot::KeyframeRequests`
+  (application-most), and `configure_keyframe_request_forwarding` to register it. Inbound RTCP is
+  dropped at the end of the interceptor chain, so an application never saw the keyframe requests
+  (PLI, FIR) a subscriber sends: an SFU could not relay them to the publisher, and a sender could
+  not tell when to produce a keyframe. The forwarder delivers those two kinds, tagged with the
+  track they are about (the sending track for a stream this endpoint sends, including every layer
+  of a simulcast stream), and leaves reports and other feedback to the interceptors that act on
+  them. `tests/simulcast_sender_keyframe_requests.rs` pins it.
+- `rtc-dtls`: pion's config callbacks and options (pion/dtls v3.1.15 issue #24):
+  `ConfigBuilder::with_verify_connection` (run by both roles once the peer's `Finished` is
+  verified; an error sends a fatal `bad_certificate` alert), `with_get_certificate`
+  (server certificate selection from a `ClientHelloInfo`: SNI, cipher suites, signature
+  schemes, curves and the hello's random bytes; a server may hold no certificate of its
+  own when the callback answers), `with_get_client_certificate` (client certificate
+  selection from a `CertificateRequestInfo`), `with_insecure_skip_verify_hello` (answer a
+  cookie-less ClientHello directly), `with_certificate_signature_schemes` (the
+  `signature_algorithms_cert` extension, type 50, ported with pion's hybrid full-u16
+  PSS encoding and its pion tests), `with_elliptic_curves` (restrict the curves offered),
+  `with_hello_random_bytes_generator`, and the `client_hello_message_hook`,
+  `server_hello_message_hook` and `certificate_request_message_hook` message hooks, with
+  public accessors on the message types they hand out.
+- `rtc-dtls`: DTLS 1.3 / TLS 1.3 building blocks, types and tests only, nothing wired into
+  the 1.2 handshake (pion/dtls v3.1.15 issue #26): the `key_share`, `supported_versions`,
+  `pre_shared_key`, `psk_key_exchange_modes`, `early_data`, `post_handshake_auth`,
+  `certificate_authorities`, `oid_filters`, `cookie` and `connection_id` extensions; the
+  TLS 1.3 `certificate` and `certificate_request` handshake messages; the RFC 8446/9147
+  key schedule (`crypto::keyschedule`: HKDF-Expand-Label, Derive-Secret) on HKDF
+  extract/expand added to the `rtc-crypto` provider abstraction for both backends; and
+  `algorithms_13()`, the DTLS 1.3 signature-scheme list.
+- Tests: `congestion_control_e2e` drives Google Congestion Control through two peer connections
+  over a simulated bottleneck (`Link` in the test simulator: rate, delay, tail-drop queue, random
+  loss): the estimate finds a 1.5 Mbps link, follows a drop to 0.5 Mbps and recovers, and falls
+  under 15 % random loss.
+- `add_transceiver_from_kind` accepts a sending direction without `send_encodings`: one encoding
+  with a fresh SSRC and the engine's codec is used (W3C `addTransceiver`, pion), instead of
+  `ErrInvalidDirection`.
+- `rtc-shared`: `packetio::Buffer`, a sans-I/O counterpart of pion/transport's `packetio.Buffer`: a
+  bounded packet queue (byte ring, grows to a hard cap) with per-packet attributes, size and
+  count limits (`Error::Full`), draining `close()` and short-buffer reads, poll-style
+  (`Error::Empty` instead of blocking). Differentially tested against pion's `Buffer`. The
+  `packetio-size-hardlimit` feature mirrors pion's `packetioSizeHardlimit` tag.
+- `rtc-media`: `SampleBuilder::flush`, `with_packet_release_handler`, `with_packet_head_handler`,
+  `with_rtp_headers` and `pop_detailed` (pion's `Flush`, `WithPacketReleaseHandler`,
+  `WithPacketHeadHandler`, `WithRTPHeaders`). `IVFWriter::with_direct_pts`, `get_ref`,
+  `into_inner` and `IvfCodec::from_mime_type`.
+- `rtc-ice`: ICE renomination (draft-thatcher-ice-renomination-01), as in pion: the controlling
+  agent can move a live call to another pair with `Agent::renominate_candidate`, optionally by
+  itself (`AgentConfig::automatic_renomination`: a direct path replacing a relayed one, an RTT
+  better by more than 10 ms, or a quality score better by 15 %). The controlled agent follows the
+  highest nomination value. New `AgentConfig` fields: `renomination`, `nomination_attribute`,
+  `automatic_renomination`, `enable_use_candidate_check_priority`, `tcp_priority_offset`,
+  `binding_request_handler` (an application hook that can take over pair selection), and
+  `CandidateRelayConfig::relay_protocol`. `Agent::set_remote_ice_lite` and a real lite selector
+  (two lite agents select the best pair themselves).
+- `rtc-rtp`: the abs-capture-time header extension (`AbsCaptureTimeExtension`).
+- `rtc`: `SettingEngine` flags `with_ice_renomination` and `with_ice_trickle_advertised`; offers
+  and answers then carry `a=ice-options:trickle` / `renomination`, and candidates of an older
+  ICE generation (the `ufrag` extension) are dropped after a restart.
+- `rtc`: codec matching now covers `video/h265` (level-id ignored, W3C correction 52),
+  `video/vp9` (`profile-id`, default 0) and `video/av1` (`profile`, default 0) like pion's
+  `internal/fmtp`, and compares clock rate and channel count (with pion's defaults), so
+  `telephone-event/8000` no longer matches `telephone-event/48000`.
+- `rtc-sctp`: user message interleaving (RFC 8260), wire-compatible with pion/sctp v1.12.0: I-DATA
+  and I-FORWARD-TSN chunks, negotiation through the supported-extensions parameter, per-stream
+  32-bit message identifiers and fragment sequence numbers, and a send scheduler (round robin or
+  weighted fair queueing) so a large message no longer holds up every stream behind it. It is off
+  by default (browsers do not speak I-DATA, and pion's default of "on" is not followed) and only
+  used when both sides offer it: `TransportConfig::with_enable_interleaving`,
+  `with_stream_scheduler`, `with_stream_scheduler_weight`, `StreamScheduler`. A peer that does not
+  offer it keeps plain DATA and FORWARD-TSN. `Association::metadata()` reports what was
+  negotiated (`AssociationMetadata`, `PartialReliabilityMode`).
+- `rtc-sctp`: `TransportConfig::with_max_reassembly_queue_entries` (pion
+  `WithMaxReassemblyQueueEntries`): a peer that makes one stream hold more partial DATA entries or
+  I-DATA messages than the cap is aborted with a protocol violation. Off by default.
+
+### Changed
+- perf: a connected peer connection with a data channel holds 62 KiB of heap instead of 150 KiB
+  (pion v4.2.24: 353 KiB; `tests/memory_per_connection.rs` measures and guards it,
+  `benchmarks/pion-compare/memory` is the pion side). SCTP no longer zero-fills a buffer of
+  `maxMessageSize` (64 KiB, 256 KiB unbounded) that was only ever read for its length; the SCTP
+  association and the DTLS connection are boxed in the maps that hold them, which start at four
+  slots; and the handlers that raise an event a handful of times per connection give their queue
+  back once it is empty.
+- perf(nack): the send buffer used for retransmissions grows with the stream instead of being
+  allocated whole. A window of 1024 packets is over 100 KiB of slots, which a stream that has sent
+  a few hundred packets, or sends few, never uses: a peer connection sending video for three seconds
+  holds 130 KiB of heap instead of 172 KiB. Which packets it answers for is unchanged (a test runs it
+  against the previous implementation on random sequences with gaps, reordering and wrap-around).
+- perf: an outgoing packet is passed through the demuxer, ICE, SRTP and interceptor handlers where
+  it lies on the pipeline's belt, instead of being taken off, queued in each handler and polled back
+  out, which moved the 224-byte message three or four times per handler. What each handler leaves
+  is what it left before (the ICE agent's own transmits still go in front, the interceptor chain's
+  output still follows the messages that bypass it). rtcd's per-delivery engine cost falls from 982
+  to 886 ns, about 10 %.
+- `rtc-dtls` (breaking): `Endpoint::get_connections_keys` returns `impl Iterator<Item = &SocketAddr>`
+  instead of `hash_map::Keys<'_, SocketAddr, DTLSConn>`, so the endpoint can keep its connections boxed.
+- Sending a packet costs about 40% less CPU (an SFU forwarding voice to 31 listeners: 1,545 to 970 ns per
+  delivery). The interceptor chain no longer allocates a belt per packet or walks itself a second time
+  to find nothing, and carries an outgoing packet only through the interceptors that do something to
+  it: the new defaulted `Interceptor::writes_pass_through` marks the ones that only queue and return
+  it (the NACK generator, the receiver report, the TWCC receiver and a few more). A chain that has
+  been polled is idle until a packet is read, time passes or a stream is bound, so output must come
+  from one of those (a `handle_write` emits toward the wire, not toward the application). The
+  pipeline passes by the data channel, SCTP and DTLS handlers when they have nothing of their own
+  waiting, reuses its message queue between passes, and the statistics maps on the packet path use
+  a faster hash. `DataChannel::has_pending_writes` is new. The sender report no longer reads the wall
+  clock for every frame of every stream, but once a second; a report extrapolates from that baseline
+  on the monotonic clock, as it already did between frames, and `SystemInstant::captured_at` is new.
+- `rtc-sdp` (breaking): `MediaName::{media, protos, formats}`, `ConnectionInformation::{network_type,
+  address_type}` and `Address::address` are `SmolStr` (inline up to 23 bytes), like `Attribute`
+  already is; they compare equal to `&str` and `String`. Attribute and format lists are sized from
+  one scan of each section, and an attribute value too long to be inline that repeats (header
+  extensions and codec lines repeat across media sections) shares the first one's allocation:
+  parsing a Chrome offer makes 70 allocations, as pion does, down from 87.
+- `rtc-dtls`, `rtc-stun`: no 8 KiB `BufWriter`/`BufReader` per message. A DTLS handshake allocates
+  98 KB, not 965 KB, and takes a quarter of the time.
+- `rtc-stun` (breaking): like pion's `Message.Attributes`, a message's attributes are positions in
+  `Message::raw` rather than owned copies, so `Message::add` writes each value once (TURN's three
+  attribute adds take 14 ns, pion's 17 ns) and decoding copies no values. `Attributes` is opaque
+  (`len`, `is_empty`); read attributes with `Message::iter_attributes` and `find_attribute`, which
+  borrow their value as `AttributeRef { typ, value }`. `Attributes::get` and `find` are gone, and
+  `Message::pop_attribute` removes the last attribute. `RawAttribute` remains the owned form, which
+  is what a `Setter` takes. `Message::encode` and `write_attributes` lay the attributes out again in
+  place, closing the gaps decoding leaves where it dropped attributes. `Message::reset` keeps a
+  zeroed header instead of emptying `raw`.
+- `rtc-mdns`: the query and the answer are packed straight to bytes; name compression no longer
+  keys a map by a `String` per suffix.
+- `rtc-dtls`, fixes found by porting pion's tests (issues #24/#25): the client's
+  CertificateVerify scheme selection ignored the server's CertificateRequest and signed
+  with its own first scheme; it now honors local policy while retaining the peer's
+  preference order, so a server requesting only schemes outside the client's policy fails
+  the handshake. The default curve offer now matches pion's `defaultCurves`
+  (`X25519, P256, P384`). `CertificateRequest` now parses and re-emits the distinguished
+  names of acceptable CAs (previously dropped), skips unrecognized certificate types and
+  signature schemes as pion does, and `supported_signature_algorithms` uses pion's hybrid
+  encoding (full-u16 PSS code points beside byte-split pairs). Handshake signature
+  verification binds the scheme to the certificate's key kind and hash (an Ed25519
+  signature labeled SHA-256, or an ECDSA signature over an empty digest, is now rejected),
+  the peer's RSA key size is enforced (>= 2048 bits unless `insecure_verification`), and
+  RSA-PSS certificates must carry the OID their scheme names. Hello messages gained the
+  `session_id` field pion carries.
+- `rtc-sctp`, fixes found by porting pion's unit tests (issue #27): FORWARD-TSN now clears
+  the gaps it covers (a reassembled chunk set behind the new cumulative TSN is dropped
+  instead of lingering), same-SSN chunk-set corruption and duplicate-TSN byte accounting
+  in the reassembly queue are fixed, and the pending queue clamps a pop to the bytes
+  actually available.
+- `rtc-media`: `IVFWriter` now writes the frame PTS from the RTP timestamp and the header timebase
+  like pion (milliseconds at 90 kHz, then `numerator / denominator`), instead of the frame index;
+  `with_direct_pts` writes the timestamp relative to the first frame unconverted. Writing after
+  `close` returns `ErrFileNotOpened`; a zero timebase denominator is rejected.
+- `rtc-media`: `Sample::duration` from `SampleBuilder` is truncated to whole nanoseconds like pion
+  (it was rounded).
+- `rtc`, fixes found by porting pion's tests: an answer takes the complement of an explicit
+  `a=setup:active` / `passive` in the offer (RFC 5763 section 5; before, two `active` peers could
+  both wait for a ClientHello) and keeps the negotiated role on renegotiation (RFC 8842
+  section 5.3); two ICE-lite peers now connect (the remote's lite flag reaches the ICE agent);
+  writing RTCP before DTLS has connected returns `ErrDtlsTransportNotStarted`; a remote offer's
+  codec order is kept for sections whose codec differs only in level, with equivalent payloads
+  keeping their identity; registering a codec on a payload type another codec holds returns
+  `ErrCodecAlreadyRegistered` (before, both were kept); flexfec detection ignores case; an offer
+  with several media sections and no `a=ssrc` no longer fails `set_local_description` (the first
+  packet is matched to its section by payload type, as pion does for legacy clients); the
+  retransmission flow of a simulcast layer that names the layer with `repaired-rtp-stream-id` is
+  now learned from its first packet, bound and de-encapsulated into the layer (before, every
+  such packet was dropped, so simulcast NACK recovery did nothing); `close()` moves the ICE
+  connection state to `closed` and reports it.
+- `rtc-ice`, from pion's current behaviour: connectivity checks carry the priority of a
+  peer-reflexive candidate (RFC 8445 §7.1.1), and a peer-reflexive candidate takes the `PRIORITY`
+  of the request that revealed it; TCP candidates sit 27 below UDP in type preference
+  (`tcp_priority_offset`); relay candidates rank by the protocol used to reach the relay (UDP over
+  DTLS over TCP over TLS); nomination waits `>=` the acceptance minimum rather than `>`; a
+  controlled agent selects a pair nominated before its own check succeeded as soon as it does,
+  and stops answering every request with a check once connected; role conflicts follow
+  RFC 8445 §7.3.1.1 exactly (one side answers 487, the other switches) and a 487 response is
+  handled (role switch, new tiebreaker, pair re-queued).
+- `rtc-ice`, RFC 8838 §11.4: a candidate signaled after the peer was already discovered at the same
+  address (peer-reflexive) replaces it, keeping the pair's state, nomination, statistics and rank,
+  and the selected pair is reported again with the signaled candidate. A lite agent's local
+  candidates get distinct priorities, and a lite agent defaults to the 10 s consent-expiry period
+  before reporting disconnection. After a silence longer than both timeouts the agent reports
+  Disconnected before Failed. Local relay candidates report their real relay protocol in stats.
+  `CandidateRelayConfig` gained a `relay_protocol` field: struct literals need `..Default::default()`.
+- `rtc-ice`: `AgentConfig::ip_filter` and `remote_ip_filter` (pion `WithIPFilter`/`WithRemoteIPFilter`),
+  applied to added candidates and to peer-reflexive addresses learned from checks. Remote
+  candidates of a network type that is not enabled locally are now kept (they never pair)
+  instead of being dropped, and a peer-reflexive candidate is stored even then.
+- `rtc-rtp`: header-extension padding after a profile switch or a delete now matches pion byte
+  for byte (found by a differential run against pion rtp v1.10.6).
+
+### Fixed
+- `rtc-mdns`: the next record starts where the previous record's `RDLENGTH` ends, as in
+  `dnsmessage`, not where its body parser stopped: a packet with a wrong `RDLENGTH` was split into
+  different records than every other parser splits it into.
+- `rtc-ice`: `tcptype ACTIVE` (any case) is accepted, as pion accepts it; the default priority of a
+  candidate with a component above 256 no longer overflows (a panic in debug builds).
+- `rtc-turn`: a `DONT-FRAGMENT` attribute with a value is malformed (RFC 5766 §14.8).
+- `rtc-interceptor`: `History::prune_before` no longer scans every recorded packet on each call.
+  The congestion-control interceptor prunes on every timeout of a connection, and it records every
+  packet it sends, so the scan grew with the number of streams a connection sends (a participant
+  receiving thirty voice streams recorded a thousand and a half packets a second): it was the
+  largest line of the library in a profile of an SFU under load. Packet ids follow send order, so
+  pruning resumes from where it stopped and costs what it removes.
+- `rtc-srtp`: the per-SSRC replay and rollover state is keyed with a randomly seeded `foldhash`
+  instead of SipHash: it is read for every packet and the SSRC is the remote's to choose.
+- `rtc`: a renegotiation no longer announces the layers of a simulcast stream that is already being
+  received a second time. Applying a remote description rebuilt the receiver's track with no SSRC for
+  any rid, so the next packet of every layer bound it again and fired `OnTrack` (pion fires it once
+  per track), and the interceptors bound each stream twice. An SFU renegotiates with every
+  participant whenever the call changes, and a browser's simulcast camera hit it on each one. A
+  section whose track, stream and rids are unchanged keeps its track and the SSRCs it learned, as
+  the SSRC-declared path already did. `tests/simulcast_renegotiation_keeps_tracks.rs` pins it.
+- `rtc`: the SCTP handler test for DATA that arrives before COOKIE-ACK now states pion v1.12.0's
+  behaviour (`TestAssociationDataIgnoredOutsideReceiveStates`): the early DATA is ignored and the
+  peer's retransmission is delivered once. It still described the older behaviour of queueing it,
+  which the association no longer has, and failed.
+- `rtc-sctp`, found by porting pion's `TestHandleForwardTSN`: a FORWARD-TSN naming a TSN far ahead
+  of the cumulative TSN made the receiver step there one TSN at a time (about 4 s of CPU for a jump
+  of 2^31, in a release build, per chunk; far worse in debug), so an authenticated peer could stall
+  the association with a single small chunk. The cumulative TSN now jumps and only the queued
+  chunks it covers are dropped.
+- `rtc-sctp`, found by porting pion's `TestReassemblyQueue`: an unfragmented message and a
+  fragment sharing a stream sequence number (the SSN wrapped, or the peer misbehaves) were glued
+  into one delivered message; a fragment now only joins a fragmented set of its SSN. A duplicate
+  fragment of an ordered message could also be counted twice in the queued byte total.
+- `rtc-sctp`: RACK's minimum round-trip time is a true 30 s windowed minimum (as pion's `windowedMin`),
+  so when the smallest sample ages out the next smallest recent one takes over instead of the
+  latest sample replacing it. DATA is ignored outside the states that can deliver it (before the
+  handshake completes and after SHUTDOWN / SHUTDOWN ACK), as in pion.
+- `rtc-sctp`: TSN, stream-reset sequence number and reassembly arithmetic wraps instead of
+  overflowing at `u32::MAX` (a panic in debug builds).
+- `rtc-interceptor`: the pacer could report a release deadline equal to the instant it was computed
+  at, when the budget was short by less than a nanosecond of refill: the wait rounded to zero,
+  refilling at that instant added nothing, and the caller was told to wake again immediately for as
+  long as the clock did not move (a spin in a driver, an endless loop in a virtual-time test). A
+  non-zero shortfall now waits at least one nanosecond. Found by the new end-to-end test below.
+- `rtc-media`: `SampleBuilder` panicked (u16 overflow, debug builds) after 65,535 dropped packets
+  without a sample; the counters wrap like pion's.
+- `rtc`, from pion's renegotiation tests: a data channel added to a connection that was
+  negotiated media-only never opened, because the SCTP client side was started only by the
+  DTLS-handshake-complete event, which had long passed; it now starts when SCTP is started over
+  a connection whose DTLS is already up. `add_track` reused a transceiver whose removal had not
+  been negotiated yet, or whose remote only sends (pion `isSendAllowed`); it now creates a new
+  one until the removal is settled.
+- `rtc`, found by porting pion's `peerconnection_renegotiation_test.go` onto a deterministic
+  in-memory network: every renegotiation replaced the receive track of a stream it already knew,
+  so the next packet fired `OnTrack` again for the same track (it now fires once per track); a
+  transceiver created `sendonly` (the local half of a `recvonly` offer, or one the application
+  made) had no receiver, so when a later negotiation made it `sendrecv` it could never receive;
+  the receiver now always exists and `RTCRtpTransceiver::receiver()` reports it while the
+  direction receives.
+- `rtc`, from pion's `peerconnection_go_test.go`: a remote candidate of an unknown type or
+  transport (`ssltcp`) failed `add_remote_candidate` and the whole `set_remote_description`; both
+  now discard it with a warning, and a description fails only when no usable candidate is left.
+  An answerer holding a sender-only transceiver did not reuse it for a `sendrecv` offer and added
+  a second one. `get_transceivers` no longer borrows the connection while iterated.
+- `rtc`, found by porting pion's `peerconnection_test.go`: `set_configuration` applied part of a
+  rejected call (it now validates everything first and changes nothing on error), accepted a
+  change of the RTP header encryption policy (`ErrModifyingRTPHeaderEncryptionPolicy` now), and
+  treated an unspecified bundle / RTCP-mux policy as a change; unspecified policies take their
+  defaults at construction, so `get_configuration` reports what is in effect. Every description
+  after the first got a random SDP origin version instead of the previous one plus one
+  (RFC 9429 §5.2.2). A legacy `m=application ... DTLS/SCTP 5000` offer with `a=sctpmap` failed
+  `set_remote_description` (the SCTP port was parsed as an RTP payload type) and was not treated
+  as a data channel. A transceiver created from an inactive remote section was `recvonly` (it is `inactive`, as in pion).
+- `rtc-dtls`, found by porting pion's `conn_test.go` onto the new handshake harness: an empty PSK
+  client identity was rejected; hellos without an extension block were rejected, a ClientHello's
+  session id was ignored (the parse went wrong when one was sent), trailing bytes after the
+  extensions were accepted and a malformed known extension was skipped instead of rejecting the
+  hello (as pion does); the server picked the SRTP profile in the client's order instead of its
+  own; SNI was sent for IP literals and for names the application never configured; the
+  ServerHello carried `supported_groups`; `renegotiation_info` was answered when the client had
+  not offered it (the SCSV `0x00ff` is now understood); the client waited for the whole server
+  flight before refusing an unsupported ServerHello version; a server holding several
+  certificates always presented the first (the name map was never built and the lookup used the
+  server's own name instead of the client's SNI); `ConfigBuilder::build` reports an identity
+  without a PSK before a missing certificate, as pion does. `State::extended_master_secret()`
+  is new.
+- `rtc-interceptor`: `History` no longer downgrades an arrived packet to lost when later
+  feedback says the same packet did not arrive (pion `TestHistoryArrivedIsNotDowngraded`);
+  the first, positive report stands.
+- `rtc-interceptor`: `convert_twcc` now stops at the feedback's declared `packet_status_count`
+  and drops received symbols whose delta is missing, as pion does, instead of converting every
+  chunk symbol (found by porting pion's `TestConvertTWCC`).
+- `rtc-interceptor`: `convert_ccfb` merges report blocks that describe the same media SSRC
+  instead of keeping only the last one (pion's `TestConvertCCFB`).
+- `rtc-interceptor`: the NACK responder strips padding from RFC 4588 RTX retransmissions, as
+  pion's packet factory does — the P-bit comes off and legacy payload-embedded padding is
+  trimmed; a padding count larger than the payload is never buffered, so it is never
+  retransmitted (pion's `TestRTPBuffer_*` padding family).
+- `rtc-rtp`: `Header::get_extension` clones its payload `Bytes`, which allocates per packet in
+  the `bytes` crate's promotable form; the congestion controller, the TWCC receiver/sender and
+  the peer-connection demuxer now read the new borrowed `Header::get_extension_payload`
+  instead (found by porting pion's `TestRecordDoesNotAllocateInSteadyState`; TWCC recording is
+  now allocation-free in steady state).
+- `rtc-srtp`: three pion-parity fixes found by porting pion's test suite (issue #9).
+  - SRTP replay protection now windows over the full 48-bit packet index
+    `roc << 16 | seq`, as pion's does, not the bare 16-bit sequence number: a replayed
+    packet from a previous rollover used to look "new" again after the sequence number
+    wrapped past it. `srtcp_replay_protection` likewise uses the plain sliding window over
+    the 31-bit SRTCP index, so a long-behind index is too old rather than a wrap-around.
+  - `Context::encrypt_rtcp` returns `ErrExceededMaxPackets` once an SSRC's SRTCP index
+    reaches 2^31-1 (RFC 3711 section 9.2: rekey or end the session) instead of silently
+    wrapping the index - and with it an already-spent keystream - back to 0.
+
+### Added
+- `rtc`: `RTCTrackEvent::OnClosing` and `OnClose` are now reported (they were defined and never
+  sent): when a renegotiation stops announcing a receive track, its streams leave the
+  interceptor chain, both events fire, and the transceiver can receive a later track with a
+  fresh `OnTrack`.
+- `rtc-mdns`: the DNS-SD helper layer of pion/mdns v2.2.2 `dns_sd.go` and `records.go`
+  (issue #21), in the new public `dnssd` module: `ServiceInstance` with its
+  `service_instance_name()`/`service_name()` derivation, `escape_instance_name` /
+  `unescape_instance_name` / `parse_service_instance_name` (RFC 6763 §4.3), the
+  `validate_service_*`/`validate_instance_name` rules (RFC 6763 §7), the `TxtEntry`
+  key/value model with `new_txt_string`/`new_txt_binary`/`new_txt_flag` constructors and
+  `encode_txt_record_strings`/`decode_txt_record_strings`/`validate_txt_entries`
+  (RFC 6763 §6), and the crate-private PTR/SRV/TXT/A/AAAA record builders and parsers.
+  The 70 pion tests (`dns_sd_test.go`, `records_test.go`) are ported, plus byte-compat
+  vectors: nine records and record-sets packed by golang.org/x/net v0.35.0 `dns/dnsmessage`
+  (the version pion pins) are reproduced byte-for-byte, compression pointers included.
+  Known gap: TXT values that are not valid UTF-8 are rejected
+  (`ErrTXTValueNotUtf8`) rather than carried, because the crate's TXT wire type is
+  string-based (Go strings hold arbitrary bytes).
+- `rtc-mdns`: the RFC 6762 §10 record cache of pion/mdns v2.2.2 `cache.go` (issue #22),
+  in the new `cache` module: goodbye records (§10.1, one-second retention), the
+  cache-flush bit with its one-second grace (§10.2), TTL clamping to 75 minutes, the
+  80/85/90/95 % refresh thresholds of §5.2 with injected jitter, `sweep`, `reduce_ttls`,
+  `flush_all`, and a 4096-entry cap evicting the soonest-to-expire record. Sans-I/O
+  throughout: every method takes the `Instant` it needs and the jitter is a caller
+  argument, so no clock is read and no `rand` is drawn inside the crate. The 41 pion
+  `cache_test.go` tests are ported (a Go `time.Sleep` becomes advancing the injected
+  instant; the goroutine race test is `na`: the cache is a single-owner `&mut self`
+  type with no locks to exercise), plus the 4097-record capacity test and
+  refresh-threshold tests pion has no counterpart for.
+- `rtc`: `RTCConfigurationBuilder::with_always_negotiate_data_channels` (pion's
+  `AlwaysNegotiateDataChannels`): offer an `m=application` section before any data channel
+  exists, so the first channel created later needs no renegotiation. `set_configuration` can
+  turn it on, never off, as in pion.
+- `rtc-srtp`: the pion/srtp test suite is ported (issue #9): RFC 3711 appendix B.2 and
+  RFC 6188 section 7.1 AES-CM keystream vectors, RFC 7714 sections 16/17 AEAD vectors
+  (RTP and RTCP, both key sizes), rollover-counter and replay behaviour (replay windows,
+  custom detector factories, `SetROC` burst-loss recovery, the 2^48/2^31 packet limits),
+  truncated and crafted packets on both legs, the all-profiles `TestSrtpCipher` vector
+  table, DTLS keying-material order, and Cryptex runtime flips on both legs.
+- `rtc-dtls`: three plain-PSK cipher suites, as in pion/dtls v3.1.15:
+  `TLS_PSK_WITH_AES_256_CCM_8` (`0xc0a9`, RFC 6655),
+  `TLS_PSK_WITH_AES_128_CBC_SHA256` (`0x00ae`, RFC 5487) and
+  `TLS_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccab`, RFC 7905); each negotiates with pion in
+  both directions over UDP and with rtc-dtls itself, with ring and with aws-lc-rs. The
+  identity cases of pion's `TestPSK` now cover the three new suites too, and pion-encrypted
+  records for them are decrypted as known-answer vectors. New public items: the three
+  `CipherSuiteId` variants, `CipherSuiteAes256Ccm`,
+  `CipherSuiteTlsPskWithAes128CbcSha256`, `CipherSuiteChaCha20Poly1305Sha256::new_psk`,
+  `CryptoCbcSuite`, and the `new_cipher_suite_tls_psk_with_*` constructors.
+- `rtc-crypto`: `AeadAlgorithm::Aes256Ccm8` and `CbcAlgorithm::Aes128Cbc`, implemented for both
+  providers (ring and aws-lc-rs) with NIST known-answer vectors and cross-provider
+  interoperability tests. `CryptoCcm` now selects the AES variant from the key length, as
+  pion's `aes.NewCipher` does; `CryptoCbc` is parameterized over the cipher and record-MAC
+  pairing, so AES-128-CBC with HMAC-SHA-256 (RFC 5487) sits beside AES-256-CBC with HMAC-SHA-1.
+- `rtc-dtls`: ALPN (RFC 7301) as in pion/dtls: `ConfigBuilder::with_supported_protocols`, `State::negotiated_protocol`, the `alpn` extension, and the fatal `no_application_protocol` (120) alert when both sides offer protocols and none is shared. Verified both ways against pion/dtls v3.1.15 over UDP. New error variants `ErrAlpnInvalidFormat` and `ErrAlpnNoAppProto` in `rtc-shared`. New integration-test harness `rtc-dtls/tests/common` (two endpoints on a lossless in-memory network, with datagram tampering and alert capture).
+- `rtc-interceptor`: pion's interceptor test suite is ported (issue #15): the twcc recorder
+  (full feedback content, rolling wrap, min input, counts, duplicates, short and reordered
+  deltas, chunk boundaries), the arrival-time map (erase/grow/shrink), the TWCC feedback
+  receiver subtests, the nack generator/responder scenarios (exact NACK content with
+  `skip_last_n`, stream filters, unbind, bypass, RTX exact sets), flexfec (decoder retention,
+  multi-stream protection, whole-range and high-count round trips), RFC 8888 stream-log
+  vectors, CCFB ingestion at the estimator, and a steady-state allocation test. The
+  `interceptor` ledger is now `todo`-free: 111 `rust`, 27 `na`, 2 `gap`.
+- `rtc-interceptor`: `NackGeneratorBuilder::with_streams_filter` /
+  `NackResponderBuilder::with_streams_filter` (pion's `GeneratorStreamsFilter` /
+  `ResponderStreamsFilter`) and `try_build` on both, which rejects an unusable buffer size
+  with the new `ErrNackInvalidSize` where the infallible `build` stays inert.
+- `rtc-rtp`: `Header::get_extension_payload`, the borrowed form of
+  `Header::get_extension`.
+- `rtc-stun`: pion/stun v4.0.1 attribute and error tests ported, plus the allocation budget suite.
+  `tests/allocations.rs` (pion `TestAllocations`/`TestAllocationsGetters`) counts allocations
+  through a `#[global_allocator]` wrapper: header-only setters and all getters are
+  allocation-free on the steady-state path, attribute-adding setters perform exactly one
+  (rtc-stun's attribute table owns a copy of the value; pion's borrows the message buffer).
+  `tests/pion_ported.rs` ports the XORMappedAddress suite (GetFrom with UnexpectedEOF/
+  overflow/short-value subtests, invalid family, AddTo round-trips for IPv4 and IPv6,
+  String), the ERROR-CODE suite (truncated value, round-trip, no-default-reason, too-long
+  reason, invalid code, reserved bits masked on read) and the error-identity, UNKNOWN-ATTRIBUTES
+  encoding, invalid-cookie and reserved-type rows. Fixed: `Message::grow` allocated a temporary
+  zeroed Vec on every regrow after `reset` (the reset/write path is now allocation-free);
+  `XorMappedAddress::add_to_as`, `TextAttribute::get_from` (now reusing its String's capacity),
+  `UnknownAttributes::add_to` and `ErrorCodeAttribute::add_to` allocated per call;
+  ERROR-CODE codes whose class digit exceeds the 3-bit field are rejected with the new
+  `ErrInvalidErrorCode` instead of being silently truncated.
+- `rtc-sdp`: port pion/sdp v3.0.20 unit tests, malformed-input table and robustness suite
+  (origin tolerance, S1..S16 key scenarios, JSEP builders, extmap errors and round-trip,
+  codec lookups, 1 MiB line / 50k attributes / 10k m= sections / 100k CRLF lines / invalid
+  UTF-8 / missing final newline never panic). Fixed: extmap URIs with invalid percent escapes
+  (`%zz`) are rejected as in pion.
+- `rtc-rtp`: RFC 8285 header-extension API parity with pion v1.10.6. `Header` gains
+  `clear_extensions` (pion `ClearExtensions`) and `set_extension_with_profile` (pion
+  `SetExtensionWithProfile`: profile upgrade/downgrade with re-encoding, refusing downgrades an
+  existing extension cannot fit); `Packetizer` gains `generate_padding` (pion `GeneratePadding`:
+  payload-less, 255-octet-padding packets at the latest timestamp). pion's
+  `header_extension_test.go` (13 tests), the missing `packet_test.go` rows (14: ClearExtensions,
+  padding-with-size termination, extension-without-payload, clones, marshal funcs, padding
+  initialization, panic regressions), `sequencer_test.go` (6, incl. concurrency), the missing
+  `packetizer_test.go` rows (roundtrip, generate-padding, empty payload) and the missing
+  extension-helper tests (MarshalTo, playout-delay edge cases) are ported. Fixed: deleting the
+  last extension now clears the extension flag and profile (pion behaviour); a raw-profile
+  header with no extensions marshals as an empty block instead of erroring (pion issue #315);
+  `new_random_sequencer` draws its start from the lower half of the sequence space (pion's
+  `maxInitialRandomSequenceNumber`, needed for SRTP after loss).
+- `rtc-media`: Ogg writer/reader parity with pion v4.2.24's `pkg/media/oggwriter`/`oggreader`.
+  The writer gains the multiplexed API: `MultiTrackOggWriter`/`SeekableMultiTrackOggWriter`
+  (pion's `Writer` + `WithSeekableOutput`) with per-track SSRC routing, duplicate-SSRC/serial
+  rejection, lazy header start, `TrackOptions` (serial, sample rate, channel count/mapping,
+  OpusTags overrides), `SeekableOggWriter` (pion's file-backed writer: close rewrites the last
+  page with EOS), explicit channel-mapping families 1/2/255 with pion's validation,
+  `OpusTags`/`UserComment` with vendor/user-comment validation, and Opus-duration granule
+  positions (pion's `opusPacketSampleCount`) instead of RTP timestamp deltas. The reader
+  gains exact per-family payload-length validation, the comment-count bound and
+  missing-`=` rejection in `parse_opus_tags`, and `bytes_read` tracking. All 45 pion
+  oggwriter/oggreader tests are ported. Fixed: payloads over 255*255 bytes corrupted the
+  page segment count (`u8` overflow); the reader accepted OpusTags with an impossible comment
+  count (unbounded allocation) and silently dropped comments without `=`.
+- `rtc-media`: `fuzz/` with `ogg_reader`, `opus_head` and `opus_tags` targets (cargo-fuzz).
+- `rtc-shared`: Ogg writer/reader error variants (`ErrInvalidChannelCount`, `ErrInvalidChannelMap`,
+  `ErrInvalidOpusTags`, `ErrDuplicateTrackSSRC`, `ErrDuplicateTrackSerial`, `ErrTracksStarted`,
+  `ErrPacketSSRCMismatch`, `ErrInvalidOpusPacket`, `ErrOutputNotOpened`).
+- `rtc-sctp` + `rtc`: four SCTP congestion/timer tuning knobs, mirroring pion's
+  `SettingEngine.SetSCTPRTOMax` / `SetSCTPMinCwnd` / `SetSCTPFastRtxWnd` / `SetSCTPCwndCAStep`.
+  `TransportConfig::{with_rto_max, with_min_cwnd, with_fast_rtx_wnd, with_cwnd_ca_step}`
+  (zero/unset = today's behaviour exactly: rto_max defaults to the RFC 9260 60 s, min_cwnd
+  keeps the `cwnd = MTU` / `cwnd = ssthresh` resets, fast_rtx_wnd keeps the one-MTU
+  fast-retransmit budget, cwnd_ca_step keeps `cwnd += MTU` in congestion avoidance), and
+  `SettingEngineBuilder::{with_sctp_rto_max, with_sctp_min_cwnd, with_sctp_fast_rtx_wnd,
+  with_sctp_cwnd_ca_step}` forwarding into the association's transport config. pion's
+  `TestRTOManager` and `TestRtxTimer` (rtx_timer_test.go) are ported, plus one behaviour
+  test per knob.
+- `rtc-interceptor`: `PacketDump`, the belt-shaped port of pion's `interceptor/pkg/packetdump`:
+  one interceptor sees both directions and forwards every packet unchanged, while writing a
+  line per RTP/RTCP packet through pluggable filters, formatters and a `PacketDumpSink`
+  (default: the packet's `Display` plus a newline, to `log::debug!`). New `Slot::PacketDump`
+  (0), the wire-most slot: the dump sees departures after pacing and numbering, and arrivals
+  before recovery and re-stamping. The nine pion packetdump tests are ported, plus forwarding,
+  filter-cost, ordering and registry-placement tests.
+- `rtc-interceptor`: `PacketDumpBuilder::rtcp_compound_filter` (pion's `RTCPFilter`), `rtp_binary_formatter` / `rtcp_binary_formatter` and `PacketDumpSink::write_bytes` (pion's binary format callbacks); a binary formatter turns the default text line off, as in pion.
+- `rtc-media`: rtpdump reader and writer (`io::rtpdump`), byte-compatible with pion's
+  `pkg/media/rtpdump` (preamble, binary header, packet records). New public items:
+  `rtpdump::{Header, Packet, Reader, Writer}`; two `ErrRtpDump*` variants in `rtc-shared`.
+  Two strictnesses beyond pion, both from the issue: records whose `plen` exceeds their length
+  and records with empty payloads are rejected.
+- `rtc-rtp`: H.266/VVC payloader and depacketizer ([RFC 9328]), byte-compatible with pion's
+  `H266Packetizer`/`H266Depacketizer` (aggregation packets, fragmentation units, DONL handling).
+  The 320 H.266 rows of the pion golden corpus now run, and pion's 13 `TestH266*` unit tests
+  are ported. New public items: `codec::h266::{H266Payloader, H266Depacketizer, H266NALUHeader}`.
+- `rtc-shared`: H.266 error variants (`ErrH266*`).
+
+[RFC 9328]: https://datatracker.ietf.org/doc/html/rfc9328
+
+### Fixed
+- `rtc-dtls`: a PSK client with an empty identity was refused with
+  `ErrInvalidClientKeyExchange`; an empty identity is legal (pion's `TestPSK` "Client identity
+  empty" case) and now marshals as the two zero length bytes.
+- `rtc-dtls`: `ConfigBuilder::build` checked `ErrServerMustHaveCertificate` before
+  `ErrIdentityNoPsk`, so a server configured with an identity but no PSK and no certificate
+  reported the wrong error; as in pion's `validateConfig`, the identity-without-PSK check now
+  comes first (pion's `TestPSKConfiguration` "No PSK and identity specified" case).
+
+### Changed (breaking, hence 0.22.0)
+- `rtc-rtp`: `Header` gains `padding_size`; `HevcPayloader` is a struct with parameter-set state.
+- `rtc-sctp`: `PayloadProtocolIdentifier` is a struct (it carries unknown values), not an enum.
+- `rtc-media`: `OggWriter::new` takes `channel_count: u16` (pion rejects counts that wrap `u8`);
+  granule positions advance by each packet's Opus duration (pion parity) instead of RTP timestamp
+  deltas; `close` on an append-only output no longer duplicates the last payload as an EOS page
+  (that corrupted streams; a proper EOS needs the seekable writers); `ogg_reader::UserComment`
+  and `OpusTags` implement `PartialEq`/`Eq`.
+
+### Added
+- `rtc-turn`: a Sans-I/O **TURN server** (`rtc_turn::server`). Long-term credentials with
+  verifiable nonces (stale-nonce `438`), allocations over UDP with IPv4 and IPv6 relays, Refresh,
+  CreatePermission (all-or-nothing), ChannelBind, Send/Data indications and ChannelData, quotas,
+  permission filtering, time-limited shared-secret credentials, `420` for unknown
+  comprehension-required attributes, and an idempotent answer to a retransmitted Allocate. The
+  application binds the relay sockets (`ServerEvent::BindRelay`). `proto::framing::frame_length`
+  delimits messages on TCP and TLS streams. Interoperates with pion in both directions
+  (`interop/run-turn.sh`).
+- `rtc-mdns`: `MulticastSocket` joins the group on every local IPv4 interface, and
+  `multicast_interfaces` / `is_route_error` / `set_multicast_interface` let a driver retry a send
+  that the default multicast route refuses (a virtual NIC with no multicast route).
+- `rtc-turn`: `EvenPort::new` and `EvenPort::reserve_port`.
+
+### Fixed
+- `rtc-rtp`: `Packet::unmarshal` of a `Bytes` takes one handle on the datagram instead of two
+  extra reference counts.
+
+### Security / hardening (ported from pion's tests)
+- DTLS: the handshake fragment buffer is bounded in fragment count and bytes and reassembles
+  overlapping retransmits; the handshake cache and the next-epoch packet queue are bounded.
+- SCTP: DATA more than a bounded number of TSNs ahead of the cumulative TSN is not queued.
+- RTCP: a maximum-length FIR or transport-wide CC packet no longer overflows the parser; marshal
+  refuses packets the 16-bit length cannot describe, and NACKs may list up to that many pairs.
+- Data channels: an OPEN message with a label or protocol over 65535 bytes is refused, not truncated.
+
+
+### Security
+
+- **SRTCP accepted forged packets with the E bit clear.** The authentication tag was only checked
+  for encrypted SRTCP, so anyone able to send a datagram could inject RTCP (BYE, PLI, REMB, …) into
+  a session. The tag is now verified before the E bit is looked at.
+- **SRTP and SRTCP no longer allocate per-SSRC state before a packet authenticates.** The SSRC is
+  read from an unauthenticated header, so spraying random SSRCs used to grow the receiver's memory
+  without bound; state is now created only for an SSRC that has delivered an authentic packet.
+- SRTP located the payload with the *re-marshalled* header size rather than the size on the wire, so
+  a packet whose extension block was padded by the sender was encrypted from the wrong offset.
+- Remotely triggerable panics fixed: SCTP error causes, the DCEP threshold parser, AV1 payloading
+  and OBU parsing, RTCP SLI, and VP9 scalability-structure parsing.
+
+### Added (transport performance)
+
+- **RACK-TLP loss detection for SCTP** ([RFC 8985]; `TransportConfig::with_enable_rack`, on by
+  default). A chunk is declared lost once a chunk sent after it has been delivered and a round
+  trip plus a reordering allowance has passed, and a tail-loss probe re-sends the newest
+  outstanding chunk after about two round trips of silence. Before, a lost tail left nothing to
+  open a gap, so recovery waited for T3-rtx — one second at minimum, with the congestion window
+  collapsed to one MTU. On a path that drops a few datagrams per second that was most of the
+  throughput: over loopback on Linux, a 256 MiB transfer ran at 25–45 MiB/s and now runs at
+  110–190 MiB/s. `AssociationStats` gains `get_num_rack_losses` and `get_num_pto_probes`.
+- **Window-update SACK.** When the application drains a receive buffer that had been advertised
+  as (nearly) full, the receiver now reports the reopened window at once (RFC 9260 §6.2) instead
+  of leaving a stopped sender to find out from its next zero-window probe — a retransmission
+  timeout away. Every transfer whose reader started a moment after the sender used to lose a
+  second to this.
+
+[RFC 8985]: https://datatracker.ietf.org/doc/html/rfc8985
+
+- **`RTCDataChannel::outstanding_bytes_handle()` and `data_channel::OutstandingBytes`.** A cheap,
+  clonable, lock-free view of a channel's outstanding send bytes (`get()`, plus `is_detached()` once
+  the channel is gone). `outstanding_bytes()` itself is unchanged. A driver that keeps the core
+  behind a lock can sample the handle without taking it, so an application polling for send room no
+  longer contends with the I/O loop that is making room: on Linux the poll-style data-channel
+  benchmark was spending most of its time waiting for that lock.
+- The data-channel registry and the per-channel statistics are keyed with `FxHashMap` rather than
+  SipHash: their keys are connection-local handles and SCTP stream ids, looked up for every
+  acknowledged chunk.
+- **`rtp::packet::PacketView`**, a borrowed, allocation-free parse of an RTP packet: the header
+  fields, the CSRC list, the extension elements (`extension(id)`, `extensions()`) and the payload,
+  all read from the datagram it was parsed from. `parse` accepts and rejects exactly what
+  `Packet::unmarshal` does (a differential test holds it to that on 20,000 random inputs). It takes
+  10 ns on a 1200-byte packet with three extensions, against 60 ns for an owned `Packet` and 26 ns
+  for `Packet::unmarshal_reuse`: the owned forms pay for reference-counted payloads, which a packet
+  that is inspected and forwarded never needed.
+- `Packet::unmarshal_reuse` fills in one pass when the packet already owns an extension table
+  (30 ns to 26 ns).
+- SDP marshalling writes `m=`, `o=`, `c=` and `b=` lines piece by piece instead of through
+  `format_args!`, and sizes its output from the attribute count; and the output goes through a small
+  text writer that copies short pieces inline instead of calling `memcpy` for each. A browser offer
+  marshals in 3.4 µs, down from 5.6 µs (pion: 4.2 µs). The writer is the only `unsafe` in `rtc-sdp`;
+  it is Miri-clean and tested at every piece length.
+
+### Changed (breaking)
+
+- SDP `Attribute::key` and `Attribute::value` are `smol_str::SmolStr` instead of `String`. Text up
+  to 23 bytes is stored inline, so parsing a browser offer allocates 219 times instead of 902 and
+  runs in about 20 µs (pion: 23 µs). They dereference to `&str` and compare equal to `&str` and
+  `String`; `Attribute::new` still takes `String`s, and `Attribute::from_parts` takes anything
+  convertible. `SessionDescription::attribute` returns `Option<&str>`.
+
+### Added
+
+- **Differential tests against pion.** Every protocol parser — SDP, RTCP, RTP (and the codec
+  depacketizers/payloaders), STUN, SCTP, DCEP, DTLS records, SRTP — is checked against pion's own
+  verdicts and parsed fields on corpora of valid and mutated inputs harvested from pion's tests
+  (`tests/pion_golden.rs`, regenerated with the Go oracle in `tests/oracle/`). Where we deliberately
+  differ because pion is wrong (for example pion's H.265 payloader hangs at an MTU of 3 and its PACI
+  accessor mis-parses the A bit), the test names the divergence.
+- RTCP `ApplicationDefined` (APP) packets, `SdesType::Unknown`, and the SDP lexer/state machine are
+  now ports of pion's, so malformed input is accepted and rejected the same way.
+- `rtp::Header::peek` reads the routing fields of an RTP header without allocating, accepting and
+  rejecting exactly what `Header::unmarshal` does; `Packet::unmarshal_reuse` parses into an existing
+  packet and allocates nothing in steady state.
+- `rtc_srtp::Context::{encrypt_rtp_into, decrypt_rtp_into}` append to a caller-owned buffer, so a
+  send or receive loop that keeps one `BytesMut` allocates nothing per packet.
+- `rtc_stun::Message::{get_value, build_with}` and `Attributes::find` borrow instead of copying and
+  boxing.
+- New fuzz targets: RTP depacketizers and payloaders, `Header::peek` against `Header::unmarshal`,
+  SRTP/SRTCP unprotect and round trip, and DCEP.
+- `benchmarks/pion-compare`: the same micro-benchmarks run against this workspace and against pion,
+  side by side, with gates (see `docs/ci.md`).
+- CI on Linux and macOS, x86-64 and arm64: see `docs/ci.md`.
+
+### Changed
+
+- **Hardware AES and SHA-1 everywhere, with no build flags.** `aes` 0.9, `ctr` 0.10, `ccm` 0.6,
+  `sha1` 0.11, `hmac` 0.13 and `md-5` 0.11 detect the CPU's AES/SHA instructions at run time on
+  aarch64 and x86-64. Before this, a downstream build on Apple silicon or Linux/arm64 silently used
+  the software implementations unless it passed `--cfg aes_armv8`, which only worked inside this
+  repository (`.cargo/config.toml` is not inherited by dependents). The AES-CTR key schedule is now
+  expanded once per context rather than once per packet. SRTP AES-CM-HMAC-SHA1 is about 2.3×
+  faster than before and about 2× faster than pion on the same machine.
+- The workspace declares `rust-version = "1.91"`.
+- Faster parsing and marshalling: RTCP compound packets, H.264 payloading (SIMD start-code
+  search), SDP marshalling and codec-map construction, STUN decode and build.
+
+### Fixed
+
+- Many parse paths now agree with pion where we differed: RTP header/extension/padding validation,
+  RTCP header lengths on re-marshal, TWCC status vectors, SDP fields and numeric ranges, STUN
+  attribute ordering after MESSAGE-INTEGRITY, SCTP unknown PPIDs and reconfiguration results.
+
+### Added
+
+- **SCTP zero checksum (RFC 9653)**: `TransportConfig::with_enable_zero_checksum` advertises the capability (parameter 0x8001, EDMID 1, byte-compatible with pion/sctp) and accepts zero-checksum packets on the DTLS-protected association; the send side arms when the peer advertises back, and then skips the CRC-32C on the DATA/SACK/FORWARD-TSN hot paths. INIT and COOKIE ECHO stay checksummed per section 5; a zero-checksum packet reaching an association that never enabled it is dropped.
+- **DTLS key logging**: `ConfigBuilder::with_key_logger` receives the NSS key log line once the master secret is derived, on both client and server ends — and both ends of the same association log the identical line, which is the property that makes the log usable.
+- **sctp-transport stats entry** read live from the SCTP association (smoothed RTT, congestion window, receiver window, MTU, bytes sent/received), matching pion's `SCTPTransportStats`; `AssociationStats` gains byte counters (counted once per accepted DATA chunk, retransmissions not double-counted) and the association exposes `cwnd()`, `rwnd()`, `mtu()` alongside `rtt()`.
+- **csrc stats entry** per (inbound stream, CSRC) with `packetsContributedTo`. `getContributingSources` / `getSynchronizationSources` were stubs returning empty lists; receivers now record CSRCs/SSRC per packet (RFC 3550 section 5.1) with a 10-second memory window, per-packet counting, and per-receiver origin timestamps.
+
+### Added
 
 - `RTCCrypto::new_hmac` returns a keyed `Mac` whose key schedule is derived once, mirroring the
   existing keyed cipher factories. It replaces the removed one-shot `hmac`/`verify_hmac`.
@@ -74,6 +711,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type 116 is no longer present. ULPFEC will return to the defaults once receive-side recovery
   is implemented.
 - Upgrade `nix` to the newer version that allow compile `ohos` targets.
+
+### Fixed
+
+- **Connect latency: the first DTLS flight no longer waits on a later flush, and can no
+  longer overtake the ICE nomination.** When the controlling side's ICE selects a pair,
+  the DTLS handler's `connect` buffers the ClientHello inside the endpoint; nothing in
+  that event drained it, so the first flight waited for the driver's write drain of a
+  later iteration — a ~200 ms tick on the wire. The handler now pumps the flight into
+  its `write_outs` the moment `connect` returns, so it leaves on the same iteration's
+  drain. Flushing it early resurfaces an ordering hazard the tick flush had been
+  masking: the ClientHello could overtake the ICE nomination (USE-CANDIDATE) ahead of
+  it, reach a peer whose pair was not yet selected, and be dropped — a full 1 s DTLS
+  retransmit cycle. The ICE handler therefore front-inserts its agent's transmits in
+  `poll_write`: the control plane stays first on the wire, its own order preserved.
+  Measured end-to-end connect (in-process loopback, 20 rounds): median 204 ms → 2 ms.
 
 ### Deprecated
 
@@ -167,3 +819,5 @@ tables and methodology.
 [0.20.1]: https://github.com/webrtc-rs/rtc/compare/0.20.0...0.20.1
 
 [0.20.0]: https://github.com/webrtc-rs/rtc/releases/tag/0.20.0
+
+[RFC 6062]: https://www.rfc-editor.org/rfc/rfc6062

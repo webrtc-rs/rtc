@@ -560,6 +560,16 @@ fn negotiate(
 }
 ```
 
+## Supported Platforms
+
+Linux and macOS, on x86-64 and arm64, are first-class: every pull request is built and tested on
+all four, in debug and release, with both crypto providers (see [docs/ci.md](docs/ci.md)). Static
+musl builds (`*-unknown-linux-musl`) are tested too. The minimum supported Rust version is
+**1.91**.
+
+AES and SHA-1 use the CPU's AES / SHA instructions, detected at run time on aarch64 and x86-64,
+with no build flags and a software fallback on cores without them.
+
 ## Specification Compliance
 
 This implementation follows these specifications:
@@ -588,6 +598,12 @@ cargo build
 
 # Run tests
 cargo test
+
+# Everything CI checks on a pull request (fmt, clippy, tests, pion differential corpus, docs, deny)
+scripts/ci-local.sh
+
+# Test on Linux from a Mac (needs Docker)
+scripts/ci-linux-docker.sh
 
 # Build with the aws-lc-rs crypto provider instead of ring
 cargo build --no-default-features --features crypto-aws-lc-rs

@@ -52,7 +52,7 @@ fn test_h264_fmtp_parse() {
     ];
 
     for (name, input, expected) in tests {
-        let f = parse("video/h264", input);
+        let f = parse("video/h264", 0, 0, input);
         assert_eq!(&f, &expected, "{name} failed");
 
         assert_eq!(f.mime_type(), "video/h264");
@@ -128,8 +128,8 @@ fn test_h264_fmtp_compare() {
 
     for (name, a, b, consist) in tests {
         let check = |a, b| {
-            let aa = parse("video/h264", a);
-            let bb = parse("video/h264", b);
+            let aa = parse("video/h264", 0, 0, a);
+            let bb = parse("video/h264", 0, 0, b);
 
             // test forward case here
             let c = aa.match_fmtp(&*bb);

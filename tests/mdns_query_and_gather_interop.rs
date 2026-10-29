@@ -140,10 +140,7 @@ async fn run_rtc_event_loop(
     // Process writes - route to appropriate socket based on port
     while let Some(msg) = rtc_pc.poll_write() {
         if msg.transport.peer_addr.port() == MDNS_PORT {
-            match mdns_socket
-                .send_to(&msg.message, msg.transport.peer_addr)
-                .await
-            {
+            match common::send_mdns(mdns_socket, &msg.message, msg.transport.peer_addr).await {
                 Ok(n) => {
                     log::trace!("mDNS sent {} bytes to {}", n, msg.transport.peer_addr);
                 }
@@ -291,6 +288,10 @@ async fn run_rtc_event_loop(
 /// advertise its own IP via mDNS.
 #[tokio::test]
 async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return Ok(());
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -457,6 +458,15 @@ async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// advertises its own IP via an mDNS name.
 #[tokio::test]
 async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return Ok(());
+    }
+    if !common::default_multicast_route_works() {
+        // The webrtc crate this is paired with sends mDNS over the OS's default multicast route.
+        eprintln!("skipping: this host has no working default multicast route");
+        return Ok(());
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -611,6 +621,10 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
 /// Test mDNS QueryOnly mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return Ok(());
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -786,6 +800,15 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
 /// Test mDNS QueryAndGather mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> {
+    if !common::multicast_loopback_works() {
+        eprintln!("skipping: this host does not loop IPv4 multicast back to a local listener");
+        return Ok(());
+    }
+    if !common::default_multicast_route_works() {
+        // The webrtc crate this is paired with sends mDNS over the OS's default multicast route.
+        eprintln!("skipping: this host has no working default multicast route");
+        return Ok(());
+    }
     common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)

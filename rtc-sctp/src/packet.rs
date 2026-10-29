@@ -6,6 +6,7 @@ use crate::chunk::chunk_error::ChunkError;
 use crate::chunk::chunk_forward_tsn::ChunkForwardTsn;
 use crate::chunk::chunk_header::*;
 use crate::chunk::chunk_heartbeat::ChunkHeartbeat;
+use crate::chunk::chunk_i_forward_tsn::ChunkIForwardTsn;
 use crate::chunk::chunk_init::ChunkInit;
 use crate::chunk::chunk_payload_data::ChunkPayloadData;
 use crate::chunk::chunk_reconfig::ChunkReconfig;
@@ -66,10 +67,39 @@ pub struct PartialDecode {
     pub(crate) first_chunk_type: ChunkType,
     pub(crate) initiate_tag: Option<u32>,
     pub(crate) cookie: Option<Bytes>,
+    /// Whether the datagram arrived with a zero checksum field ([RFC 9653]).
+    ///
+    /// `false` for every packet that was CRC-verified — the strict [`PartialDecode::unmarshal`]
+    /// never accepts a zero checksum, and the lenient form only skips verification when the
+    /// field *is* zero.
+    pub(crate) checksum_is_zero: bool,
 }
 
 impl PartialDecode {
     pub(crate) fn unmarshal(raw: &Bytes) -> Result<Self> {
+        Self::unmarshal_inner(raw, false)
+    }
+
+    /// The [RFC 9653] receive path: a zero checksum field is accepted without CRC
+    /// verification, on the understanding that an outer integrity layer — DTLS, for
+    /// WebRTC — already covers the datagram.
+    ///
+    /// A **non-zero** checksum is verified exactly as in the strict form, so turning this
+    /// on never weakens a packet that came CRC'd. Handshake packets are stronger still:
+    /// INIT and COOKIE ECHO force verification whatever the field holds, because they can
+    /// arrive before any state that could vouch for them, and a garbage "zero checksum"
+    /// one must not create an association.
+    ///
+    /// The caller decides what a zero-checksum packet means: the `checksum_is_zero` flag
+    /// travels with the partial decode so an association that never enabled the feature
+    /// can drop what it did not ask to accept.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) fn unmarshal_lenient(raw: &Bytes) -> Result<Self> {
+        Self::unmarshal_inner(raw, true)
+    }
+
+    fn unmarshal_inner(raw: &Bytes, allow_zero_checksum: bool) -> Result<Self> {
         if raw.len() < PACKET_HEADER_SIZE {
             return Err(Error::ErrPacketRawTooSmall);
         }
@@ -80,10 +110,25 @@ impl PartialDecode {
         let destination_port = reader.get_u16();
         let verification_tag = reader.get_u32();
         let their_checksum = reader.get_u32_le();
-        let our_checksum = generate_packet_checksum(raw);
 
-        if their_checksum != our_checksum {
-            return Err(Error::ErrChecksumMismatch);
+        let checksum_is_zero = their_checksum == 0;
+        if checksum_is_zero && allow_zero_checksum {
+            // RFC 9653 section 5: handshake chunks are checksummed regardless.
+            let forces_verification = |typ: ChunkType| typ == CT_INIT || typ == CT_COOKIE_ECHO;
+            let first_type = ChunkType(raw[PACKET_HEADER_SIZE]);
+            if !forces_verification(first_type) {
+                // fall through to chunk parsing below with the zero flagged
+            } else {
+                let our_checksum = generate_packet_checksum(raw);
+                if our_checksum != 0 {
+                    return Err(Error::ErrChecksumMismatch);
+                }
+            }
+        } else {
+            let our_checksum = generate_packet_checksum(raw);
+            if their_checksum != our_checksum {
+                return Err(Error::ErrChecksumMismatch);
+            }
         }
 
         if reader.remaining() < CHUNK_HEADER_SIZE {
@@ -119,6 +164,7 @@ impl PartialDecode {
             },
             remaining: raw.slice(PACKET_HEADER_SIZE..),
             first_chunk_type: header.typ,
+            checksum_is_zero,
             initiate_tag,
             cookie,
         })
@@ -144,10 +190,11 @@ impl PartialDecode {
                 CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
                 CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
                 CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA | CT_IDATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
                 CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
                 CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
                 CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_IFORWARD_TSN => Box::new(ChunkIForwardTsn::unmarshal(&chunk_buf)?),
                 CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),
@@ -155,8 +202,10 @@ impl PartialDecode {
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
-            let chunk_value_padding = get_padding_size(c.value_length());
-            offset += CHUNK_HEADER_SIZE + c.value_length() + chunk_value_padding;
+            // Step by the length the chunk header declared, not by what the parser kept of it:
+            // a chunk with more bytes than its type uses must not leave them to be read as
+            // the next chunk.
+            offset += chunk_buf.len() + get_padding_size(chunk_buf.len());
             chunks.push(c);
         }
 
@@ -241,10 +290,11 @@ impl Packet {
                 CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
                 CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
                 CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA | CT_IDATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
                 CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
                 CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
                 CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_IFORWARD_TSN => Box::new(ChunkIForwardTsn::unmarshal(&chunk_buf)?),
                 CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
                 CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),
@@ -252,8 +302,10 @@ impl Packet {
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
-            let chunk_value_padding = get_padding_size(c.value_length());
-            offset += CHUNK_HEADER_SIZE + c.value_length() + chunk_value_padding;
+            // Step by the length the chunk header declared, not by what the parser kept of it:
+            // a chunk with more bytes than its type uses must not leave them to be read as
+            // the next chunk.
+            offset += chunk_buf.len() + get_padding_size(chunk_buf.len());
             chunks.push(c);
         }
 
@@ -310,6 +362,30 @@ impl Packet {
         .map(|_| buf.freeze())
     }
 
+    /// [`marshal`](Self::marshal) with the [RFC 9653] transmit switch.
+    ///
+    /// `allow_zero_checksum` is the association's send flag, already gated on the peer
+    /// advertising the capability. This method adds the one remaining rule the caller
+    /// cannot: INIT and COOKIE ECHO chunks are checksummed regardless (RFC 9653
+    /// section 5), so the flag is dropped for any packet carrying one.
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) fn marshal_opt(&self, allow_zero_checksum: bool) -> Result<Bytes> {
+        let mandatory_checksum = self.chunks.iter().any(|c| {
+            let typ = c.header().typ;
+            typ == CT_INIT || typ == CT_COOKIE_ECHO
+        });
+        let zero = allow_zero_checksum && !mandatory_checksum;
+        let mut buf = BytesMut::with_capacity(self.marshaled_len());
+        Self::write_framed_with_checksum(
+            &self.common_header,
+            self.chunks.iter().map(|c| &**c as &dyn Chunk),
+            &mut buf,
+            zero,
+        )
+        .map(|_| buf.freeze())
+    }
+
     /// Serialize the common header, every chunk (with trailing padding) and the
     /// CRC-32C into `writer`, appended at its current end. This is the single
     /// home of the SCTP on-wire packet framing: `marshal`/`marshal_to` feed it
@@ -319,6 +395,21 @@ impl Packet {
         common_header: &CommonHeader,
         chunks: impl Iterator<Item = &'a dyn Chunk>,
         writer: &mut BytesMut,
+    ) -> Result<usize> {
+        Self::write_framed_with_checksum(common_header, chunks, writer, false)
+    }
+
+    /// [`write_framed`](Self::write_framed) with the [RFC 9653] transmit switch: pass
+    /// `true` to leave the checksum field zero and skip the CRC-32C pass, which the
+    /// caller may only do once the association established that the peer accepts the
+    /// form and no chunk in the packet demands a checksum (INIT, COOKIE ECHO).
+    ///
+    /// [RFC 9653]: https://datatracker.ietf.org/doc/html/rfc9653
+    pub(crate) fn write_framed_with_checksum<'a>(
+        common_header: &CommonHeader,
+        chunks: impl Iterator<Item = &'a dyn Chunk>,
+        writer: &mut BytesMut,
+        zero_checksum: bool,
     ) -> Result<usize> {
         let start = writer.len();
 
@@ -345,11 +436,18 @@ impl Packet {
             }
         }
 
-        // CRC-32C over the whole packet, checksum field still zero.
-        let checksum = crc32c::crc32c(&writer[start..]);
+        if zero_checksum {
+            // RFC 9653: the field stays as written above — all zeros — and the CRC-32C
+            // pass is skipped entirely. The caller has already established that an
+            // outer integrity layer covers this packet and that the peer accepts the
+            // form, so the checksum would re-buy protection DTLS already paid for.
+        } else {
+            // CRC-32C over the whole packet, checksum field still zero.
+            let checksum = crc32c::crc32c(&writer[start..]);
 
-        // Checksum is already in BigEndian; store little-endian so it isn't flipped.
-        writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
+            // Checksum is already in BigEndian; store little-endian so it isn't flipped.
+            writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
+        }
 
         Ok(writer.len())
     }

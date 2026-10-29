@@ -1,0 +1,42 @@
+[package]
+name = "rtc-media-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rtc-media]
+path = ".."
+
+[dependencies.rtc-shared]
+path = "../../rtc-shared"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ogg_reader"
+path = "fuzz_targets/ogg_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opus_head"
+path = "fuzz_targets/opus_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opus_tags"
+path = "fuzz_targets/opus_tags.rs"
+test = false
+doc = false
+bench = false

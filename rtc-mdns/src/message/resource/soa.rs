@@ -38,7 +38,7 @@ impl ResourceBody for SoaResource {
     fn pack(
         &self,
         mut msg: Vec<u8>,
-        compression: &mut Option<HashMap<String, usize>>,
+        compression: &mut Option<NameTable>,
         compression_off: usize,
     ) -> Result<Vec<u8>> {
         msg = self.ns.pack(msg, compression, compression_off)?;
@@ -70,6 +70,10 @@ impl ResourceBody for SoaResource {
         self.min_ttl = min_ttl;
 
         Ok(off)
+    }
+
+    fn clone_box(&self) -> Box<dyn ResourceBody> {
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {

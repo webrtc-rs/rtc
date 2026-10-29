@@ -464,6 +464,18 @@ async fn test_ice_restart_interop() -> Result<()> {
 
     log::info!("Messages exchanged successfully before ICE restart");
 
+    // webrtc refuses to restart an agent that is still gathering ("ICE Agent can not be
+    // restarted when gathering"), which a slow interface list can leave running after the
+    // first connection is up. Let it finish.
+    for _ in 0..500 {
+        if webrtc_pc.ice_gathering_state()
+            == webrtc::ice_transport::ice_gathering_state::RTCIceGatheringState::Complete
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
     // Perform ICE restart from webrtc side
     log::info!("Performing ICE restart...");
 

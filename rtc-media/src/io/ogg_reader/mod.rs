@@ -83,7 +83,7 @@ pub struct OggHeader {
 
 /// OpusTags contains Vorbis comment metadata from an OpusTags page
 /// <https://www.xiph.org/vorbis/doc/v-comment.html>
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpusTags {
     /// The encoder that produced the file.
     pub vendor: String,
@@ -92,7 +92,7 @@ pub struct OpusTags {
 }
 
 /// A key-value pair from Vorbis comments
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserComment {
     /// The tag name, such as `TITLE` or `ARTIST`.
     pub comment: String,
@@ -153,13 +153,12 @@ impl OggPageHeader {
 
 /// Parse an OpusHead from a page payload
 /// <https://tools.ietf.org/html/rfc7845.html#section-5.1>
+///
+/// As in pion's `ParseOpusHead`, this validates only the structure — the
+/// `OpusHead` magic is the reader's business, not the parser's.
 pub fn parse_opus_head(payload: &[u8]) -> Result<OggHeader> {
     if payload.len() < ID_PAGE_PAYLOAD_SIZE {
         return Err(Error::ErrBadIDPageLength);
-    }
-
-    if &payload[..8] != ID_PAGE_SIGNATURE {
-        return Err(Error::ErrBadIDPagePayloadSignature);
     }
 
     let mut reader = Cursor::new(&payload[8..]);
@@ -170,6 +169,8 @@ pub fn parse_opus_head(payload: &[u8]) -> Result<OggHeader> {
     let output_gain = reader.read_u16::<LittleEndian>()?;
     let channel_map = reader.read_u8()?;
 
+    // pion's parseChannelMapping: every family demands an exact payload length,
+    // so trailing bytes are as invalid as missing ones.
     let (stream_count, coupled_count, channel_mapping) = match channel_map {
         0 => {
             // Family 0: mono or stereo, no mapping table
@@ -181,7 +182,7 @@ pub fn parse_opus_head(payload: &[u8]) -> Result<OggHeader> {
         1 | 2 | 255 => {
             // Extended channel mapping
             let expected_len = 21 + channels as usize;
-            if payload.len() < expected_len {
+            if payload.len() != expected_len {
                 return Err(Error::ErrBadIDPageLength);
             }
             let stream_count = payload[19];
@@ -250,6 +251,13 @@ pub fn parse_opus_tags(payload: &[u8]) -> Result<OpusTags> {
         payload[vendor_end + 3],
     ]) as usize;
 
+    // pion's guard: each comment needs at least its 4-byte length field, so a
+    // count that cannot fit is malformed — and would otherwise drive a
+    // `u32::MAX`-sized allocation before any bounds check fires.
+    if comment_count > (payload.len() - vendor_end) / 4 {
+        return Err(Error::ErrBadOpusTagsSignature);
+    }
+
     let mut pos = vendor_end + U32_SIZE;
     let mut user_comments = Vec::with_capacity(comment_count);
 
@@ -273,13 +281,15 @@ pub fn parse_opus_tags(payload: &[u8]) -> Result<OpusTags> {
         let comment_str = String::from_utf8_lossy(&payload[pos..pos + comment_len]).to_string();
         pos += comment_len;
 
-        // Split on first '=' to get key=value pair
-        if let Some(eq_pos) = comment_str.find('=') {
-            user_comments.push(UserComment {
-                comment: comment_str[..eq_pos].to_string(),
-                value: comment_str[eq_pos + 1..].to_string(),
-            });
-        }
+        // Split on first '=' to get key=value pair; pion rejects a comment
+        // without the separator instead of silently dropping it.
+        let Some(eq_pos) = comment_str.find('=') else {
+            return Err(Error::ErrBadOpusTagsSignature);
+        };
+        user_comments.push(UserComment {
+            comment: comment_str[..eq_pos].to_string(),
+            value: comment_str[eq_pos + 1..].to_string(),
+        });
     }
 
     Ok(OpusTags {
@@ -327,12 +337,23 @@ impl<R: Read> OggReader<R> {
     fn read_headers(&mut self) -> Result<OggHeader> {
         let (payload, page_header) = self.parse_next_page()?;
 
+        // pion's validateOpusPageHeader: page signature, then the
+        // beginning-of-stream type, then a long-enough payload, then the
+        // OpusHead magic.
         if page_header.sig != PAGE_HEADER_SIGNATURE {
             return Err(Error::ErrBadIDPageSignature);
         }
 
         if page_header.header_type != PAGE_HEADER_TYPE_BEGINNING_OF_STREAM {
             return Err(Error::ErrBadIDPageType);
+        }
+
+        if payload.len() < ID_PAGE_PAYLOAD_SIZE {
+            return Err(Error::ErrBadIDPageLength);
+        }
+
+        if &payload[..ID_PAGE_SIGNATURE.len()] != ID_PAGE_SIGNATURE {
+            return Err(Error::ErrBadIDPagePayloadSignature);
         }
 
         parse_opus_head(&payload)
@@ -395,6 +416,8 @@ impl<R: Read> OggReader<R> {
                 return Err(Error::ErrChecksumMismatch);
             }
         }
+
+        self.bytes_read += PAGE_HEADER_SIZE + segments_count as usize + payload_size;
 
         let page_header = OggPageHeader {
             granule_position,
