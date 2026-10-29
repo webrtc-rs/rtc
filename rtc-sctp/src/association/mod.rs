@@ -33,6 +33,7 @@ use crate::config::{
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
     DTLS_ERROR_DETECTION_METHOD, Param,
+    param_forward_tsn_supported::ParamForwardTsnSupported,
     param_heartbeat_info::ParamHeartbeatInfo,
     param_outgoing_reset_request::ParamOutgoingResetRequest,
     param_reconfig_response::{ParamReconfigResponse, ReconfigResult},
@@ -1242,11 +1243,18 @@ impl Association {
             }
             return Err(Error::ErrAbortChunk(err_str));
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkError>() {
+            // RFC 9260 §3.3.10 (RFC 4960 §3.3.10): "An Operation Error is not considered fatal
+            // in and of itself". Only an ABORT ends the association, so report the causes and
+            // carry on with the rest of the packet.
             let mut err_str = String::new();
             for e in &c.error_causes {
                 err_str += &format!("({})", e);
             }
-            return Err(Error::ErrAbortChunk(err_str));
+            warn!(
+                "[{}] received ERROR chunk, with following errors: {}",
+                self.side, err_str
+            );
+            vec![]
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkHeartbeat>() {
             self.handle_heartbeat(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkCookieEcho>() {
@@ -1495,6 +1503,12 @@ impl Association {
                         _ => {}
                     }
                 }
+            } else if param
+                .as_any()
+                .downcast_ref::<ParamForwardTsnSupported>()
+                .is_some()
+            {
+                self.peer_forward_tsn = true;
             }
         }
     }

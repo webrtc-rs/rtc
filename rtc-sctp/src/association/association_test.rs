@@ -1,6 +1,8 @@
 use super::stream::ReliabilityType;
 use super::*;
 
+use crate::param::param_forward_tsn_supported::ParamForwardTsnSupported;
+
 const ACCEPT_CH_SIZE: usize = 16;
 
 fn create_association(config: TransportConfig) -> Association {
@@ -478,6 +480,49 @@ fn handle_init_test(name: &str, initial_state: AssociationState, expect_err: boo
         name
     );
     assert!(a.use_forward_tsn, "{} should be set to true", name);
+}
+
+// RFC 3758 Sec 3.1/3.3: an endpoint MAY advertise Forward-TSN support with
+// the Forward-TSN-Supported parameter (type 49152) in its INIT ACK instead
+// of (or besides) the Supported Extensions list. Both spellings must switch
+// the association into forward-TSN mode; ignoring the parameter leaves
+// use_forward_tsn false and the association silently falls back to the
+// pre-RFC 3758 path.
+#[test]
+fn test_assoc_handle_init_ack_forward_tsn_supported_param() -> Result<()> {
+    let mut a = create_association(TransportConfig::default());
+
+    let pkt = Packet {
+        common_header: CommonHeader {
+            source_port: a.destination_port,
+            destination_port: a.source_port,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut init_ack = ChunkInit {
+        is_ack: true,
+        initiate_tag: 123,
+        advertised_receiver_window_credit: 1024,
+        num_outbound_streams: 1,
+        num_inbound_streams: 1,
+        initial_tsn: 123,
+        params: vec![],
+    };
+    // State cookie (mandatory in INIT ACK) plus the ForwardTsnSupported
+    // parameter, with no Supported Extensions list.
+    init_ack.params.push(Box::new(ParamStateCookie::new()));
+    init_ack.params.push(Box::new(ParamForwardTsnSupported));
+
+    a.handle_init_ack(&pkt, &init_ack, Instant::now())?;
+
+    assert!(
+        a.use_forward_tsn,
+        "use_forward_tsn should be set from the ForwardTsnSupported parameter"
+    );
+
+    Ok(())
 }
 
 // W3C `RTCSctpTransport.maxChannels` is the minimum of the negotiated inbound and outbound

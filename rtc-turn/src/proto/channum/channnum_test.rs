@@ -80,3 +80,12 @@ fn test_channel_number_add_to() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn rfc8656_channel_number_boundaries() {
+    assert!(!ChannelNumber(0x3fff).valid());
+    assert!(ChannelNumber(0x4000).valid());
+    assert!(ChannelNumber(0x4fff).valid());
+    assert!(!ChannelNumber(0x5000).valid());
+    assert!(!ChannelNumber(0x7fff).valid());
+}

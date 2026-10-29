@@ -465,6 +465,7 @@ use crate::chunk::chunk_init::*;
 use crate::chunk::chunk_payload_data::*;
 use crate::chunk::chunk_selective_ack::ChunkSelectiveAck;
 use crate::packet::*;
+use crate::param::param_forward_tsn_supported::ParamForwardTsnSupported;
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
 
 #[test]
@@ -644,6 +645,55 @@ fn test_init_marshal_unmarshal() -> Result<()> {
     } else {
         panic!("Failed to cast Chunk -> InitAck");
     }
+
+    Ok(())
+}
+
+// RFC 4960 Sec 3.2.1: every parameter starts with a 4-byte TLV header, so a
+// trailing zero-length parameter (ForwardTsnSupported) leaves exactly
+// INIT_OPTIONAL_VAR_HEADER_LENGTH bytes unparsed when the loop reaches it.
+// The loop must consume that last parameter instead of stopping one short.
+#[test]
+fn test_init_unmarshal_trailing_forward_tsn_supported() -> Result<()> {
+    let mut p = Packet {
+        common_header: CommonHeader {
+            destination_port: 1,
+            source_port: 1,
+            verification_tag: 123,
+        },
+        chunks: vec![],
+    };
+
+    let mut init_ack = ChunkInit {
+        is_ack: true,
+        initiate_tag: 123,
+        advertised_receiver_window_credit: 1024,
+        num_outbound_streams: 1,
+        num_inbound_streams: 1,
+        initial_tsn: 123,
+        params: vec![],
+    };
+
+    // State cookie first, ForwardTsnSupported last.
+    init_ack.params.push(Box::new(ParamStateCookie::new()));
+    init_ack.params.push(Box::new(ParamForwardTsnSupported));
+
+    p.chunks.push(Box::new(init_ack));
+
+    let raw_pkt = p.marshal()?;
+    let pkt = Packet::unmarshal(&raw_pkt)?;
+
+    let c = pkt.chunks[0]
+        .as_any()
+        .downcast_ref::<ChunkInit>()
+        .expect("Failed to cast Chunk -> ChunkInit");
+    assert_eq!(2, c.params.len());
+    assert!(
+        c.params[1]
+            .as_any()
+            .downcast_ref::<ParamForwardTsnSupported>()
+            .is_some()
+    );
 
     Ok(())
 }

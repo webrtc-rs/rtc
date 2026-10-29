@@ -4,7 +4,7 @@ use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
-use sctp::{PayloadProtocolIdentifier, StreamId};
+use sctp::{PayloadProtocolIdentifier, ReliabilityType, StreamId};
 use shared::error::{Error, Result};
 use std::time::Instant;
 
@@ -163,10 +163,25 @@ impl RTCDataChannelInternal {
 
         let data_channel_config = data_channel.config();
 
-        let (unordered, _reliability_type) =
+        let (unordered, reliability_type) =
             ::datachannel::data_channel::DataChannel::get_reliability_params(
                 data_channel_config.channel_type,
             );
+
+        // RFC 8832 §5.1: the Reliability Parameter is the retransmission limit of a
+        // PartialReliableRexmit channel and the lifetime in milliseconds of a
+        // PartialReliableTimed one, and carries nothing for the reliable types. Recording it
+        // here is what lets `max_retransmits()` and `max_packet_life_time()` report the
+        // channel the peer opened. The wire field is 32 bits but the W3C attributes are
+        // `unsigned short`, so a larger value saturates; the SCTP stream itself is configured
+        // with the full value.
+        let reliability_parameter =
+            u16::try_from(data_channel_config.reliability_parameter).unwrap_or(u16::MAX);
+        let (max_retransmits, max_packet_life_time) = match reliability_type {
+            ReliabilityType::Rexmit => (Some(reliability_parameter), None),
+            ReliabilityType::Timed => (None, Some(reliability_parameter)),
+            _ => (None, None),
+        };
 
         // `negotiated: None` — the peer opened this channel in-band over DCEP, so it is not an
         // out-of-band channel however well-known its stream id now is. The stream id is set
@@ -175,8 +190,8 @@ impl RTCDataChannelInternal {
             label: data_channel_config.label.clone(),
             protocol: data_channel_config.protocol.clone(),
             ordered: !unordered,
-            max_packet_life_time: None,
-            max_retransmits: None,
+            max_packet_life_time,
+            max_retransmits,
             negotiated: None,
         });
         // Known from the wire: no deferral needed, and it must be registered so locally
@@ -195,5 +210,123 @@ impl RTCDataChannelInternal {
         self.handshake_deadline = None;
         self.ready_state = RTCDataChannelState::Closed;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datachannel::message::Message;
+    use datachannel::message::message_channel_open::{
+        CHANNEL_PRIORITY_NORMAL, ChannelType, DataChannelOpen,
+    };
+    use shared::marshal::Marshal;
+
+    const PEER_STREAM: StreamId = 3;
+
+    fn accept_open(
+        channel_type: ChannelType,
+        reliability_parameter: u32,
+    ) -> RTCDataChannelInternal {
+        let open = Message::DataChannelOpen(DataChannelOpen {
+            channel_type,
+            priority: CHANNEL_PRIORITY_NORMAL,
+            reliability_parameter,
+            label: b"peer".to_vec(),
+            protocol: b"proto".to_vec(),
+        })
+        .marshal()
+        .expect("DCEP OPEN");
+        RTCDataChannelInternal::accept(0, PEER_STREAM, PayloadProtocolIdentifier::Dcep, &open)
+            .expect("accept the peer's OPEN")
+    }
+
+    /// `(ordered, max_retransmits, max_packet_life_time)` — what the W3C getters report.
+    fn getters(dc: &RTCDataChannelInternal) -> (bool, Option<u16>, Option<u16>) {
+        (dc.ordered, dc.max_retransmits, dc.max_packet_life_time)
+    }
+
+    /// RFC 8832 §5.1: the Reliability Parameter is the retransmission limit of a Rexmit channel
+    /// and the lifetime in milliseconds of a Timed one.
+    #[test]
+    fn an_accepted_channel_reports_the_peers_channel_type_and_reliability() {
+        let cases = [
+            (ChannelType::Reliable, 0, (true, None, None)),
+            (ChannelType::ReliableUnordered, 0, (false, None, None)),
+            (ChannelType::PartialReliableRexmit, 3, (true, Some(3), None)),
+            (
+                ChannelType::PartialReliableRexmitUnordered,
+                0,
+                (false, Some(0), None),
+            ),
+            (
+                ChannelType::PartialReliableTimed,
+                1500,
+                (true, None, Some(1500)),
+            ),
+            (
+                ChannelType::PartialReliableTimedUnordered,
+                250,
+                (false, None, Some(250)),
+            ),
+        ];
+        for (channel_type, reliability_parameter, expected) in cases {
+            let dc = accept_open(channel_type, reliability_parameter);
+            assert_eq!(
+                getters(&dc),
+                expected,
+                "{channel_type:?} with reliability parameter {reliability_parameter}"
+            );
+            assert!(!dc.negotiated, "{channel_type:?}: opened in-band");
+            assert_eq!(dc.stream_id, Some(PEER_STREAM));
+            assert_eq!(dc.ready_state, RTCDataChannelState::Open);
+            assert_eq!((dc.label.as_str(), dc.protocol.as_str()), ("peer", "proto"));
+        }
+    }
+
+    /// The wire field is 32 bits and the W3C attributes are `unsigned short`: a larger value
+    /// saturates rather than wrapping.
+    #[test]
+    fn a_reliability_parameter_beyond_u16_saturates() {
+        for (reliability_parameter, reported) in [
+            (u16::MAX as u32, u16::MAX),
+            (u16::MAX as u32 + 1, u16::MAX),
+            (70_000, u16::MAX),
+            (u32::MAX, u16::MAX),
+        ] {
+            assert_eq!(
+                getters(&accept_open(
+                    ChannelType::PartialReliableRexmit,
+                    reliability_parameter
+                )),
+                (true, Some(reported), None),
+                "maxRetransmits from {reliability_parameter}"
+            );
+            assert_eq!(
+                getters(&accept_open(
+                    ChannelType::PartialReliableTimedUnordered,
+                    reliability_parameter
+                )),
+                (false, None, Some(reported)),
+                "maxPacketLifeTime from {reliability_parameter}"
+            );
+        }
+    }
+
+    /// The reliable types carry nothing in the Reliability Parameter, whatever the peer put
+    /// there.
+    #[test]
+    fn a_reliable_channel_ignores_its_reliability_parameter() {
+        for channel_type in [ChannelType::Reliable, ChannelType::ReliableUnordered] {
+            for reliability_parameter in [5, 70_000] {
+                let (_, max_retransmits, max_packet_life_time) =
+                    getters(&accept_open(channel_type, reliability_parameter));
+                assert_eq!(
+                    (max_retransmits, max_packet_life_time),
+                    (None, None),
+                    "{channel_type:?} with reliability parameter {reliability_parameter}"
+                );
+            }
+        }
     }
 }
