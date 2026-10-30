@@ -18,7 +18,7 @@ use crate::chunk::{
     chunk_payload_data::ChunkPayloadData,
     chunk_payload_data::{MessageId, MessageReliability, PayloadProtocolIdentifier},
     chunk_reconfig::ChunkReconfig,
-    chunk_selective_ack::ChunkSelectiveAck,
+    chunk_selective_ack::{ChunkSelectiveAck, SELECTIVE_ACK_HEADER_SIZE},
     chunk_shutdown::ChunkShutdown,
     chunk_shutdown_ack::ChunkShutdownAck,
     chunk_shutdown_complete::ChunkShutdownComplete,
@@ -1403,9 +1403,12 @@ impl Association {
                 debug!("[{}] discard {}", self.side, d.stream_sequence_number);
                 return Ok(vec![]);
             }
+        } else {
+            self.payload_queue.record_duplicate(d.tsn);
         }
 
-        let immediate_sack = d.immediate_sack;
+        // RFC 9260 section 6.2: a repeat is listed in a SACK sent at once.
+        let immediate_sack = d.immediate_sack || !can_push;
 
         if stream_handle_data && let Some(s) = self.streams.get_mut(&d.stream_identifier) {
             self.events.push_back(Event::DatagramReceived);
@@ -3119,12 +3122,20 @@ impl Association {
         rsn
     }
 
+    /// Builds the SACK, keeping the gap blocks nearest the cumulative TSN and then the repeats
+    /// that fit, so the packet carrying it stays within the MTU.
     fn create_selective_ack_chunk(&mut self) -> ChunkSelectiveAck {
+        let fixed = COMMON_HEADER_SIZE as usize + CHUNK_HEADER_SIZE + SELECTIVE_ACK_HEADER_SIZE;
+        let room = (self.mtu as usize).saturating_sub(fixed) / 4;
+        let mut gap_ack_blocks = self.payload_queue.get_gap_ack_blocks(self.peer_last_tsn);
+        gap_ack_blocks.truncate(room);
+        let mut duplicate_tsn = self.payload_queue.pop_duplicates();
+        duplicate_tsn.truncate(room - gap_ack_blocks.len());
         ChunkSelectiveAck {
             cumulative_tsn_ack: self.peer_last_tsn,
             advertised_receiver_window_credit: self.get_my_receiver_window_credit(),
-            gap_ack_blocks: self.payload_queue.get_gap_ack_blocks(self.peer_last_tsn),
-            duplicate_tsn: self.payload_queue.pop_duplicates(),
+            gap_ack_blocks,
+            duplicate_tsn,
         }
     }
 

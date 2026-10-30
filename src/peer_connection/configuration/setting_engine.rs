@@ -1398,9 +1398,9 @@ impl SettingEngineBuilder {
     }
 
     /// Overrides the SCTP MTU: the size budget, in bytes, for each outbound DATA packet
-    /// (common header plus bundled DATA chunks) this endpoint emits. Control packets
-    /// (INIT, INIT ACK, SACK, RECONFIG, FORWARD TSN, shutdown) marshal without consulting
-    /// this value.
+    /// (common header plus bundled DATA chunks) this endpoint emits. A SACK keeps within it
+    /// too, carrying the gap blocks and duplicate TSNs that fit. Other control packets
+    /// (INIT, INIT ACK, RECONFIG, FORWARD TSN, shutdown) marshal without consulting this value.
     ///
     /// Each SCTP packet becomes one DTLS record carried in one UDP datagram, so the wire
     /// size is roughly this value + ~37 bytes of DTLS record overhead + IP/UDP headers
