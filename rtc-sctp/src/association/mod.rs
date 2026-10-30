@@ -59,10 +59,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+pub(crate) mod rack;
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
 pub(crate) mod timer;
+
+use rack::{Delivered, Rack, Undo};
 
 #[cfg(test)]
 mod association_test;
@@ -234,6 +237,14 @@ pub struct Association {
     pub(crate) in_fast_recovery: bool,
     fast_recover_exit_point: u32,
 
+    /// Time-based loss detection, present when `TransportConfig::with_rack_tlp` turned it on.
+    rack: Option<Rack>,
+    /// Chunks the SACK being processed acknowledged for the first time.
+    rack_delivered: Vec<Delivered>,
+    /// Chunks the latest SACK acknowledged by gap blocks.
+    rack_sacked: u32,
+    will_send_probe: bool,
+
     // Chunks stored for retransmission
     stored_init: Option<ChunkInit>,
     stored_cookie_echo: Option<ChunkCookieEcho>,
@@ -329,6 +340,11 @@ impl Default for Association {
             in_fast_recovery: false,
             fast_recover_exit_point: 0,
 
+            rack: None,
+            rack_delivered: Vec::new(),
+            rack_sacked: 0,
+            will_send_probe: false,
+
             // Chunks stored for retransmission
             stored_init: None,
             stored_cookie_echo: None,
@@ -401,6 +417,7 @@ impl Association {
 
             rto_mgr: RtoManager::new(),
             timers: TimerTable::new(config.timer_config()),
+            rack: config.rack_tlp().then(Rack::default),
 
             mtu,
             cwnd,
@@ -531,6 +548,12 @@ impl Association {
 
             if timer == Timer::Ack {
                 self.on_ack_timeout();
+            } else if timer == Timer::Reorder {
+                self.timers.reset_retrans(timer);
+                self.rack_detect_loss(now);
+            } else if timer == Timer::Probe {
+                self.timers.reset_retrans(timer);
+                self.will_send_probe = true;
             } else if failure {
                 self.on_retransmission_failure(timer);
             } else {
@@ -1460,6 +1483,7 @@ impl Association {
         // Process selective ack
         let (bytes_acked_per_stream, total_bytes_acked, htna) =
             self.process_selective_ack(d, now)?;
+        self.rack_on_sack(d, now);
 
         let mut cum_tsn_ack_point_advanced = false;
         if sna32lt(self.cumulative_tsn_ack_point, d.cumulative_tsn_ack) {
@@ -1491,6 +1515,8 @@ impl Association {
         }
 
         self.process_fast_retransmission(d.cumulative_tsn_ack, htna, cum_tsn_ack_point_advanced)?;
+        self.rack_detect_loss(now);
+        self.tlp_on_sack(d.cumulative_tsn_ack);
 
         if self.use_forward_tsn {
             // RFC 3758 Sec 3.5 C1
@@ -1509,6 +1535,7 @@ impl Association {
         }
 
         self.postprocess_sack(state, cum_tsn_ack_point_advanced, now);
+        self.schedule_probe(now);
 
         Ok(vec![])
     }
@@ -1764,6 +1791,16 @@ impl Association {
             if let Some(mut c) = self.inflight_queue.pop(i) {
                 if c.acknowledge() {
                     newly_acked_data |= c.nsent > 0;
+                    if self.rack.is_some()
+                        && !c.abandoned()
+                        && let Some(xmit_ts) = c.since
+                    {
+                        self.rack_delivered.push(Delivered {
+                            tsn: c.tsn,
+                            xmit_ts,
+                            nsent: c.nsent,
+                        });
+                    }
 
                     let n_bytes_acked = c.user_data.len() as i64;
                     total_bytes_acked += n_bytes_acked;
@@ -1805,6 +1842,7 @@ impl Association {
                 if self.in_fast_recovery && c.tsn == self.fast_recover_exit_point {
                     debug!("[{}] exit fast-recovery", self.side);
                     self.in_fast_recovery = false;
+                    self.on_fast_recovery_exit();
                 }
             } else {
                 return Err(Error::ErrInflightQueueTsnPop);
@@ -1830,6 +1868,16 @@ impl Association {
                 if let Some(c) = self.inflight_queue.get(tsn) {
                     if newly_acknowledged {
                         newly_acked_data |= c.nsent > 0;
+                        if self.rack.is_some()
+                            && !c.abandoned()
+                            && let Some(xmit_ts) = c.since
+                        {
+                            self.rack_delivered.push(Delivered {
+                                tsn,
+                                xmit_ts,
+                                nsent: c.nsent,
+                            });
+                        }
                         total_bytes_acked += n_bytes_acked;
                         if self.is_current_stream_data(c) {
                             *bytes_acked_per_stream
@@ -1972,7 +2020,11 @@ impl Association {
         // b)  In fast-recovery AND the Cumulative TSN Ack Point advanced
         //     the miss indications are incremented for all TSNs reported missing
         //     in the SACK.
-        if !self.in_fast_recovery || cum_tsn_ack_point_advanced {
+
+        // RFC 8985 section 6.2: with time-based detection on, the three-report rule starts
+        // recovery only while no reordering has been seen.
+        let three_reports = !self.rack.as_ref().is_some_and(|rack| rack.reordering_seen);
+        if three_reports && (!self.in_fast_recovery || cum_tsn_ack_point_advanced) {
             let max_tsn = if !self.in_fast_recovery {
                 // a) increment only for missing TSNs prior to the HTNA
                 htna
@@ -1983,31 +2035,21 @@ impl Association {
 
             let mut tsn = cum_tsn_ack_point.wrapping_add(1);
             while sna32lt(tsn, max_tsn) {
+                let mut reported_lost = false;
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
                     if c.is_outstanding() && c.miss_indicator < 3 {
                         c.miss_indicator += 1;
-                        if c.miss_indicator == 3 && !self.in_fast_recovery {
-                            // 2)  If not in Fast Recovery, adjust the ssthresh and cwnd of the
-                            //     destination address(es) to which the missing DATA chunks were
-                            //     last sent, according to the formula described in Section 7.2.3.
-                            self.in_fast_recovery = true;
-                            self.fast_recover_exit_point = htna;
-                            self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                            self.cwnd = self.ssthresh;
-                            self.partial_bytes_acked = 0;
-                            self.will_retransmit_fast = true;
-
-                            trace!(
-                                "[{}] updated cwnd={} ssthresh={} inflight={} (FR)",
-                                self.side,
-                                self.cwnd,
-                                self.ssthresh,
-                                self.inflight_queue.get_num_bytes()
-                            );
-                        }
+                        reported_lost = c.miss_indicator == 3;
                     }
                 } else {
                     return Err(Error::ErrTsnRequestNotExist);
+                }
+                if reported_lost && !self.in_fast_recovery {
+                    // 2)  If not in Fast Recovery, adjust the ssthresh and cwnd of the
+                    //     destination address(es) to which the missing DATA chunks were
+                    //     last sent, according to the formula described in Section 7.2.3.
+                    self.enter_fast_recovery(htna);
+                    self.will_retransmit_fast = true;
                 }
 
                 tsn = tsn.wrapping_add(1);
@@ -2019,6 +2061,169 @@ impl Association {
         }
 
         Ok(())
+    }
+
+    /// RFC 9260 section 7.2.3: halves the window on a loss a SACK revealed. With time-based
+    /// detection on, the window before the cut is kept for an undo, joined with any pending one.
+    fn enter_fast_recovery(&mut self, exit_point: u32) {
+        self.in_fast_recovery = true;
+        self.fast_recover_exit_point = exit_point;
+        if let Some(rack) = self.rack.as_mut() {
+            rack.on_cut(self.cwnd, self.ssthresh);
+            self.timers.stop(Timer::Probe);
+        }
+        self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
+        self.cwnd = self.ssthresh;
+        self.partial_bytes_acked = 0;
+        self.stats.inc_cwnd_cuts();
+
+        trace!(
+            "[{}] updated cwnd={} ssthresh={} inflight={} (FR)",
+            self.side,
+            self.cwnd,
+            self.ssthresh,
+            self.inflight_queue.get_num_bytes()
+        );
+    }
+
+    fn on_fast_recovery_exit(&mut self) {
+        let Some(rack) = self.rack.as_mut() else {
+            return;
+        };
+        rack.on_recovery_exit();
+        if let Some(undo) = rack.take_proven_undo() {
+            self.undo_cut(undo);
+        }
+    }
+
+    /// Restores the window and threshold from before the cuts an undo record holds.
+    fn undo_cut(&mut self, undo: Undo) {
+        self.cwnd = self.cwnd.max(undo.cwnd);
+        self.ssthresh = self.ssthresh.max(undo.ssthresh);
+        for _ in 0..undo.cuts {
+            self.stats.inc_cwnd_cuts_undone();
+        }
+        trace!(
+            "[{}] undid {} cut(s): cwnd={} ssthresh={}",
+            self.side, undo.cuts, self.cwnd, self.ssthresh
+        );
+    }
+
+    /// Applies a SACK's deliveries and duplicate TSNs to time-based detection; a duplicate of
+    /// every resend since a cut proves the cut needless.
+    fn rack_on_sack(&mut self, d: &ChunkSelectiveAck, now: Instant) {
+        let Some(rack) = self.rack.as_mut() else {
+            return;
+        };
+        rack.on_delivered(&mut self.rack_delivered, now);
+        self.rack_delivered.clear();
+        self.rack_sacked = d
+            .gap_ack_blocks
+            .iter()
+            .map(|g| u32::from(g.end.wrapping_sub(g.start)) + 1)
+            .sum();
+        rack.on_ack(
+            d.cumulative_tsn_ack,
+            !d.duplicate_tsn.is_empty(),
+            self.my_next_tsn,
+        );
+        let needless_resend = rack.on_duplicates(&d.duplicate_tsn);
+        rack.on_cumulative_ack(d.cumulative_tsn_ack, now);
+        if needless_resend && let Some(undo) = rack.take_proven_undo() {
+            self.undo_cut(undo);
+        }
+    }
+
+    /// RFC 8985 section 6.2 step 5: marks for resend each chunk sent more than the reordering
+    /// window before the latest delivered one, and arms the timer for the next deadline.
+    fn rack_detect_loss(&mut self, now: Instant) {
+        let Some(rack) = self.rack.as_ref() else {
+            return;
+        };
+        let reo_wnd = rack.reo_wnd(self.in_fast_recovery, self.rack_sacked);
+        let queue = &self.inflight_queue;
+        let end = self.my_next_tsn;
+        let mut tsn = self.cumulative_tsn_ack_point.wrapping_add(1);
+        let outstanding = std::iter::from_fn(move || {
+            while sna32lt(tsn, end) {
+                let current = tsn;
+                tsn = tsn.wrapping_add(1);
+                if let Some(c) = queue.get(current)
+                    && c.is_outstanding()
+                    && !c.retransmit
+                    && let Some(xmit_ts) = c.since
+                {
+                    return Some((current, xmit_ts, c.nsent));
+                }
+            }
+            None
+        });
+        let detection = rack.detect_loss(outstanding, reo_wnd, now);
+
+        self.timers.set(
+            Timer::Reorder,
+            detection.timeout.map(|timeout| now + timeout),
+        );
+        if detection.lost.is_empty() {
+            return;
+        }
+        for tsn in &detection.lost {
+            if let Some(c) = self.inflight_queue.get_mut(*tsn) {
+                c.retransmit = true;
+            }
+        }
+        self.t3_retransmit_pending = true;
+        trace!(
+            "[{}] RACK: {} chunk(s) lost, reo_wnd={:?}",
+            self.side,
+            detection.lost.len(),
+            reo_wnd
+        );
+        if !self.in_fast_recovery {
+            self.enter_fast_recovery(self.my_next_tsn.wrapping_sub(1));
+        }
+    }
+
+    /// RFC 8985 section 7.4.2: a resent probe acknowledged past the TSNs it covered, with no
+    /// duplicate report, repaired a loss, and the window is cut for it.
+    fn tlp_on_sack(&mut self, cumulative_tsn: u32) {
+        let Some(rack) = self.rack.as_mut() else {
+            return;
+        };
+        let Some(end) = rack.tlp_end_tsn else {
+            return;
+        };
+        if !sna32gte(cumulative_tsn, end) {
+            return;
+        }
+        if rack.tlp_resent_tsn.is_none() {
+            rack.tlp_end_tsn = None;
+        } else if sna32gt(cumulative_tsn, end) {
+            rack.tlp_end_tsn = None;
+            rack.tlp_resent_tsn = None;
+            if !self.in_fast_recovery {
+                self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
+                self.cwnd = self.ssthresh;
+                self.partial_bytes_acked = 0;
+                self.stats.inc_cwnd_cuts();
+            }
+        }
+    }
+
+    /// RFC 8985 section 7.2: arms the loss probe while data is in flight outside recovery, when
+    /// it falls due before the T3-rtx timer.
+    fn schedule_probe(&mut self, now: Instant) {
+        let Some(rack) = self.rack.as_ref() else {
+            return;
+        };
+        let at = now + rack.pto(self.inflight_queue.len() == 1);
+        let armable = !self.inflight_queue.is_empty()
+            && !self.in_fast_recovery
+            && !self.t3_retransmit_pending
+            && rack.tlp_end_tsn.is_none()
+            && self.timers.get(Timer::Reorder).is_none()
+            && self.timers.get(Timer::T3RTX).is_none_or(|t3| at < t3);
+        self.timers.set(Timer::Probe, armable.then_some(at));
     }
 
     /// The caller must hold the lock. This method was only added because the
@@ -2286,6 +2491,10 @@ impl Association {
                 if self.state() == AssociationState::Closed {
                     return (vec![], false);
                 }
+                raw_packets = self.gather_outbound_probe_packets(raw_packets, now);
+                if self.state() == AssociationState::Closed {
+                    return (vec![], false);
+                }
                 raw_packets = self.gather_outbound_sack_packets(raw_packets);
                 raw_packets = self.gather_outbound_forward_tsn_packets(raw_packets);
                 (raw_packets, true)
@@ -2346,6 +2555,7 @@ impl Association {
                 .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
 
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
+            self.schedule_probe(now);
         }
 
         if !sis_to_reset.is_empty() || self.will_retransmit_reconfig {
@@ -2492,8 +2702,12 @@ impl Association {
             }
 
             for chunk in &mut to_fast_retrans {
+                if let Some(rack) = self.rack.as_mut() {
+                    rack.on_resent(chunk.tsn, now);
+                }
                 if let Some(c) = self.inflight_queue.get_mut(chunk.tsn) {
                     c.nsent += 1;
+                    c.since = Some(now);
                     chunk.nsent = c.nsent;
                     self.stats.inc_fast_retrans();
                     trace!(
@@ -2506,6 +2720,91 @@ impl Association {
         }
 
         raw_packets
+    }
+
+    /// RFC 8985 section 7.3: the due loss probe sends the next new chunk the peer's window
+    /// admits, or else resends the highest outstanding one, and re-arms the T3-rtx timer.
+    fn gather_outbound_probe_packets(
+        &mut self,
+        mut raw_packets: Vec<Bytes>,
+        now: Instant,
+    ) -> Vec<Bytes> {
+        if !std::mem::take(&mut self.will_send_probe) {
+            return raw_packets;
+        }
+        let Some(rack) = self.rack.as_ref() else {
+            return raw_packets;
+        };
+        if self.inflight_queue.is_empty()
+            || self.in_fast_recovery
+            || rack.tlp_end_tsn.is_some()
+            || !rack.sampled_since_probe
+        {
+            return raw_packets;
+        }
+
+        let new_chunk = self.pending_queue.peek().and_then(|c| {
+            (c.user_data.len() <= self.rwnd as usize && !self.pending_message_expired(c, now))
+                .then_some((c.beginning_fragment, c.unordered, c.user_data.len()))
+        });
+        let probe = match new_chunk {
+            Some((beginning_fragment, unordered, len)) => self
+                .move_pending_data_chunk_to_inflight_queue(beginning_fragment, unordered, now)
+                .map(|c| {
+                    self.rwnd -= len as u32;
+                    (c, false)
+                }),
+            None => self.resend_highest_outstanding(now),
+        };
+        let Some((chunk, resent)) = probe else {
+            return raw_packets;
+        };
+
+        let end_tsn = self.my_next_tsn.wrapping_sub(1);
+        if let Some(rack) = self.rack.as_mut() {
+            rack.tlp_end_tsn = Some(end_tsn);
+            rack.tlp_resent_tsn = resent.then_some(chunk.tsn);
+            rack.sampled_since_probe = false;
+        }
+        self.stats.inc_loss_probes();
+        self.timers.start(Timer::T3RTX, now, self.rto_mgr.get_rto());
+        trace!(
+            "[{}] loss probe: tsn={} resent={}",
+            self.side, chunk.tsn, resent
+        );
+        self.bundle_data_chunks_into_packets(vec![chunk], &mut raw_packets);
+        raw_packets
+    }
+
+    /// Takes the highest outstanding chunk for a loss probe, unless its policy retires it.
+    fn resend_highest_outstanding(&mut self, now: Instant) -> Option<(ChunkPayloadData, bool)> {
+        let mut tsn = self.my_next_tsn.wrapping_sub(1);
+        while sna32gt(tsn, self.cumulative_tsn_ack_point) {
+            if self
+                .inflight_queue
+                .get(tsn)
+                .is_some_and(ChunkPayloadData::is_outstanding)
+            {
+                match self.abandon_retransmit_candidate(tsn, now) {
+                    Ok(false) => {}
+                    Ok(true) => return None,
+                    Err(err) => {
+                        self.fail_message_queue(err);
+                        return None;
+                    }
+                }
+                if let Some(rack) = self.rack.as_mut() {
+                    rack.on_resent(tsn, now);
+                }
+                let c = self.inflight_queue.get_mut(tsn)?;
+                c.nsent += 1;
+                c.since = Some(now);
+                c.retransmit = false;
+                return Some((c.clone(), true));
+            }
+            tsn = tsn.wrapping_sub(1);
+        }
+        None
     }
 
     fn gather_outbound_sack_packets(&mut self, mut raw_packets: Vec<Bytes>) -> Vec<Bytes> {
@@ -2669,9 +2968,13 @@ impl Association {
         // A later candidate can abandon an earlier fragment already selected
         // into this batch. Commit attempts only after whole-message retirement.
         for chunk in &mut chunks {
+            if let Some(rack) = self.rack.as_mut() {
+                rack.on_resent(chunk.tsn, now);
+            }
             if let Some(c) = self.inflight_queue.get_mut(chunk.tsn) {
                 c.retransmit = false;
                 c.nsent += 1;
+                c.since = Some(now);
                 chunk.nsent = c.nsent;
                 trace!(
                     "[{}] retransmitting tsn={} ssn={} sent={}",
@@ -3377,6 +3680,11 @@ impl Association {
 
                 self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
                 self.cwnd = self.mtu;
+                if let Some(rack) = self.rack.as_mut() {
+                    rack.forget_cuts();
+                    self.timers.stop(Timer::Reorder);
+                    self.timers.stop(Timer::Probe);
+                }
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} inflight={} (RTO)",
                     self.side,

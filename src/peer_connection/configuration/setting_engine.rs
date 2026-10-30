@@ -374,6 +374,8 @@ pub struct SettingEngine {
     /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
     /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
+    /// Time-based SCTP loss detection with the undo of a needless cut (RFC 8985), off by default.
+    pub(crate) sctp_rack_tlp: bool,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1418,6 +1420,13 @@ impl SettingEngineBuilder {
     /// default, leave this unset.
     pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
         self.0.sctp_mtu = Some(mtu);
+        self
+    }
+
+    /// Has SCTP detect loss by time as well as by gap reports (RFC 8985 RACK-TLP), and restore
+    /// a congestion window cut once the peer's duplicate reports prove the resends needless.
+    pub fn with_sctp_rack_tlp(mut self, enabled: bool) -> Self {
+        self.0.sctp_rack_tlp = enabled;
         self
     }
 
