@@ -1678,3 +1678,6 @@ fn test_reconfig_backoff_must_double_once() -> Result<()> {
 
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
+
+#[path = "duplicate_report_test.rs"]
+mod duplicate_report_test;
