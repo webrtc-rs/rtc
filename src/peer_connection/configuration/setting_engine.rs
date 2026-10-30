@@ -374,6 +374,8 @@ pub struct SettingEngine {
     /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
     /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
+    /// SCTP streams share the bytes sent by weight (RFC 8260 section 3.6), off by default.
+    pub(crate) sctp_weighted_fair_queueing: bool,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1418,6 +1420,13 @@ impl SettingEngineBuilder {
     /// default, leave this unset.
     pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
         self.0.sctp_mtu = Some(mtu);
+        self
+    }
+
+    /// Has SCTP send from its data channels by weighted fair queueing (RFC 8260 section 3.6,
+    /// RFC 8831 section 6.4), each channel's share of the bytes in proportion to its weight.
+    pub fn with_sctp_weighted_fair_queueing(mut self, enabled: bool) -> Self {
+        self.0.sctp_weighted_fair_queueing = enabled;
         self
     }
 

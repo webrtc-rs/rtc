@@ -329,6 +329,22 @@ impl Stream<'_> {
         self.stream_identifier
     }
 
+    /// Sets this stream's weight under weighted fair queueing, in data channel priority units
+    /// (RFC 8832: 128, 256, 512, 1024); messages written afterwards use it.
+    pub fn set_priority(&mut self, priority: u16) -> Result<()> {
+        if !self
+            .association
+            .streams
+            .contains_key(&self.stream_identifier)
+        {
+            return Err(Error::ErrStreamClosed);
+        }
+        self.association
+            .pending_queue
+            .set_weight(self.stream_identifier, priority);
+        Ok(())
+    }
+
     /// set_default_payload_type sets the default payload type used by write.
     pub fn set_default_payload_type(
         &mut self,

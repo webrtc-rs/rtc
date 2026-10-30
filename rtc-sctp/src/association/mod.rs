@@ -198,7 +198,7 @@ pub struct Association {
 
     pub(crate) payload_queue: PayloadQueue,
     inflight_queue: PayloadQueue,
-    pending_queue: PendingQueue,
+    pub(crate) pending_queue: PendingQueue,
     control_queue: VecDeque<Packet>,
     stream_queue: VecDeque<u16>,
 
@@ -401,6 +401,7 @@ impl Association {
 
             rto_mgr: RtoManager::new(),
             timers: TimerTable::new(config.timer_config()),
+            pending_queue: PendingQueue::with_scheduler(config.stream_scheduler()),
 
             mtu,
             cwnd,
