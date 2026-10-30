@@ -6,6 +6,9 @@ pub struct AssociationStats {
     n_t3timeouts: u64,
     n_ack_timeouts: u64,
     n_fast_retrans: u64,
+    n_cwnd_cuts: u64,
+    n_cwnd_cuts_undone: u64,
+    n_loss_probes: u64,
 }
 
 impl AssociationStats {
@@ -59,6 +62,36 @@ impl AssociationStats {
         self.n_fast_retrans
     }
 
+    /// Counts one congestion window cut made on a SACK or a loss probe.
+    pub fn inc_cwnd_cuts(&mut self) {
+        self.n_cwnd_cuts += 1;
+    }
+
+    /// The number of congestion window cuts made on a SACK or a loss probe; T3-rtx counts apart.
+    pub fn get_num_cwnd_cuts(&mut self) -> u64 {
+        self.n_cwnd_cuts
+    }
+
+    /// Counts one cut restored because duplicate reports proved its retransmissions needless.
+    pub fn inc_cwnd_cuts_undone(&mut self) {
+        self.n_cwnd_cuts_undone += 1;
+    }
+
+    /// The number of congestion window cuts restored after needless retransmissions.
+    pub fn get_num_cwnd_cuts_undone(&mut self) -> u64 {
+        self.n_cwnd_cuts_undone
+    }
+
+    /// Counts one tail loss probe sent.
+    pub fn inc_loss_probes(&mut self) {
+        self.n_loss_probes += 1;
+    }
+
+    /// The number of tail loss probes sent.
+    pub fn get_num_loss_probes(&mut self) -> u64 {
+        self.n_loss_probes
+    }
+
     /// Zeroes every counter.
     pub fn reset(&mut self) {
         self.n_datas = 0;
@@ -66,5 +99,8 @@ impl AssociationStats {
         self.n_t3timeouts = 0;
         self.n_ack_timeouts = 0;
         self.n_fast_retrans = 0;
+        self.n_cwnd_cuts = 0;
+        self.n_cwnd_cuts_undone = 0;
+        self.n_loss_probes = 0;
     }
 }

@@ -74,6 +74,7 @@ pub struct TransportConfig {
     max_num_inbound_streams: u16,
     timer_config: TimerConfig,
     stream_scheduler: StreamScheduler,
+    rack_tlp: bool,
 }
 
 impl Default for TransportConfig {
@@ -86,6 +87,7 @@ impl Default for TransportConfig {
             max_num_inbound_streams: u16::MAX,
             timer_config: TimerConfig::default(),
             stream_scheduler: StreamScheduler::default(),
+            rack_tlp: false,
         }
     }
 }
@@ -134,6 +136,13 @@ impl TransportConfig {
         self
     }
 
+    /// Detects loss by time as well as by gap reports (RFC 8985 RACK-TLP), and restores a
+    /// congestion window cut that duplicate reports later prove needless. Off by default.
+    pub fn with_rack_tlp(mut self, enabled: bool) -> Self {
+        self.rack_tlp = enabled;
+        self
+    }
+
     /// The configured SCTP port.
     pub fn sctp_port(&self) -> u16 {
         self.sctp_port
@@ -167,6 +176,11 @@ impl TransportConfig {
     /// The configured stream scheduler.
     pub fn stream_scheduler(&self) -> StreamScheduler {
         self.stream_scheduler
+    }
+
+    /// Whether time-based loss detection with undo is on.
+    pub fn rack_tlp(&self) -> bool {
+        self.rack_tlp
     }
 }
 

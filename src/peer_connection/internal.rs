@@ -146,7 +146,8 @@ impl RTCPeerConnection {
             sctp_transport_id,
             dtls_transport_id,
         )
-        .with_weighted_fair_queueing(setting_engine.sctp_weighted_fair_queueing);
+        .with_weighted_fair_queueing(setting_engine.sctp_weighted_fair_queueing)
+        .with_rack_tlp(setting_engine.sctp_rack_tlp);
 
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);
