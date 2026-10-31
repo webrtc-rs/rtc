@@ -26,6 +26,8 @@ pub(crate) struct Delivered {
     pub(crate) tsn: u32,
     pub(crate) xmit_ts: Instant,
     pub(crate) nsent: u32,
+    /// Set when the cumulative TSN reached it, so every chunk sent before it had arrived.
+    pub(crate) cumulative: bool,
 }
 
 /// The window and threshold before the first of `cuts` cuts, and each TSN resent since it with
@@ -115,7 +117,8 @@ pub(crate) struct Detection {
 }
 
 impl Rack {
-    /// Steps 1 to 3 of RFC 8985 section 6.2, over the chunks one SACK delivered.
+    /// Steps 1 to 3 of RFC 8985 section 6.2, over the chunks one SACK delivered. The smoothed
+    /// and least round trips sample only chunks that arrived in order, as TCP's timestamps do.
     pub(crate) fn on_delivered(&mut self, delivered: &mut [Delivered], now: Instant) {
         delivered.sort_by(|a, b| {
             a.xmit_ts
@@ -126,7 +129,9 @@ impl Rack {
         for d in delivered.iter() {
             let rtt = now.saturating_duration_since(d.xmit_ts);
             if d.nsent == 1 {
-                sample = Some(rtt);
+                if d.cumulative {
+                    sample = Some(rtt);
+                }
             } else if self.min_rtt.is_some_and(|(min, _)| rtt < min) {
                 continue;
             }
@@ -195,16 +200,16 @@ impl Rack {
         }
     }
 
-    /// The reordering window; zero while no reordering has been seen and the gaps call a loss.
+    /// The reordering window: a quarter of the least round trip, plus a quarter of the smoothed
+    /// one per later step, up to the smoothed one; zero while the gaps alone call a loss.
     pub(crate) fn reo_wnd(&self, in_recovery: bool, sacked: u32) -> Duration {
         if !self.reordering_seen && (in_recovery || sacked >= DUP_THRESH) {
             return Duration::ZERO;
         }
-        let Some((min_rtt, _)) = self.min_rtt else {
+        let (Some((min_rtt, _)), Some(srtt)) = (self.min_rtt, self.srtt) else {
             return Duration::ZERO;
         };
-        let wnd = min_rtt * self.reo_wnd_mult / 4;
-        self.srtt.map_or(wnd, |srtt| wnd.min(srtt))
+        (min_rtt / 4 + srtt * (self.reo_wnd_mult - 1) / 4).min(srtt)
     }
 
     /// Step 5 over `(tsn, xmit_ts, nsent)` of each outstanding chunk not yet marked lost, in
@@ -313,13 +318,12 @@ impl Rack {
         needless_resend
     }
 
-    /// A resend acknowledged cumulatively with no duplicate report for two smoothed round trips
-    /// repaired a loss, and the cuts pending with it stand.
-    pub(crate) fn on_cumulative_ack(&mut self, cumulative_tsn: u32, now: Instant) {
-        let horizon = self.srtt.map_or(INITIAL_PTO, |srtt| srtt * 2);
+    /// A resend acknowledged cumulatively with no duplicate report for one retransmission
+    /// timeout `rto` repaired a loss, and the cuts pending with it stand.
+    pub(crate) fn on_cumulative_ack(&mut self, cumulative_tsn: u32, now: Instant, rto: Duration) {
         if self.undo.as_ref().is_some_and(|undo| {
             undo.resent.iter().any(|(tsn, at)| {
-                sna32lte(*tsn, cumulative_tsn) && now.saturating_duration_since(*at) > horizon
+                sna32lte(*tsn, cumulative_tsn) && now.saturating_duration_since(*at) > rto
             })
         }) {
             self.undo = None;
@@ -349,6 +353,7 @@ mod tests {
             tsn,
             xmit_ts,
             nsent,
+            cumulative: true,
         }
     }
 
@@ -443,6 +448,27 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_acknowledged_out_of_order_times_loss_but_gives_no_round_trip_sample() {
+        let t0 = Instant::now();
+        let mut rack = Rack::default();
+        rack.on_delivered(&mut [delivered(1, t0, 1)], t0 + ms(40));
+        let ahead = Delivered {
+            cumulative: false,
+            ..delivered(3, t0 + ms(40), 1)
+        };
+        rack.on_delivered(&mut [ahead], t0 + ms(41));
+
+        assert_eq!(Some(ms(40)), rack.srtt);
+        assert_eq!(Some(ms(40)), rack.min_rtt.map(|(min, _)| min));
+        assert_eq!(
+            ms(1),
+            rack.rtt,
+            "the latest delivery still times the deadlines"
+        );
+        assert_eq!(Some(t0 + ms(40)), rack.xmit_ts);
+    }
+
+    #[test]
     fn the_probe_waits_out_a_delayed_sack_when_one_chunk_is_in_flight() {
         let t0 = Instant::now();
         let mut rack = Rack::default();
@@ -506,16 +532,48 @@ mod tests {
     }
 
     #[test]
-    fn a_resend_acknowledged_with_no_repeat_for_two_round_trips_was_needed() {
+    fn past_the_first_step_the_window_grows_by_a_quarter_of_the_smoothed_round_trip() {
+        let t0 = Instant::now();
+        let mut rack = Rack::default();
+        rack.on_delivered(&mut [delivered(1, t0, 1)], t0 + ms(40));
+        rack.on_delivered(
+            &mut [delivered(2, t0 + ms(40), 1)],
+            t0 + ms(40) + Duration::from_micros(200),
+        );
+        rack.reordering_seen = true;
+        // The least round trip reads 200 µs and the smoothed one 35.025 ms.
+        rack.on_ack(1, true, 100);
+
+        assert_eq!(Duration::from_nanos(8_806_250), rack.reo_wnd(false, 0));
+    }
+
+    #[test]
+    fn a_repeat_within_one_retransmission_timeout_proves_the_resend_needless() {
         let t0 = Instant::now();
         let mut rack = Rack::default();
         rack.on_delivered(&mut [delivered(1, t0, 1)], t0 + ms(40));
         rack.on_cut(100_000, 200_000);
         rack.on_resent(5, t0 + ms(40));
 
-        rack.on_cumulative_ack(5, t0 + ms(110));
+        rack.on_cumulative_ack(5, t0 + ms(110), ms(1000));
         rack.on_duplicates(&[]);
-        rack.on_cumulative_ack(5, t0 + ms(130));
+        rack.on_cumulative_ack(5, t0 + ms(130), ms(1000));
+        rack.on_duplicates(&[5]);
+        assert!(
+            rack.take_proven_undo().is_some(),
+            "a repeat queued behind a burst of resends still counts"
+        );
+    }
+
+    #[test]
+    fn a_resend_acknowledged_with_no_repeat_for_one_retransmission_timeout_was_needed() {
+        let t0 = Instant::now();
+        let mut rack = Rack::default();
+        rack.on_delivered(&mut [delivered(1, t0, 1)], t0 + ms(40));
+        rack.on_cut(100_000, 200_000);
+        rack.on_resent(5, t0 + ms(40));
+
+        rack.on_cumulative_ack(5, t0 + ms(1050), ms(1000));
         rack.on_duplicates(&[5]);
         assert!(
             rack.take_proven_undo().is_none(),
