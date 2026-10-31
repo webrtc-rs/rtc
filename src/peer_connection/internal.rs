@@ -144,7 +144,8 @@ impl RTCPeerConnection {
             setting_engine.sctp_mtu,
             sctp_transport_id,
             dtls_transport_id,
-        );
+        )
+        .with_rack_tlp(setting_engine.sctp_rack_tlp);
 
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);

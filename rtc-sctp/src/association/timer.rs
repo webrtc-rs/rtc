@@ -4,7 +4,7 @@ pub(crate) const ACK_INTERVAL: u64 = 200;
 const MAX_INIT_RETRANS: usize = 8;
 const PATH_MAX_RETRANS: usize = 5;
 const NO_MAX_RETRANS: usize = usize::MAX;
-const TIMER_COUNT: usize = 6;
+const TIMER_COUNT: usize = 8;
 
 #[derive(Debug, Copy, Clone)]
 /// Retransmission limits for the association's timers.
@@ -49,6 +49,8 @@ pub(crate) enum Timer {
     T3RTX = 3,
     Reconfig = 4,
     Ack = 5,
+    Reorder = 6,
+    Probe = 7,
 }
 
 impl Timer {
@@ -59,6 +61,8 @@ impl Timer {
         Timer::T3RTX,
         Timer::Reconfig,
         Timer::Ack,
+        Timer::Reorder,
+        Timer::Probe,
     ];
 }
 
@@ -82,6 +86,8 @@ impl TimerTable {
                 time_config.max_t3_rtx_retrans,      //T3RTX
                 time_config.max_reconfig_retrans,    //Reconfig
                 time_config.max_ack_retrans,         //Ack
+                NO_MAX_RETRANS,                      //Reorder
+                NO_MAX_RETRANS,                      //Probe
             ],
             ..Default::default()
         }
