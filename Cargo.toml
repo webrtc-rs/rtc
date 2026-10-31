@@ -152,6 +152,7 @@ stun.workspace = true
 turn.workspace = true
 
 bytes.workspace = true
+rustc-hash.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true

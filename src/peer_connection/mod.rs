@@ -1338,6 +1338,15 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
+        self.pipeline_context
+            .interceptor_handler_context
+            .ssrc_owners
+            .clear();
+        self.pipeline_context
+            .endpoint_handler_context
+            .ssrc_owners
+            .clear();
+
         let is_renegotiation = self.current_remote_description.is_some();
 
         // Parse SDP (skip for rollback as content is ignored per spec)

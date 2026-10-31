@@ -3,7 +3,7 @@ use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
-use crate::peer_connection::handler::endpoint::resolve_rtx_primary;
+use crate::peer_connection::handler::endpoint::{SsrcOwners, resolve_rtx_primary};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
@@ -31,10 +31,20 @@ use std::time::Instant;
 #[derive(Default)]
 pub(crate) struct InterceptorHandlerContext {
     is_dtls_handshake_complete: bool,
+    pub(crate) ssrc_owners: SsrcOwners,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
+}
+
+fn receiver_declares_ssrc(transceiver: &RTCRtpTransceiverInternal, ssrc: SSRC) -> bool {
+    transceiver.receiver().as_ref().is_some_and(|receiver| {
+        receiver
+            .get_coding_parameters()
+            .iter()
+            .any(|coding| coding.ssrc == Some(ssrc))
+    })
 }
 
 /// InterceptorHandler implements RTCP feedback handling
@@ -227,13 +237,28 @@ impl<'a> InterceptorHandler<'a> {
         // rather than de-encapsulating first keeps the packet untouched for the chain — the
         // endpoint handler still de-encapsulates on its way to the application — while letting a
         // stream whose first arrival happens to be a retransmission establish anyway.
-        let (ssrc, payload_type) = self
-            .rtx_primary_for(rtp_header.ssrc, rtp_header.payload_type)
-            .unwrap_or((rtp_header.ssrc, rtp_header.payload_type));
+        let known = self.ctx.ssrc_owners.cached(
+            rtp_header.ssrc,
+            self.rtp_transceivers,
+            receiver_declares_ssrc,
+        );
+        let (ssrc, payload_type) = if known.is_some() {
+            (rtp_header.ssrc, rtp_header.payload_type)
+        } else {
+            self.rtx_primary_for(rtp_header.ssrc, rtp_header.payload_type)
+                .unwrap_or((rtp_header.ssrc, rtp_header.payload_type))
+        };
+        let owner = known.or_else(|| {
+            self.ctx
+                .ssrc_owners
+                .find(ssrc, self.rtp_transceivers, receiver_declares_ssrc)
+        });
 
         // Same order the endpoint's `find_track_id` used: a declared SSRC settles it, otherwise
         // the single-media-section shortcut, otherwise mid/rid.
-        if self.bind_declared_ssrc(now, ssrc, payload_type) {
+        if let Some(id) = owner
+            && self.bind_declared_ssrc(now, id, ssrc, payload_type)
+        {
             return;
         }
         if self.bind_undeclared_ssrc(now, ssrc, payload_type) {
@@ -268,29 +293,14 @@ impl<'a> InterceptorHandler<'a> {
     /// The return value is "this SSRC is accounted for", not "work was done": an already-bound
     /// stream must still stop the caller from trying the rid and undeclared paths, exactly as the
     /// endpoint's `find_track_id_by_ssrc` returning `Some` used to.
-    fn bind_declared_ssrc(&mut self, now: Instant, ssrc: SSRC, payload_type: PayloadType) -> bool {
-        let Some((id, transceiver)) =
-            self.rtp_transceivers
-                .iter_mut()
-                .enumerate()
-                .find(|(_, transceiver)| {
-                    if let Some(receiver) = transceiver.receiver() {
-                        receiver.get_coding_parameters().iter().any(|coding| {
-                            coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc)
-                        })
-                    } else {
-                        false
-                    }
-                })
-        else {
-            return false;
-        };
-
-        // Get kind and mid before borrowing receiver mutably
-        let kind = transceiver.kind();
-        let mid = transceiver.mid().clone().unwrap_or_default();
-
-        let Some(receiver) = transceiver.receiver_mut() else {
+    fn bind_declared_ssrc(
+        &mut self,
+        now: Instant,
+        id: usize,
+        ssrc: SSRC,
+        payload_type: PayloadType,
+    ) -> bool {
+        let Some(receiver) = self.rtp_transceivers[id].receiver().as_ref() else {
             return false;
         };
         if !receiver
@@ -322,6 +332,14 @@ impl<'a> InterceptorHandler<'a> {
         let Some((codec, payload_type)) = track_codec else {
             // Already established — the common case, once per packet after the first.
             return true;
+        };
+
+        // Get kind and mid before borrowing receiver mutably
+        let transceiver = &mut self.rtp_transceivers[id];
+        let kind = transceiver.kind();
+        let mid = transceiver.mid().clone().unwrap_or_default();
+        let Some(receiver) = transceiver.receiver_mut() else {
+            return false;
         };
 
         // Get RTX and FEC SSRCs from coding parameters
