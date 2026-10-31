@@ -622,20 +622,25 @@ impl Client {
     ) -> Result<()> {
         match allocate_state {
             TransactionType::AllocateAttempt => {
-                // Anonymous allocate failed, trying to authenticate.
+                // Anonymous allocate failed, trying to authenticate. Whatever is reported about
+                // it from here on names the id allocate() handed out, as the response does.
                 let nonce = match Nonce::get_from_as(&response, ATTR_NONCE) {
                     Ok(nonce) => nonce,
                     Err(err) => {
-                        self.events
-                            .push_back(Event::AllocateError(response.transaction_id, err));
+                        self.events.push_back(Event::AllocateError(
+                            authenticated_allocate_id(response.transaction_id),
+                            err,
+                        ));
                         return Ok(());
                     }
                 };
                 self.realm = match Realm::get_from_as(&response, ATTR_REALM) {
                     Ok(realm) => realm,
                     Err(err) => {
-                        self.events
-                            .push_back(Event::AllocateError(response.transaction_id, err));
+                        self.events.push_back(Event::AllocateError(
+                            authenticated_allocate_id(response.transaction_id),
+                            err,
+                        ));
                         return Ok(());
                     }
                 };
