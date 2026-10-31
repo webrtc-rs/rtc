@@ -1476,6 +1476,7 @@ impl Association {
                 "[{}] SACK Cumulative ACK {} is older than ACK point {}",
                 self.side, d.cumulative_tsn_ack, self.cumulative_tsn_ack_point
             );
+            self.rack_on_stale_sack(d);
 
             return Ok(vec![]);
         }
@@ -1799,6 +1800,7 @@ impl Association {
                             tsn: c.tsn,
                             xmit_ts,
                             nsent: c.nsent,
+                            cumulative: true,
                         });
                     }
 
@@ -1876,6 +1878,7 @@ impl Association {
                                 tsn,
                                 xmit_ts,
                                 nsent: c.nsent,
+                                cumulative: false,
                             });
                         }
                         total_bytes_acked += n_bytes_acked;
@@ -2128,8 +2131,29 @@ impl Association {
             self.my_next_tsn,
         );
         let needless_resend = rack.on_duplicates(&d.duplicate_tsn);
-        rack.on_cumulative_ack(d.cumulative_tsn_ack, now);
+        rack.on_cumulative_ack(
+            d.cumulative_tsn_ack,
+            now,
+            Duration::from_millis(self.rto_mgr.get_rto()),
+        );
         if needless_resend && let Some(undo) = rack.take_proven_undo() {
+            self.undo_cut(undo);
+        }
+    }
+
+    /// Reads the duplicate TSNs of a SACK older than the ack point: a newer SACK overtook it,
+    /// and the repeats it names still prove resends needless.
+    fn rack_on_stale_sack(&mut self, d: &ChunkSelectiveAck) {
+        let Some(rack) = self.rack.as_mut() else {
+            return;
+        };
+        if d.duplicate_tsn.is_empty() {
+            return;
+        }
+        rack.on_ack(self.cumulative_tsn_ack_point, true, self.my_next_tsn);
+        if rack.on_duplicates(&d.duplicate_tsn)
+            && let Some(undo) = rack.take_proven_undo()
+        {
             self.undo_cut(undo);
         }
     }

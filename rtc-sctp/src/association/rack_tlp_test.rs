@@ -15,10 +15,14 @@ enum Fate {
     Deliver,
     /// Skips the propagation delay, as a reordering router sends a displaced packet ahead.
     Early,
+    /// Skips the bottleneck's queue and the propagation delay, as `tc netem reorder` sends a
+    /// packet to the head of its queue.
+    Ahead,
     Drop,
 }
 
-/// One packet carrying DATA, as the impairment sees it.
+/// One packet as the impairment sees it: its place among the packets impaired on its path, and
+/// the DATA TSNs it carries.
 struct Sent {
     index: u64,
     tsns: Vec<u32>,
@@ -48,12 +52,16 @@ impl Path {
         if fate == Fate::Drop {
             return;
         }
-        let start = self.busy_until.max(now);
         let wire = Duration::from_nanos(packet.len() as u64 * 1_000_000_000 / self.rate);
-        self.busy_until = start + wire;
-        let arrival = match fate {
-            Fate::Early => self.busy_until,
-            _ => self.busy_until + self.delay,
+        let arrival = if fate == Fate::Ahead {
+            now + wire
+        } else {
+            let start = self.busy_until.max(now);
+            self.busy_until = start + wire;
+            match fate {
+                Fate::Early => self.busy_until,
+                _ => self.busy_until + self.delay,
+            }
         };
         self.seq += 1;
         self.queued.insert((arrival, self.seq), packet);
@@ -160,8 +168,11 @@ struct Sim {
     forward: Path,
     reverse: Path,
     fate: Box<dyn FnMut(&Sent) -> Fate>,
+    /// The fate of each packet the server sends back.
+    reverse_fate: Box<dyn FnMut(&Sent) -> Fate>,
     impaired: bool,
     data_packets: u64,
+    reverse_packets: u64,
     to_write: usize,
     written: usize,
     messages_written: usize,
@@ -211,8 +222,10 @@ impl Sim {
             forward: Path::new(now),
             reverse: Path::new(now),
             fate,
+            reverse_fate: Box::new(|_| Fate::Deliver),
             impaired: false,
             data_packets: 0,
+            reverse_packets: 0,
             to_write: 0,
             written: 0,
             messages_written: 0,
@@ -260,7 +273,16 @@ impl Sim {
             self.forward.send(now, packet, fate);
         }
         for packet in self.server.transmit(now) {
-            self.reverse.send(now, packet, Fate::Deliver);
+            let fate = if self.impaired {
+                self.reverse_packets += 1;
+                (self.reverse_fate)(&Sent {
+                    index: self.reverse_packets,
+                    tsns: vec![],
+                })
+            } else {
+                Fate::Deliver
+            };
+            self.reverse.send(now, packet, fate);
         }
         self.client.settle(now);
         self.server.settle(now);
@@ -366,6 +388,21 @@ impl Sim {
 
 fn rack_tlp() -> TransportConfig {
     TransportConfig::default().with_rack_tlp(true)
+}
+
+/// Gives `fate` to `per_mille` of each thousand packets, picked by a xorshift from `seed`.
+fn random(seed: u64, per_mille: u64, fate: Fate) -> Box<dyn FnMut(&Sent) -> Fate> {
+    let mut x = seed;
+    Box::new(move |_| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        if x % 1000 < per_mille {
+            fate
+        } else {
+            Fate::Deliver
+        }
+    })
 }
 
 fn every(period: u64, offset: u64, fate: Fate) -> Box<dyn FnMut(&Sent) -> Fate> {
@@ -534,4 +571,85 @@ fn reordering_and_loss_together_undo_only_the_needless_cuts() {
         "the cuts for real loss stand: {end:?}"
     );
     assert_eq!(0, end.t3, "no retransmission timeout: {end:?}");
+}
+
+#[test]
+fn packets_jumping_the_queue_both_ways_leave_most_of_the_line_in_use() {
+    let mut sim = Sim::connect(rack_tlp(), random(0x9e37_79b9_7f4a_7c15, 10, Fate::Ahead));
+    sim.reverse_fate = random(0x2545_f491_4f6c_dd1d, 10, Fate::Ahead);
+    sim.send(usize::MAX / 2);
+    sim.run_for(Duration::from_secs(3));
+    let settled = sim.reading();
+    sim.run_for(Duration::from_secs(12));
+    let end = sim.reading();
+
+    let mbit = (end.bytes_read - settled.bytes_read) as f64 * 8.0 / 1e6 / 12.0;
+    assert!(mbit >= 80.0, "{mbit:.1} Mbit/s over 12 s: {end:?}");
+    assert_eq!(0, end.t3, "no retransmission timeout: {end:?}");
+}
+
+fn sack(
+    cumulative_tsn_ack: u32,
+    gap: Option<(u16, u16)>,
+    duplicate_tsn: Vec<u32>,
+) -> ChunkSelectiveAck {
+    ChunkSelectiveAck {
+        cumulative_tsn_ack,
+        advertised_receiver_window_credit: 1024 * 1024,
+        gap_ack_blocks: gap
+            .map(|(start, end)| vec![crate::chunk::chunk_selective_ack::GapAckBlock { start, end }])
+            .unwrap_or_default(),
+        duplicate_tsn,
+    }
+}
+
+#[test]
+fn a_repeat_in_a_sack_older_than_the_ack_point_proves_the_resend_needless() -> Result<()> {
+    let t0 = Instant::now();
+    let any = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+    let mut a = Association::new(
+        None,
+        Arc::new(rack_tlp()),
+        1400,
+        0,
+        any,
+        any,
+        TransportProtocol::UDP,
+        t0,
+    );
+    a.control_queue.clear();
+    a.timers.stop(Timer::T1Init);
+    a.set_state(AssociationState::Established);
+    a.rwnd = 1024 * 1024;
+    a.cwnd = 100_000;
+    a.rto_mgr.set_rto(1000, true);
+    let ppi = PayloadProtocolIdentifier::Binary;
+    let first = a.my_next_tsn;
+    let mut stream = a.open_stream(STREAM, ppi)?;
+    for _ in 0..6 {
+        stream.write_sctp(t0, &Bytes::from(vec![0; 1000]), ppi)?;
+    }
+    a.gather_outbound(t0);
+
+    a.handle_sack(&sack(first - 1, Some((2, 6)), vec![]), t0 + ms(40))?;
+    a.gather_outbound(t0 + ms(40));
+    assert_eq!(1, a.stats.get_num_cwnd_cuts(), "the gap reads as a loss");
+    let mut stream = a.stream(STREAM)?;
+    for _ in 0..2 {
+        stream.write_sctp(t0 + ms(40), &Bytes::from(vec![0; 1000]), ppi)?;
+    }
+    a.gather_outbound(t0 + ms(40));
+
+    // The SACK naming the repeat left the peer before this newer one, which overtook it.
+    a.handle_sack(&sack(first + 7, None, vec![]), t0 + ms(90))?;
+    assert!(a.cwnd < 100_000, "the cut stands until the repeat is read");
+    a.handle_sack(&sack(first + 5, None, vec![first]), t0 + ms(91))?;
+
+    assert_eq!(1, a.stats.get_num_cwnd_cuts_undone());
+    assert!(a.cwnd >= 100_000, "the window is back: {}", a.cwnd);
+    Ok(())
+}
+
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
 }
