@@ -3250,6 +3250,68 @@ mod tests {
             matches!(response.message, RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage { payload, .. })) if payload.as_ref() == [0; 64])
         );
         assert!(ctx.pending_readable.is_empty());
+        assert!(ctx.event_outs.is_empty());
+        assert!(
+            ctx.sctp_transport
+                .sctp_associations
+                .get_mut(&e.client_ch)
+                .unwrap()
+                .stream(1)
+                .is_err(),
+            "draining the final response must complete the deferred reset"
+        );
+
+        // The read above generated the stream-loss event. No timeout or new
+        // datagram should be needed to deliver it, and it must be delivered once.
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        assert!(matches!(
+            handler.poll_event(),
+            Some(TaggedRTCEventInternal {
+                now: observed_at,
+                event: RTCEventInternal::SCTPStreamClosed(association, 1),
+            }) if observed_at == now && association == e.client_ch.0
+        ));
+        assert!(handler.poll_event().is_none());
+    }
+
+    #[test]
+    fn event_polling_reports_send_high_watermark_without_an_inbound_packet() {
+        let now = Instant::now();
+        let e = establish();
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        ctx.sctp_transport
+            .sctp_associations
+            .get_mut(&e.client_ch)
+            .unwrap()
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .unwrap()
+            .set_buffered_amount_high_threshold(4)
+            .unwrap();
+
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        handler
+            .handle_write(TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                    association_handle: e.client_ch.0,
+                    stream_id: 1,
+                    ppi: PayloadProtocolIdentifier::Binary,
+                    payload: BytesMut::from(&b"buffered"[..]),
+                    negotiated: false,
+                })),
+            })
+            .unwrap();
+
+        assert!(handler.ctx.event_outs.is_empty());
+        assert!(matches!(
+            handler.poll_event(),
+            Some(TaggedRTCEventInternal {
+                now: observed_at,
+                event: RTCEventInternal::SCTPBufferedAmountHigh(association, 1),
+            }) if observed_at == now && association == e.client_ch.0
+        ));
+        assert!(handler.poll_event().is_none());
     }
 
     #[test]
