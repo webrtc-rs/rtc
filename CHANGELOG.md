@@ -112,6 +112,10 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- ICE: the controlling agent now sends a triggered check (RFC 8445 §7.3.1.4) when a Binding
+  request arrives on a pair it had marked Failed, so a late-opening direct path is no longer
+  lost to the relay ([#282](https://github.com/webrtc-rs/rtc/issues/282)).
+
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
 
