@@ -739,23 +739,33 @@ impl<'a>
         if self.ctx.is_dtls_handshake_complete
             && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = msg.message
         {
-            if let Packet::Rtp(rtp_packet) = &packet {
-                // Establish the stream *before* the chain is handed the packet. The codec can only
-                // be resolved from an arriving payload type, so this is the first moment it can be
-                // done — and doing it here rather than in the endpoint handler, which sits
-                // application-ward of the chain, is what stops the first packet of every stream
-                // from traversing interceptors that have not yet been told the stream exists.
-                // See "Stream establishment" below.
-                self.ensure_remote_stream_bound(msg.now, &rtp_packet.header);
+            match &packet {
+                Packet::Rtp(rtp_packet) => {
+                    // Establish the stream *before* the chain is handed the packet. The codec can only
+                    // be resolved from an arriving payload type, so this is the first moment it can be
+                    // done — and doing it here rather than in the endpoint handler, which sits
+                    // application-ward of the chain, is what stops the first packet of every stream
+                    // from traversing interceptors that have not yet been told the stream exists.
+                    // See "Stream establishment" below.
+                    self.ensure_remote_stream_bound(msg.now, &rtp_packet.header);
 
-                let ssrc = rtp_packet.header.ssrc;
-                let payload_bytes = rtp_packet.payload.len();
-                // Reached only now that the accumulator exists: `ensure_remote_stream_bound` creates it, and until
-                // this ran here these two silently dropped the first packet of every stream.
-                self.stats
-                    .on_rtx_packet_received_if_rtx(ssrc, payload_bytes);
-                self.stats
-                    .on_fec_packet_received_if_fec(ssrc, payload_bytes);
+                    let ssrc = rtp_packet.header.ssrc;
+                    let payload_bytes = rtp_packet.payload.len();
+                    // Reached only now that the accumulator exists: `ensure_remote_stream_bound` creates it, and until
+                    // this ran here these two silently dropped the first packet of every stream.
+                    self.stats
+                        .on_rtx_packet_received_if_rtx(ssrc, payload_bytes);
+                    self.stats
+                        .on_fec_packet_received_if_fec(ssrc, payload_bytes);
+                }
+                Packet::Rtcp(rtcp_packets) => {
+                    // Counted here, before the chain, for the same reason as the RTP accounting
+                    // above: the chain's terminus consumes RTCP that no interceptor marks, so
+                    // `poll_read` never sees most incoming SR/RR/NACK/PLI/FIR/CCFB. This is the
+                    // read-side counterpart of `process_write_rtcp_for_stats` in `poll_write`.
+                    self.process_read_rtcp_for_stats(rtcp_packets, msg.now);
+                }
+                _ => {}
             }
 
             self.interceptor.handle_read(TaggedPacket {
@@ -911,8 +921,12 @@ mod boundary_tests {
     //! controller's estimate stops being chain business and becomes something `get_stats` reports.
 
     use super::*;
-    use crate::statistics::accumulator::OutboundRtpStreamAccumulator;
+    use crate::statistics::accumulator::{
+        InboundRtpStreamAccumulator, OutboundRtpStreamAccumulator,
+    };
     use interceptor::{AttributedPacket, StreamInfo};
+    use rtcp::payload_feedbacks::full_intra_request::FirEntry;
+    use rtcp::reception_report::ReceptionReport;
     use sansio::Protocol;
     use shared::TransportContext;
 
@@ -1094,6 +1108,145 @@ mod boundary_tests {
             handler.poll_read().is_some(),
             "dropping the carrier must not drop RTCP the application asked for"
         );
+    }
+
+    /// Feeds one incoming RTCP compound packet through `handle_read` and returns what the chain was
+    /// handed, so a test can check both the stats and that the packet still went on into the chain.
+    fn read_rtcp(
+        stats: &mut RTCStatsAccumulator,
+        now: Instant,
+        packets: Vec<Box<dyn rtcp::Packet>>,
+    ) -> VecDeque<TaggedPacket> {
+        let mut ctx = connected();
+        let mut chain = FakeChain::default();
+        let mut transceivers = vec![];
+        let media_engine = MediaEngine::default();
+        let mut handler = InterceptorHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut chain,
+            stats,
+        );
+        handler
+            .handle_read(TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(packets))),
+            })
+            .expect("handle_read");
+        chain.reads
+    }
+
+    fn outbound(ssrc: u32) -> OutboundRtpStreamAccumulator {
+        OutboundRtpStreamAccumulator {
+            ssrc,
+            ..Default::default()
+        }
+    }
+
+    /// A receiver report about one of our streams is counted before the chain gets it: the
+    /// chain's terminus consumes it, so `poll_read` never would (#310).
+    #[test]
+    fn incoming_receiver_report_reaches_the_stats() {
+        let now = Instant::now();
+        let mut stats = RTCStatsAccumulator::default();
+        stats.outbound_rtp_streams.insert(7, outbound(7));
+
+        let reads = read_rtcp(
+            &mut stats,
+            now,
+            vec![Box::new(ReceiverReport {
+                reports: vec![ReceptionReport {
+                    ssrc: 7,
+                    fraction_lost: 64,
+                    total_lost: 3,
+                    last_sequence_number: 100,
+                    jitter: 9,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+        );
+
+        assert_eq!(1, reads.len(), "the report must still go into the chain");
+        let stream = &stats.outbound_rtp_streams[&7];
+        assert_eq!(3, stream.remote_packets_lost);
+        assert_eq!(9.0, stream.remote_jitter);
+        assert_eq!(0.25, stream.remote_fraction_lost);
+        assert_eq!(1, stream.rtt_measurements);
+
+        let remote = stream.snapshot_remote(now);
+        assert_eq!(3, remote.received_rtp_stream_stats.packets_lost);
+        assert_eq!(9.0, remote.received_rtp_stream_stats.jitter);
+        assert_eq!(0.25, remote.fraction_lost);
+    }
+
+    /// NACK, PLI and FIR are feedback about our outbound stream and land in its counters.
+    #[test]
+    fn incoming_feedback_reaches_the_outbound_stats() {
+        let mut stats = RTCStatsAccumulator::default();
+        stats.outbound_rtp_streams.insert(7, outbound(7));
+
+        let reads = read_rtcp(
+            &mut stats,
+            Instant::now(),
+            vec![
+                Box::new(PictureLossIndication {
+                    media_ssrc: 7,
+                    ..Default::default()
+                }),
+                Box::new(TransportLayerNack {
+                    media_ssrc: 7,
+                    ..Default::default()
+                }),
+                Box::new(FullIntraRequest {
+                    fir: vec![FirEntry {
+                        ssrc: 7,
+                        sequence_number: 1,
+                    }],
+                    ..Default::default()
+                }),
+            ],
+        );
+
+        assert_eq!(1, reads.len(), "the feedback must still go into the chain");
+        let stream = &stats.outbound_rtp_streams[&7];
+        assert_eq!(1, stream.pli_count);
+        assert_eq!(1, stream.nack_count);
+        assert_eq!(1, stream.fir_count);
+    }
+
+    /// A sender report describes the remote sender of one of our inbound streams.
+    #[test]
+    fn incoming_sender_report_reaches_the_inbound_stats() {
+        let now = Instant::now();
+        let mut stats = RTCStatsAccumulator::default();
+        stats.inbound_rtp_streams.insert(
+            9,
+            InboundRtpStreamAccumulator {
+                ssrc: 9,
+                ..Default::default()
+            },
+        );
+
+        let reads = read_rtcp(
+            &mut stats,
+            now,
+            vec![Box::new(SenderReport {
+                ssrc: 9,
+                packet_count: 10,
+                octet_count: 1000,
+                ..Default::default()
+            })],
+        );
+
+        assert_eq!(1, reads.len(), "the report must still go into the chain");
+        let stream = &stats.inbound_rtp_streams[&9];
+        assert_eq!(10, stream.remote_packets_sent);
+        assert_eq!(1000, stream.remote_bytes_sent);
+        assert_eq!(Some(now), stream.remote_timestamp);
+        assert_eq!(1, stream.reports_received);
     }
 }
 

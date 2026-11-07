@@ -112,6 +112,11 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- Incoming RTCP reaches `get_stats()` again. Receiver reports, NACK, PLI and FIR now update the
+  outbound stream's remote-inbound and feedback counts, and sender reports update the inbound
+  stream. The read-side stats hook was lost when the interceptor started consuming RTCP
+  ([#310](https://github.com/webrtc-rs/rtc/issues/310)).
+
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
 
