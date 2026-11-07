@@ -112,6 +112,10 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- ICE: a controlling agent now answers a Binding request that carries USE-CANDIDATE without
+  ICE-CONTROLLING, and ignores the USE-CANDIDATE, instead of dropping it with
+  `ErrUnexpectedStunrequestMessage`. Peers that always act as controlling can now complete ICE
+  ([#299](https://github.com/webrtc-rs/rtc/issues/299)).
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
 
