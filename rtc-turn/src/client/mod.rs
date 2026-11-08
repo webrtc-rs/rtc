@@ -605,13 +605,15 @@ impl Client {
         ])?;
 
         debug!("client.Allocate call PerformTransaction 1");
-        let tid = self.perform_transaction(
+        // The anonymous request's own id is what the caller gets, and what every event about
+        // the allocation names — the retry after a 401 goes out under a fresh id but reports
+        // under this one.
+        Ok(self.perform_transaction(
             now,
             &msg,
             self.turn_server_addr()?,
             TransactionType::AllocateAttempt,
-        );
-        Ok(authenticated_allocate_id(tid))
+        ))
     }
 
     fn handle_allocate_response(
@@ -622,25 +624,21 @@ impl Client {
     ) -> Result<()> {
         match allocate_state {
             TransactionType::AllocateAttempt => {
-                // Anonymous allocate failed, trying to authenticate. Whatever is reported about
-                // it from here on names the id allocate() handed out, as the response does.
+                // Anonymous allocate failed, trying to authenticate. The anonymous request's id
+                // is the one allocate() handed out, so an error here names it as it is.
                 let nonce = match Nonce::get_from_as(&response, ATTR_NONCE) {
                     Ok(nonce) => nonce,
                     Err(err) => {
-                        self.events.push_back(Event::AllocateError(
-                            authenticated_allocate_id(response.transaction_id),
-                            err,
-                        ));
+                        self.events
+                            .push_back(Event::AllocateError(response.transaction_id, err));
                         return Ok(());
                     }
                 };
                 self.realm = match Realm::get_from_as(&response, ATTR_REALM) {
                     Ok(realm) => realm,
                     Err(err) => {
-                        self.events.push_back(Event::AllocateError(
-                            authenticated_allocate_id(response.transaction_id),
-                            err,
-                        ));
+                        self.events
+                            .push_back(Event::AllocateError(response.transaction_id, err));
                         return Ok(());
                     }
                 };
@@ -654,13 +652,11 @@ impl Client {
 
                 let mut msg = Message::new();
 
-                // make it same as allocate() return value so that client can retrieve it
-                // from Event::AllocateResponse
-                let tid = authenticated_allocate_id(response.transaction_id);
-
-                // Trying to authorize.
+                // A new transaction under a fresh random id (RFC 8489 §6). The transaction
+                // remembers the id allocate() returned, so the caller still hears about this
+                // allocation under the one it holds.
                 msg.build(&[
-                    Box::new(tid),
+                    Box::new(TransactionId::new()),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
                         // Always a UDP relay, however the server is reached: REQUESTED-TRANSPORT
@@ -680,10 +676,13 @@ impl Client {
                     now,
                     &msg,
                     self.turn_server_addr()?,
-                    TransactionType::AllocateRequest(nonce),
+                    TransactionType::AllocateRequest {
+                        nonce,
+                        allocation: response.transaction_id,
+                    },
                 );
             }
-            TransactionType::AllocateRequest(nonce) => {
+            TransactionType::AllocateRequest { nonce, allocation } => {
                 if response.typ.class == CLASS_ERROR_RESPONSE {
                     let mut code = ErrorCodeAttribute::default();
                     let err = if code.get_from(&response).is_err() {
@@ -691,8 +690,7 @@ impl Client {
                     } else {
                         Error::Other(format!("{} (error {})", response.typ, code))
                     };
-                    self.events
-                        .push_back(Event::AllocateError(response.transaction_id, err));
+                    self.events.push_back(Event::AllocateError(allocation, err));
                     return Ok(());
                 }
 
@@ -719,7 +717,7 @@ impl Client {
                 // [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862).
                 if lifetime.0.is_zero() {
                     self.events.push_back(Event::AllocateError(
-                        response.transaction_id,
+                        allocation,
                         Error::Other(
                             "Allocate success response carried LIFETIME=0; RFC 5766 §6.2 \
                              requires at least the default lifetime"
@@ -745,10 +743,8 @@ impl Client {
                         self.allocation_refresh_interval_cap,
                     ),
                 );
-                self.events.push_back(Event::AllocateResponse(
-                    response.transaction_id,
-                    relayed_addr,
-                ));
+                self.events
+                    .push_back(Event::AllocateResponse(allocation, relayed_addr));
             }
             _ => {}
         }

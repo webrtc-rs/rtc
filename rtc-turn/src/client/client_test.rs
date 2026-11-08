@@ -321,7 +321,10 @@ fn test_allocation_refresh_interval_cap_is_applied() -> Result<()> {
     client.handle_allocate_response(
         base,
         response,
-        TransactionType::AllocateRequest(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+        TransactionType::AllocateRequest {
+            nonce: Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            allocation: TransactionId::new(),
+        },
     )?;
 
     for expected_secs in [30, 60, 90, 120, 150, 180] {
@@ -688,7 +691,10 @@ fn test_zero_lifetime_allocate_response_is_an_error() -> Result<()> {
     client.handle_allocate_response(
         base,
         res,
-        TransactionType::AllocateRequest(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+        TransactionType::AllocateRequest {
+            nonce: Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            allocation: TransactionId::new(),
+        },
     )?;
 
     assert!(
@@ -929,6 +935,155 @@ fn test_an_error_reply_without_a_nonce_is_reported_under_the_id_allocate_returne
             id, tid,
             "{}: the error must name the allocation its caller knows",
             code.0
+        );
+    }
+    Ok(())
+}
+
+/// The authenticated retry after a 401 is a new transaction, and RFC 8489 §6 wants every new
+/// transaction under a fresh, cryptographically random 96-bit id. It used to go out under the
+/// anonymous request's id with its last byte bumped — predictable, and the only reason
+/// `allocate()` had to foretell its own retry. The retry is random now and the client remembers
+/// which allocation it belongs to, so a response, an error and a timeout to the retry still
+/// name the id [`Client::allocate`] returned: what a caller matches on never changes.
+#[test]
+fn test_the_authenticated_retry_carries_a_fresh_id_and_reports_under_the_one_allocate_returned()
+-> Result<()> {
+    use stun::error_code::{CODE_FORBIDDEN, CODE_UNAUTHORIZED};
+
+    #[derive(Debug, Clone, Copy)]
+    enum Answer {
+        Success,
+        Error,
+        Nothing,
+    }
+    for answer in [Answer::Success, Answer::Error, Answer::Nothing] {
+        let start = Instant::now();
+        let local_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        let server_addr: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+        let mut client = Client::new(
+            ClientConfig {
+                turn_serv_addr: server_addr.to_string(),
+                local_addr,
+                transport_protocol: TransportProtocol::UDP,
+                username: "user".to_owned(),
+                password: "pass".to_owned(),
+                ..Default::default()
+            },
+            test_crypto_provider(),
+        )?;
+        let from_server = |message: &Message| TransportMessage {
+            now: start,
+            transport: TransportContext {
+                local_addr,
+                peer_addr: server_addr,
+                transport_protocol: TransportProtocol::UDP,
+                ecn: None,
+            },
+            message: BytesMut::from(&message.raw[..]),
+        };
+        let decode = |transmit: TransportMessage<BytesMut>| -> Result<Message> {
+            let mut sent = Message::new();
+            sent.raw = transmit.message.to_vec();
+            sent.decode()?;
+            Ok(sent)
+        };
+
+        let tid = client.allocate(start)?;
+        let anonymous = decode(
+            client
+                .poll_write()
+                .expect("the anonymous Allocate goes out"),
+        )?;
+
+        // The server wants credentials.
+        let mut challenge = Message::new();
+        challenge.build(&[
+            Box::new(anonymous.transaction_id),
+            Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_ERROR_RESPONSE)),
+            Box::new(ErrorCodeAttribute {
+                code: CODE_UNAUTHORIZED,
+                reason: b"Unauthorized".to_vec(),
+            }),
+            Box::new(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+            Box::new(Realm::new(ATTR_REALM, "realm".to_owned())),
+            Box::new(FINGERPRINT),
+        ])?;
+        client.handle_read(from_server(&challenge))?;
+
+        let retry = decode(
+            client
+                .poll_write()
+                .expect("the authenticated retry goes out"),
+        )?;
+        assert!(
+            retry.contains(ATTR_MESSAGE_INTEGRITY) && retry.contains(ATTR_NONCE),
+            "{answer:?}: the retry is the authenticated Allocate"
+        );
+        assert_ne!(
+            retry.transaction_id, anonymous.transaction_id,
+            "{answer:?}: a new transaction, a new id"
+        );
+        assert_ne!(
+            retry.transaction_id.0[..TRANSACTION_ID_SIZE - 1],
+            anonymous.transaction_id.0[..TRANSACTION_ID_SIZE - 1],
+            "{answer:?}: a fresh random id, not the anonymous one with its last byte bumped"
+        );
+
+        // Whatever becomes of the retry is reported under the id the caller holds.
+        let reported = match answer {
+            Answer::Success => {
+                let mut success = Message::new();
+                success.build(&[
+                    Box::new(retry.transaction_id),
+                    Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_SUCCESS_RESPONSE)),
+                    Box::new(RelayedAddress {
+                        ip: "127.0.0.1".parse().unwrap(),
+                        port: 40000,
+                    }),
+                    Box::new(Lifetime(Duration::from_secs(600))),
+                    Box::new(FINGERPRINT),
+                ])?;
+                client.handle_read(from_server(&success))?;
+                match client.poll_event() {
+                    Some(Event::AllocateResponse(id, _)) => id,
+                    other => panic!("{answer:?}: expected AllocateResponse, got {other:?}"),
+                }
+            }
+            Answer::Error => {
+                let mut refusal = Message::new();
+                refusal.build(&[
+                    Box::new(retry.transaction_id),
+                    Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_ERROR_RESPONSE)),
+                    Box::new(ErrorCodeAttribute {
+                        code: CODE_FORBIDDEN,
+                        reason: b"Forbidden".to_vec(),
+                    }),
+                    Box::new(FINGERPRINT),
+                ])?;
+                client.handle_read(from_server(&refusal))?;
+                match client.poll_event() {
+                    Some(Event::AllocateError(id, _)) => id,
+                    other => panic!("{answer:?}: expected AllocateError, got {other:?}"),
+                }
+            }
+            Answer::Nothing => {
+                let mut timed_out = None;
+                while let Some(deadline) = client.poll_timeout() {
+                    client.handle_timeout(deadline)?;
+                    while client.poll_write().is_some() {}
+                    while let Some(event) = client.poll_event() {
+                        if let Event::TransactionTimeout(id) = event {
+                            timed_out = Some(id);
+                        }
+                    }
+                }
+                timed_out.expect("a retry nobody answers times out")
+            }
+        };
+        assert_eq!(
+            reported, tid,
+            "{answer:?}: the event must name the allocation its caller knows"
         );
     }
     Ok(())
