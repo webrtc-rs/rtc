@@ -2640,9 +2640,9 @@ mod tests {
         assert_recovery(&after, probe, now, Recovery::AbandonAtFirstRetry);
     }
 
-    /// The OPEN arrives in the same flight as the end of the handshake, before COOKIE-ACK. It is
-    /// held in the reassembly queue and drained by the resume after the association connects,
-    /// not by the `Readable` that announced it, and must still configure the stream.
+    /// The OPEN arrives in the same flight as the end of the handshake, before COOKIE-ACK. The
+    /// association ignores it (as pion's does), so nothing is recorded or delivered; the peer's
+    /// retransmission after COOKIE-ACK is the OPEN that must configure the stream.
     #[test]
     fn an_open_received_before_cookie_ack_still_configures_the_stream() {
         let now = Instant::now();
@@ -2650,21 +2650,27 @@ mod tests {
             client_with_open_before_cookie_ack(ChannelType::PartialReliableRexmitUnordered, 0);
         let ch = only_association(&ctx);
 
-        client_read(&mut ctx, 0, early_data, now);
+        client_read(&mut ctx, 0, early_data.clone(), now);
         assert!(
             ctx.read_outs.is_empty(),
-            "precondition: held until COOKIE-ACK"
+            "precondition: the early OPEN is not delivered"
         );
         assert!(
-            ctx.peer_opened_streams.contains(&(ch, PEER_STREAM)),
-            "the stream the peer created is recorded although its OPEN is not drained yet"
+            ctx.peer_opened_streams.is_empty(),
+            "the ignored early OPEN creates no stream record"
         );
 
         client_read(&mut ctx, 0, cookie_ack, now);
+        assert!(
+            ctx.read_outs.is_empty(),
+            "precondition: the ignored OPEN is not delivered by the handshake completing"
+        );
+
+        client_read(&mut ctx, 0, early_data, now);
         assert_eq!(
             ctx.read_outs.len(),
             1,
-            "precondition: the OPEN is delivered"
+            "precondition: the retransmitted OPEN is delivered"
         );
         assert!(
             ctx.peer_opened_streams.is_empty(),

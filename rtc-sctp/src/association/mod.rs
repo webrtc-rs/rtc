@@ -1250,7 +1250,8 @@ impl Association {
             for e in &c.error_causes {
                 err_str += &format!("({})", e);
             }
-            warn!(
+            // `debug!`: the causes are the peer's bytes, so a warning would let any peer flood the log.
+            debug!(
                 "[{}] received ERROR chunk, with following errors: {}",
                 self.side, err_str
             );

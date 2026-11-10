@@ -7,6 +7,7 @@
 
 use rtc_turn::proto::chandata::ChannelData;
 use rtc_turn::proto::channum::ChannelNumber;
+use rtc_turn::proto::channum::MAX_CHANNEL_NUMBER;
 use rtc_turn::proto::connid::ConnectionId;
 use rtc_turn::proto::data::Data;
 use rtc_turn::proto::dontfrag::DontFragmentAttr;
@@ -155,6 +156,16 @@ fn analyze(raw: &[u8]) -> Value {
 
 fn differences(want: &Value, got: &Value) -> Vec<String> {
     let mut out = vec![];
+    // RFC 8656 §12 narrowed the channel numbers to 0x4000-0x4FFF; pion still takes up to 0x7FFF
+    // (RFC 5766), so a frame numbered above this crate's range is not ChannelData here.
+    let above_rfc8656_range = want["kind"] == "chandata"
+        && want["num"]
+            .as_u64()
+            .is_some_and(|n| n > u64::from(MAX_CHANNEL_NUMBER))
+        && got["kind"] == "none";
+    if above_rfc8656_range {
+        return out;
+    }
     // Attributes one by one, so a divergence names the attribute.
     if let (Some(w), Some(g)) = (want.get("attrs"), got.get("attrs")) {
         for (name, wv) in w.as_object().unwrap() {
