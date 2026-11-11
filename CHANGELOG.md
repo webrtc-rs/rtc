@@ -112,6 +112,9 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- ICE: the controlling agent now sends a triggered check (RFC 8445 §7.3.1.4) when a Binding
+  request arrives on a pair it had marked Failed, so a late-opening direct path is no longer
+  lost to the relay ([#282](https://github.com/webrtc-rs/rtc/issues/282)).
 - Incoming RTCP reaches `get_stats()` again. Receiver reports, NACK, PLI and FIR now update the
   outbound stream's remote-inbound and feedback counts, and sender reports update the inbound
   stream. The read-side stats hook was lost when the interceptor started consuming RTCP
