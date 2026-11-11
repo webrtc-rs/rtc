@@ -2567,9 +2567,8 @@ mod tests {
     }
 
     // W3C types `maxMessageSize` `unrestricted double` so that an implementation with no limit
-    // can report +Infinity. This one always has a limit — the working buffer is a real
-    // allocation — so a configuration naming no limit resolves to the implementation ceiling,
-    // and the value reported is the value enforced.
+    // can report +Infinity. This one always has a limit, so a configuration naming no limit
+    // resolves to the implementation ceiling, and the value reported is the value enforced.
     #[test]
     fn max_message_size_with_no_configured_limit_reports_the_ceiling() {
         let setting_engine = SettingEngineBuilder::new()
@@ -2591,8 +2590,31 @@ mod tests {
             .expect("start");
 
         assert_eq!(
-            Some(SctpMaxMessageSize::MAX_MESSAGE_SIZE),
+            Some(::sctp::TransportConfig::default().max_receive_buffer_size()),
             pc.sctp().expect("negotiated").max_message_size()
+        );
+    }
+
+    // RFC 8841 §6.1 reads an advertised 0 as "any size", which this endpoint cannot take.
+    #[test]
+    fn no_configured_limit_advertises_the_ceiling_not_zero() {
+        let setting_engine = SettingEngineBuilder::new()
+            .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(0))
+            .build();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .with_setting_engine(setting_engine)
+            .build(Instant::now())
+            .unwrap();
+        pc.create_data_channel("probe", None).unwrap();
+
+        let offer = pc.create_offer(None).unwrap();
+        let ceiling = ::sctp::TransportConfig::default().max_receive_buffer_size();
+        assert!(
+            offer
+                .sdp
+                .contains(&format!("a=max-message-size:{ceiling}\r\n")),
+            "{}",
+            offer.sdp
         );
     }
 

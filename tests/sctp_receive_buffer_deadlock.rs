@@ -32,16 +32,20 @@
 //! Fixed by having the buffer-full branch also accept the in-sequence chunk that unblocks
 //! reassembly, guarded on nothing being readable so a merely slow receiver still gets
 //! back-pressure rather than an unbounded buffer.
+//!
+//! A receiver's `max-message-size` is capped at its receive buffer, so a compliant peer never sends
+//! such a message. The sender here is shown an answer without the attribute and assumes 64 KiB,
+//! standing in for a peer that ignores the limit. The oversized message is dropped, but the
+//! association must survive it.
 
 use anyhow::Result;
 use bytes::BytesMut;
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::{
-    SctpMaxMessageSize, SettingEngineBuilder,
-};
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
+use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
@@ -58,8 +62,12 @@ use tokio::net::UdpSocket;
 const RECV_BUFFER: u32 = 16 * 1024;
 
 /// One message, comfortably larger than `RECV_BUFFER` so its own fragments exhaust the buffer
-/// before the last one arrives. Within `SctpMaxMessageSize::MAX_MESSAGE_SIZE`.
+/// before the last one arrives. The 64 KiB assumed for a peer that names no limit.
 const MESSAGE_SIZE: usize = 64 * 1024;
+
+/// Sent after the oversized message; ordered, so it is delivered only once that one is out of
+/// the way.
+const FOLLOW_UP: &[u8] = b"after";
 
 /// The stream id both peers agree on out of band.
 const NEGOTIATED_ID: u16 = 1;
@@ -76,13 +84,14 @@ fn peer(setting_engine: SettingEngineBuilder) -> Result<RTCPeerConnection> {
         .build(Instant::now())?)
 }
 
-/// A single message larger than the receiver's SCTP receive buffer must still be delivered.
+/// A message larger than the receiver's SCTP receive buffer must not wedge the association: a
+/// message sent after it is still delivered.
 ///
 /// The receiver drains continuously, so nothing here is back-pressure: there is simply never
 /// anything readable, because the message is incomplete. Its arrived fragments hold the window
 /// at zero, and the fragments that would complete it are refused for that reason.
 #[tokio::test]
-async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Result<()> {
+async fn association_survives_a_message_larger_than_the_receive_buffer() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -96,19 +105,11 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
 
     // Only the *receiver's* buffer matters; the sender is left at its defaults so nothing about
     // its behaviour is special-cased for this test.
-    let mut offer_pc = peer(
-        SettingEngineBuilder::new()
-            .with_answering_dtls_role(RTCDtlsRole::Server)
-            .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(
-                SctpMaxMessageSize::MAX_MESSAGE_SIZE,
-            )),
-    )?;
+    let mut offer_pc =
+        peer(SettingEngineBuilder::new().with_answering_dtls_role(RTCDtlsRole::Server))?;
     let mut answer_pc = peer(
         SettingEngineBuilder::new()
             .with_answering_dtls_role(RTCDtlsRole::Client)
-            .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(
-                SctpMaxMessageSize::MAX_MESSAGE_SIZE,
-            ))
             .with_sctp_max_receive_buffer_size(RECV_BUFFER),
     )?;
 
@@ -146,6 +147,14 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
     answer_pc.set_remote_description(Instant::now(), offer)?;
     let answer = answer_pc.create_answer(None)?;
     answer_pc.set_local_description(Instant::now(), answer.clone())?;
+    let answer = RTCSessionDescription::answer(
+        answer
+            .sdp
+            .lines()
+            .filter(|line| !line.starts_with("a=max-message-size"))
+            .map(|line| format!("{line}\r\n"))
+            .collect(),
+    )?;
     offer_pc.set_remote_description(Instant::now(), answer)?;
 
     let payload: Vec<u8> = (0..MESSAGE_SIZE).map(|i| (i % 251) as u8).collect();
@@ -217,6 +226,7 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
                 .data_channel(offer_dc)
                 .expect("channel exists once open");
             dc.send(Instant::now(), BytesMut::from(&payload[..]))?;
+            dc.send(Instant::now(), BytesMut::from(FOLLOW_UP))?;
             sent = true;
         }
 
@@ -282,8 +292,8 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
 
     let received = received.unwrap_or_else(|| {
         panic!(
-            "permanent zero-window deadlock: a {MESSAGE_SIZE}-byte message was never delivered \
-             to a receiver with a {RECV_BUFFER}-byte SCTP receive buffer. Its arrived fragments \
+            "permanent zero-window deadlock: nothing was delivered after a {MESSAGE_SIZE}-byte \
+             message to a receiver with a {RECV_BUFFER}-byte SCTP receive buffer. Its arrived fragments \
              pin the buffer at zero credit, `is_readable()` is false because the head chunk set \
              is incomplete, and `handle_data`'s buffer-full branch refuses the in-sequence chunk \
              that would complete it — on every retransmission, because the payload queue is \
@@ -293,11 +303,9 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
     });
 
     assert_eq!(
-        received.len(),
-        MESSAGE_SIZE,
-        "delivered message has the wrong length"
+        received, FOLLOW_UP,
+        "the oversized message must be dropped, not delivered"
     );
-    assert_eq!(received, payload, "delivered message is corrupted");
 
     offer_pc.close()?;
     answer_pc.close()?;
