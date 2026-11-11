@@ -51,6 +51,18 @@ pub fn max_payload_size_for_mtu(mtu: u32) -> u32 {
 }
 pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
 
+/// How an association picks the stream whose message it sends next.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamScheduler {
+    /// One queue in the order messages were written, unordered messages first.
+    #[default]
+    FirstComeFirstServed,
+    /// Each stream gets a share of the bytes sent in proportion to its weight, a whole message
+    /// at a time (RFC 8260 section 3.6, which RFC 8831 section 6.4 asks of WebRTC).
+    WeightedFairQueueing,
+}
+
 /// Config collects the arguments to create_association construction into
 /// a single structure
 #[derive(Debug, Clone)]
@@ -61,6 +73,7 @@ pub struct TransportConfig {
     max_num_outbound_streams: u16,
     max_num_inbound_streams: u16,
     timer_config: TimerConfig,
+    stream_scheduler: StreamScheduler,
 }
 
 impl Default for TransportConfig {
@@ -72,6 +85,7 @@ impl Default for TransportConfig {
             max_num_outbound_streams: u16::MAX,
             max_num_inbound_streams: u16::MAX,
             timer_config: TimerConfig::default(),
+            stream_scheduler: StreamScheduler::default(),
         }
     }
 }
@@ -114,6 +128,12 @@ impl TransportConfig {
         self
     }
 
+    /// Chooses how the next message to send is picked among the streams.
+    pub fn with_stream_scheduler(mut self, value: StreamScheduler) -> Self {
+        self.stream_scheduler = value;
+        self
+    }
+
     /// The configured SCTP port.
     pub fn sctp_port(&self) -> u16 {
         self.sctp_port
@@ -142,6 +162,11 @@ impl TransportConfig {
     /// The configured retransmission limits.
     pub fn timer_config(&self) -> TimerConfig {
         self.timer_config
+    }
+
+    /// The configured stream scheduler.
+    pub fn stream_scheduler(&self) -> StreamScheduler {
+        self.stream_scheduler
     }
 }
 

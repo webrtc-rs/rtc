@@ -1785,3 +1785,6 @@ fn test_full_buffer_gap_fill_headroom_is_one_message() -> Result<()> {
 
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
+
+#[path = "stream_scheduler_test.rs"]
+mod stream_scheduler_test;
