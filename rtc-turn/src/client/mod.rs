@@ -782,6 +782,24 @@ impl Client {
     }
 
     // PerformTransaction performs STUN transaction
+    /// Undoes the state a request left waiting on an answer that never came, so the next attempt
+    /// happens before the server expires what the request was refreshing.
+    fn handle_transaction_timeout(&mut self, now: Instant, transaction_type: TransactionType) {
+        match transaction_type {
+            TransactionType::ChannelBindRequest(relayed_addr, bind_addr) => {
+                if let Ok(mut relay) = self.relay(relayed_addr) {
+                    relay.handle_channel_bind_timeout(bind_addr);
+                }
+            }
+            TransactionType::RefreshRequest(relayed_addr) => {
+                if let Ok(mut relay) = self.relay(relayed_addr) {
+                    relay.handle_refresh_allocation_timeout(now);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn perform_transaction(
         &mut self,
         now: Instant,

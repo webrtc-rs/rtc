@@ -171,7 +171,9 @@ impl TransactionMap {
         eto
     }
 
-    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+    /// Retransmits what is due and returns the transactions that ran out of retransmissions,
+    /// so the client can undo whatever state was waiting on their answer.
+    pub(crate) fn handle_timeout(&mut self, now: Instant) -> Vec<Transaction> {
         let mut keys = vec![];
         for (key, tr) in self.tr_map.iter_mut() {
             tr.handle_timeout(now);
@@ -180,10 +182,14 @@ impl TransactionMap {
             }
         }
 
+        let mut exhausted = vec![];
         for key in keys {
-            self.tr_map.remove(&key);
+            if let Some(tr) = self.tr_map.remove(&key) {
+                exhausted.push(tr);
+            }
             self.events.push_back(Event::TransactionTimeout(key));
         }
+        exhausted
     }
 
     pub(crate) fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {

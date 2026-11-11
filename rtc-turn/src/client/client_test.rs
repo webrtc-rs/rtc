@@ -812,3 +812,221 @@ fn test_a_request_over_udp_is_still_retransmitted() -> Result<()> {
     assert!(client.poll_write().is_some(), "UDP retransmits");
     Ok(())
 }
+
+fn create_relay_test_client() -> Result<Client> {
+    Client::new(
+        ClientConfig {
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: "127.0.0.1:50000".parse().unwrap(),
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            ..Default::default()
+        },
+        test_crypto_provider(),
+    )
+}
+
+/// Drains every queued write and returns the STUN requests among them as `(method, id)`.
+/// ChannelData and Send indications are skipped.
+fn drain_requests(client: &mut Client) -> Vec<(Method, TransactionId)> {
+    let mut requests = vec![];
+    while let Some(transmit) = client.poll_write() {
+        let mut msg = Message::new();
+        msg.raw = transmit.message.to_vec();
+        if msg.decode().is_ok() && msg.typ.class == CLASS_REQUEST {
+            requests.push((msg.typ.method, msg.transaction_id));
+        }
+    }
+    requests
+}
+
+/// A ChannelBind refresh that times out must be tried again before the server expires the
+/// channel.
+///
+/// A channel binding lasts 10 minutes on the server unless refreshed (RFC 8656 §12). `send`
+/// refreshes a `Ready` binding older than 300 s by moving it to `Refresh` and sending a
+/// ChannelBind. If that transaction times out, nothing reaches `handle_channel_bind_response`:
+/// `TransactionMap::handle_timeout` only removes the transaction. The binding stays in `Refresh`,
+/// which `send` treats as usable but never refreshes again, so it keeps sending ChannelData on a
+/// channel the server drops 10 minutes after the last successful bind. Relayed data then stops
+/// with no error.
+#[test]
+fn test_timed_out_channel_bind_refresh_is_retried_before_the_channel_expires() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+    let mut client = create_relay_test_client()?;
+
+    // A granted allocation with a permitted peer and a channel bound at t(0).
+    let relayed_addr: RelayedAddr = "127.0.0.1:50001".parse().unwrap();
+    let peer: SocketAddr = "192.0.2.10:40000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+    let perm_tid = client
+        .relay(relayed_addr)?
+        .create_permission(t(0), peer)?
+        .expect("a new peer needs a permission");
+    let mut granted = Message::new();
+    granted.build(&[
+        Box::new(perm_tid),
+        Box::new(MessageType::new(
+            METHOD_CREATE_PERMISSION,
+            CLASS_SUCCESS_RESPONSE,
+        )),
+    ])?;
+    client
+        .relay(relayed_addr)?
+        .handle_create_permission_response(granted, Some(peer))?;
+    client.tr_map.delete(&perm_tid);
+    while client.poll_event().is_some() {}
+    drain_requests(&mut client);
+    client.binding_mgr.create(t(0), peer);
+    client
+        .binding_mgr
+        .get_by_addr(&peer)
+        .unwrap()
+        .set_state(BindingState::Ready);
+
+    // The server expires the channel at t(600) unless a ChannelBind succeeds before then.
+    let channel_expires = t(600);
+
+    // Run the client's own timers up to the send, so time never goes backwards.
+    let mut now = t(301);
+    while let Some(deadline) = client.poll_timeout() {
+        if deadline > now {
+            break;
+        }
+        client.handle_timeout(deadline)?;
+    }
+    drain_requests(&mut client);
+    while client.poll_event().is_some() {}
+
+    // A send just past 300 s starts the refresh.
+    client.relay(relayed_addr)?.send_to(now, b"frame", peer)?;
+    let refresh = drain_requests(&mut client)
+        .into_iter()
+        .find(|(method, _)| *method == METHOD_CHANNEL_BIND)
+        .expect("a binding older than 300 s is refreshed on send")
+        .1;
+
+    // The server never answers. Send every 3 s, as ICE consent checks on the pair would, and
+    // drive the client's timers in between, until the channel has expired. After the refresh
+    // times out, any new ChannelBind counts, whether a send or a timer sent it.
+    let mut timed_out = false;
+    let mut rebinds = 0;
+    let mut count_rebinds = |requests: Vec<(Method, TransactionId)>, timed_out: bool| {
+        if timed_out {
+            rebinds += requests
+                .iter()
+                .filter(|(method, id)| *method == METHOD_CHANNEL_BIND && *id != refresh)
+                .count();
+        }
+    };
+    while now < channel_expires {
+        let next_send = now + Duration::from_secs(3);
+        while let Some(deadline) = client.poll_timeout() {
+            if deadline > next_send {
+                break;
+            }
+            client.handle_timeout(deadline)?;
+            while let Some(event) = client.poll_event() {
+                if matches!(event, Event::TransactionTimeout(id) if id == refresh) {
+                    timed_out = true;
+                }
+            }
+            count_rebinds(drain_requests(&mut client), timed_out);
+        }
+        now = next_send;
+        client.relay(relayed_addr)?.send_to(now, b"frame", peer)?;
+        count_rebinds(drain_requests(&mut client), timed_out);
+    }
+
+    assert!(timed_out, "the unanswered ChannelBind refresh times out");
+    assert!(
+        rebinds > 0,
+        "after the refresh timed out, no ChannelBind was sent before the channel expired at \
+         600 s; the binding is stuck in {:?} and ChannelData now goes to a dead channel",
+        client.binding_mgr.find_by_addr(&peer).unwrap().state(),
+    );
+
+    client.close()
+}
+
+/// An allocation Refresh that times out must be tried again before the allocation expires.
+///
+/// The refresh timer moves forward when the request is sent (`Relay::handle_timeout`), not when
+/// it is answered. At the default spacing of half the lifetime, the next attempt after a timeout
+/// is due at the moment the server expires the allocation, so one lost refresh loses the relay.
+/// The request's transaction id is also dropped (`refresh_allocation` discards
+/// `perform_transaction`'s return value), so the only signal is a `TransactionTimeout` carrying
+/// an id the caller was never given. That is an API gap rather than a protocol one, and this test
+/// doesn't assert it.
+#[test]
+fn test_timed_out_allocation_refresh_is_retried_before_the_allocation_expires() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+    let mut client = create_relay_test_client()?;
+
+    // Granted at t(0) with the default 600 s lifetime, so the server expires it at t(600) unless
+    // a Refresh succeeds before then.
+    let relayed_addr: RelayedAddr = "127.0.0.1:50001".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+    let allocation_expires = t(600);
+
+    // Drive every deadline the client reports, answering nothing, until the allocation expires.
+    let mut refreshes = vec![];
+    let mut timeouts = vec![];
+    while let Some(deadline) = client.poll_timeout() {
+        if deadline >= allocation_expires {
+            break;
+        }
+        client.handle_timeout(deadline)?;
+        for (method, id) in drain_requests(&mut client) {
+            // Retransmissions repeat the same id; only a new id is a new attempt.
+            if method == METHOD_REFRESH && !refreshes.iter().any(|(_, seen)| *seen == id) {
+                refreshes.push((deadline, id));
+            }
+        }
+        while let Some(event) = client.poll_event() {
+            if let Event::TransactionTimeout(id) = event {
+                timeouts.push(id);
+            }
+        }
+    }
+
+    let (first_at, first) = *refreshes
+        .first()
+        .expect("the allocation is refreshed at half its lifetime");
+    assert_eq!(first_at, t(300));
+    assert!(
+        timeouts.contains(&first),
+        "the unanswered Refresh times out, reported only as a bare TransactionTimeout"
+    );
+    assert!(
+        refreshes.len() > 1,
+        "after the Refresh at 300 s timed out, no new Refresh was sent before the allocation expired \
+         at 600 s"
+    );
+
+    client.close()
+}

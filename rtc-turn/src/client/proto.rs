@@ -39,7 +39,9 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Client {
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
-        self.tr_map.handle_timeout(now);
+        for tr in self.tr_map.handle_timeout(now) {
+            self.handle_transaction_timeout(now, tr.transaction_type);
+        }
 
         #[allow(clippy::map_clone)]
         let relayed_addrs: Vec<SocketAddr> = self.relays.keys().map(|key| *key).collect();
