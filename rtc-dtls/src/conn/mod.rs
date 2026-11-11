@@ -691,8 +691,10 @@ impl DTLSConn {
                     Err(err) => {
                         debug!("{}: decrypt failed: {}", srv_cli_str(self.is_client), err);
 
-                        // If we get an error for PSK we need to return an error.
-                        if cipher_suite.is_psk() {
+                        // During a PSK handshake, a decrypt failure means a key mismatch, so
+                        // alert. Afterwards, anyone can forge such a record, so silently
+                        // discard it [RFC6347 Section-4.1.2.7].
+                        if cipher_suite.is_psk() && !self.handshake_completed {
                             return (
                                 false,
                                 Some(Alert {
