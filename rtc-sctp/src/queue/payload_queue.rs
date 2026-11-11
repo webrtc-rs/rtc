@@ -5,6 +5,9 @@ use crate::util::*;
 use rustc_hash::FxHashMap;
 use std::collections::{VecDeque, hash_map::Entry};
 
+/// Repeats kept between SACKs, as Chrome's dcSCTP and usrsctp keep.
+pub(crate) const MAX_DUPLICATE_TSNS: usize = 20;
+
 /// A fragmented message may have only one retained DATA chunk. Store that TSN
 /// inline until another fragment is queued.
 #[derive(Debug)]
@@ -128,8 +131,7 @@ impl PayloadQueue {
     pub(crate) fn push(&mut self, p: ChunkPayloadData, cumulative_tsn: u32) -> bool {
         let ok = self.chunk_map.contains_key(&p.tsn);
         if ok || sna32lte(p.tsn, cumulative_tsn) {
-            // Found the packet, log in dups
-            self.dup_tsn.push(p.tsn);
+            self.record_duplicate(p.tsn);
             return false;
         }
 
@@ -179,6 +181,13 @@ impl PayloadQueue {
             self.lookups.set(self.lookups.get() + 1);
         }
         self.chunk_map.get_mut(&tsn)
+    }
+
+    /// Lists a TSN received again for the next SACK, once per repeat (RFC 9260 section 3.3.4).
+    pub(crate) fn record_duplicate(&mut self, tsn: u32) {
+        if self.dup_tsn.len() < MAX_DUPLICATE_TSNS {
+            self.dup_tsn.push(tsn);
+        }
     }
 
     /// popDuplicates returns an array of TSN values that were found duplicate.
