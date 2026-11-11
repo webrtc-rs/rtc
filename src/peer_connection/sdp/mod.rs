@@ -1398,22 +1398,16 @@ pub(crate) fn have_data_channel(
 pub(crate) fn codecs_from_media_description(
     m: &MediaDescription,
 ) -> Result<Vec<RTCRtpCodecParameters>> {
-    let s = SessionDescription {
-        media_descriptions: vec![m.clone()],
-        ..Default::default()
-    };
+    let codecs = m.codecs();
 
     let mut out = vec![];
     for payload_str in &m.media_name.formats {
         let payload_type: PayloadType = payload_str.parse::<u8>()?;
-        let codec = match s.get_codec_for_payload_type(payload_type) {
-            Ok(codec) => codec,
-            Err(err) => {
-                if payload_type == 0 {
-                    continue;
-                }
-                return Err(err);
+        let Some(codec) = codecs.get(&payload_type) else {
+            if payload_type == 0 {
+                continue;
             }
+            return Err(Error::PayloadTypeNotFound);
         };
 
         let channels = codec.encoding_parameters.parse::<u16>().unwrap_or(0);
@@ -1450,6 +1444,36 @@ pub(crate) fn codecs_from_media_description(
     }
 
     Ok(out)
+}
+
+#[test]
+fn codecs_from_media_description_keeps_format_order_and_attributes() {
+    let mut m = MediaDescription::default()
+        .with_value_attribute("rtpmap".to_owned(), "97 rtx/90000".to_owned())
+        .with_value_attribute("fmtp".to_owned(), "97 apt=96".to_owned())
+        .with_value_attribute("rtpmap".to_owned(), "96 VP8/90000".to_owned())
+        .with_value_attribute("rtcp-fb".to_owned(), "96 nack pli".to_owned())
+        .with_value_attribute("rtcp-fb".to_owned(), "96 goog-remb".to_owned());
+    m.media_name.media = "video".to_owned();
+    // Payload type 0 is PCMU's static assignment and may come without an a=rtpmap line.
+    m.media_name.formats = ["96", "0", "97"].map(str::to_owned).to_vec();
+
+    let codecs = codecs_from_media_description(&m).unwrap();
+
+    let payload_types: Vec<_> = codecs.iter().map(|c| c.payload_type).collect();
+    assert_eq!(payload_types, [96, 97]);
+
+    let vp8 = &codecs[0].rtp_codec;
+    assert_eq!(vp8.mime_type, "video/VP8");
+    assert_eq!(vp8.clock_rate, 90000);
+    assert_eq!(vp8.rtcp_feedback.len(), 2);
+    assert_eq!(vp8.rtcp_feedback[0].typ, "nack");
+    assert_eq!(vp8.rtcp_feedback[0].parameter, "pli");
+    assert_eq!(vp8.rtcp_feedback[1].typ, "goog-remb");
+    assert_eq!(codecs[1].rtp_codec.sdp_fmtp_line, "apt=96");
+
+    m.media_name.formats.push("98".to_owned());
+    assert!(codecs_from_media_description(&m).is_err());
 }
 
 pub(crate) fn rtp_extensions_from_media_description(
