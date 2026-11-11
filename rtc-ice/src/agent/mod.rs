@@ -1313,11 +1313,14 @@ impl Agent {
                 }
                 // Continue processing the message after handling role conflict
             } else if m.contains(ATTR_USE_CANDIDATE) {
+                // USE-CANDIDATE only has meaning on the controlled side (RFC 8445 7.3.1.5), and
+                // role conflicts are decided by ICE-CONTROLLING/ICE-CONTROLLED alone. Like
+                // libwebrtc, ignore it and answer the check; the request still goes through the
+                // username and MESSAGE-INTEGRITY checks below.
                 debug!(
-                    "[{}]: useCandidate && a.isControlling == true",
+                    "[{}]: USE-CANDIDATE without ICE-CONTROLLING while controlling; ignoring USE-CANDIDATE and answering the check",
                     self.get_name(),
                 );
-                return Err(Error::ErrUnexpectedStunrequestMessage);
             }
         } else if m.contains(ATTR_ICE_CONTROLLED) {
             // Both agents are controlled - role conflict detected

@@ -51,6 +51,9 @@ pub(crate) struct SctpTransport {
     // `EndpointConfig` in `start()`. None uses the sctp crate default (INITIAL_MTU, 1191).
     pub(crate) mtu: Option<u32>,
 
+    // Streams share the bytes sent by weight (RFC 8260 section 3.6), off by default.
+    pub(crate) weighted_fair_queueing: bool,
+
     pub(crate) internal_buffer: Vec<u8>,
 }
 
@@ -74,8 +77,15 @@ impl SctpTransport {
             negotiated_max_message_size: None,
             max_receive_buffer_size,
             mtu,
+            weighted_fair_queueing: false,
             internal_buffer: vec![],
         }
+    }
+
+    /// Schedules the association `start()` builds by weighted fair queueing.
+    pub(crate) fn with_weighted_fair_queueing(mut self, enabled: bool) -> Self {
+        self.weighted_fair_queueing = enabled;
+        self
     }
 
     pub(crate) fn calc_message_size(remote_max_message_size: u32, can_send_size: u32) -> u32 {
@@ -179,9 +189,15 @@ impl SctpTransport {
         if let Some(mtu) = self.mtu {
             sctp_endpoint_config.max_payload_size(::sctp::max_payload_size_for_mtu(mtu));
         }
+        let scheduler = if self.weighted_fair_queueing {
+            ::sctp::StreamScheduler::WeightedFairQueueing
+        } else {
+            ::sctp::StreamScheduler::FirstComeFirstServed
+        };
         let mut sctp_transport_config = ::sctp::TransportConfig::default()
             .with_max_message_size(max_message_size)
-            .with_sctp_port(local_port);
+            .with_sctp_port(local_port)
+            .with_stream_scheduler(scheduler);
         if let Some(recv_buf) = self.max_receive_buffer_size {
             sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
         }
@@ -414,6 +430,55 @@ mod tests {
                 .endpoint_config()
                 .get_max_payload_size(),
             (1500 - (12 + 16)) & !3
+        );
+    }
+
+    fn scheduler_after_start(transport: SctpTransport) -> ::sctp::StreamScheduler {
+        let mut transport = transport;
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        transport
+            .sctp_transport_config
+            .expect("client transport config")
+            .stream_scheduler()
+    }
+
+    #[test]
+    fn start_applies_weighted_fair_queueing_when_asked() {
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        )
+        .with_weighted_fair_queueing(true);
+        assert_eq!(
+            ::sctp::StreamScheduler::WeightedFairQueueing,
+            scheduler_after_start(transport)
+        );
+    }
+
+    #[test]
+    fn start_keeps_first_come_first_served_by_default() {
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
+        assert_eq!(
+            ::sctp::StreamScheduler::FirstComeFirstServed,
+            scheduler_after_start(transport)
         );
     }
 }

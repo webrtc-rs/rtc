@@ -604,10 +604,15 @@ mod tests {
     /// transmit so a later assertion sees only newly generated output.
     #[cfg(feature = "crypto-ring")]
     fn completed_client_and_server() -> Result<(Endpoint, Endpoint)> {
+        completed_client_and_server_with(&[CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256])
+    }
+
+    /// As [`completed_client_and_server`], over `suites`.
+    #[cfg(feature = "crypto-ring")]
+    fn completed_client_and_server_with(suites: &[CipherSuiteId]) -> Result<(Endpoint, Endpoint)> {
         let provider: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
-        let suites = [CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256];
-        let client_config = config(provider.clone(), true, &suites)?;
-        let server_config = config(provider, false, &suites)?;
+        let client_config = config(provider.clone(), true, suites)?;
+        let server_config = config(provider, false, suites)?;
         let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
         let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
         client.connect(Instant::now(), server_addr(), client_config, None)?;
@@ -1127,6 +1132,91 @@ mod tests {
             )),
             "the connection stopped carrying data back after a forged record"
         );
+        Ok(())
+    }
+
+    /// Once a PSK handshake has completed, a record that fails to decrypt (which anyone spoofing
+    /// the peer's address can send) must be silently discarded, not answered with a fatal alert
+    /// (RFC 6347 §4.1.2.7).
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_record_that_fails_to_decrypt_cannot_close_an_established_psk_connection() -> Result<()> {
+        use crate::content::ContentType;
+        use crate::record_layer::record_layer_header::{PROTOCOL_VERSION1_2, RecordLayerHeader};
+
+        let (mut client, mut server) =
+            completed_client_and_server_with(&[CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256])?;
+
+        let body = [0x5a; 40];
+        let mut forged = vec![];
+        RecordLayerHeader {
+            content_type: ContentType::ApplicationData,
+            protocol_version: PROTOCOL_VERSION1_2,
+            epoch: 1,
+            sequence_number: 1_000_000,
+            content_len: body.len() as u16,
+        }
+        .marshal(&mut forged)
+        .expect("a record header marshals");
+        forged.extend_from_slice(&body);
+
+        let events = server.read(
+            Instant::now(),
+            client_addr(),
+            None,
+            BytesMut::from(&forged[..]),
+        )?;
+        assert!(events.is_empty());
+        assert!(
+            server.poll_transmit().is_none(),
+            "a forged record was answered"
+        );
+
+        // the connection still carries data
+        client.write(Instant::now(), server_addr(), b"still here")?;
+        let events = transfer(&mut client, &mut server, client_addr())?;
+        assert!(events.iter().any(|event| matches!(
+            event,
+            EndpointEvent::ApplicationData(data) if data.as_ref() == b"still here"
+        )));
+        Ok(())
+    }
+
+    /// The other half of that rule: during the handshake a PSK peer whose Finished fails to
+    /// decrypt holds a different key for its identity, and is still told so with a fatal alert.
+    #[cfg(feature = "crypto-ring")]
+    #[test]
+    fn a_psk_handshake_with_the_wrong_key_is_still_answered_with_an_alert() -> Result<()> {
+        use crate::content::ContentType;
+
+        let provider: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
+        let suites = [CipherSuiteId::Tls_Psk_With_Aes_128_Gcm_Sha256];
+        let client_config = Arc::new(
+            ConfigBuilder::default()
+                .with_crypto_provider(provider.clone())
+                .with_cipher_suites(suites.to_vec())
+                .with_psk(Some(Arc::new(|_| Ok(vec![0x01, 0x02, 0x03]))))
+                .with_psk_identity_hint(Some(b"rtc-dtls-test".to_vec()))
+                .build(true, None)?,
+        );
+        let server_config = config(provider, false, &suites)?;
+        let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
+        let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
+        client.connect(Instant::now(), server_addr(), client_config, None)?;
+
+        let mut rejected = None;
+        for _ in 0..4 {
+            if let Err(err) = transfer(&mut client, &mut server, client_addr()) {
+                rejected = Some(err);
+                break;
+            }
+            transfer(&mut server, &mut client, server_addr())?;
+        }
+        assert!(matches!(rejected, Some(Error::ErrAlertFatalOrClose)));
+        let alert = server
+            .poll_transmit()
+            .expect("the server answers with an alert");
+        assert_eq!(alert.message.first(), Some(&(ContentType::Alert as u8)));
         Ok(())
     }
 }

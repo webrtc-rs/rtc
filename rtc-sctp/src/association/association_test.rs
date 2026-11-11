@@ -1676,8 +1676,118 @@ fn test_reconfig_backoff_must_double_once() -> Result<()> {
     Ok(())
 }
 
+const FULL_BUFFER_RECV_BUFFER: u32 = 4096;
+const FULL_BUFFER_MAX_MESSAGE: u32 = 16384;
+const FULL_BUFFER_CHUNK: usize = 1024;
+
+fn full_buffer_association() -> Association {
+    let mut a = create_association(
+        TransportConfig::default()
+            .with_max_receive_buffer_size(FULL_BUFFER_RECV_BUFFER)
+            .with_max_message_size(FULL_BUFFER_MAX_MESSAGE),
+    );
+    assert!(
+        a.create_stream(0, true, PayloadProtocolIdentifier::Binary)
+            .is_some()
+    );
+    a
+}
+
+fn ordered_fragment(tsn: u32, beginning: bool, ending: bool) -> ChunkPayloadData {
+    ChunkPayloadData {
+        beginning_fragment: beginning,
+        ending_fragment: ending,
+        tsn,
+        stream_identifier: 0,
+        stream_sequence_number: 0,
+        payload_type: PayloadProtocolIdentifier::Binary,
+        user_data: Bytes::from(vec![0u8; FULL_BUFFER_CHUNK]),
+        ..Default::default()
+    }
+}
+
+/// A message larger than the receive buffer, but within `max_message_size`, is still
+/// reassembled: the in-sequence chunks that continue it are taken past the buffer.
+#[test]
+fn test_full_buffer_reassembles_message_larger_than_buffer() -> Result<()> {
+    let mut a = full_buffer_association();
+    let first = a.peer_last_tsn.wrapping_add(1);
+    let n = FULL_BUFFER_MAX_MESSAGE as usize / FULL_BUFFER_CHUNK;
+
+    for i in 0..n {
+        let tsn = first.wrapping_add(i as u32);
+        a.handle_data(&ordered_fragment(tsn, i == 0, i == n - 1))?;
+    }
+
+    assert_eq!(
+        first.wrapping_add(n as u32 - 1),
+        a.peer_last_tsn,
+        "every fragment should be accepted"
+    );
+    assert!(a.has_readable_data(), "the message should be readable");
+    Ok(())
+}
+
+/// The in-sequence chunks a full buffer takes are headroom for one message: once a message has
+/// grown past `max_message_size` beyond the buffer without ending, further chunks are refused.
+#[test]
+fn test_full_buffer_in_sequence_headroom_is_one_message() -> Result<()> {
+    let mut a = full_buffer_association();
+    let first = a.peer_last_tsn.wrapping_add(1);
+    let limit = (FULL_BUFFER_RECV_BUFFER + FULL_BUFFER_MAX_MESSAGE) as usize;
+
+    for i in 0..4 * limit / FULL_BUFFER_CHUNK {
+        // Retransmissions of whatever was refused arrive as the same in-sequence TSN.
+        let tsn = a.peer_last_tsn.wrapping_add(1);
+        a.handle_data(&ordered_fragment(tsn, tsn == first, false))?;
+        assert!(
+            a.bytes_in_reassembly_queues() <= limit,
+            "after chunk {i}: {} bytes queued, limit {limit}",
+            a.bytes_in_reassembly_queues()
+        );
+    }
+
+    assert_eq!(limit, a.bytes_in_reassembly_queues());
+    assert_eq!(0, a.get_my_receiver_window_credit());
+    Ok(())
+}
+
+/// Chunks filling a gap below the highest TSN received are subject to the same headroom.
+#[test]
+fn test_full_buffer_gap_fill_headroom_is_one_message() -> Result<()> {
+    let mut a = full_buffer_association();
+    let first = a.peer_last_tsn.wrapping_add(1);
+    let limit = (FULL_BUFFER_RECV_BUFFER + FULL_BUFFER_MAX_MESSAGE) as usize;
+    let span = 4 * limit / FULL_BUFFER_CHUNK;
+
+    // `first` never arrives, so everything after it sits behind a gap.
+    a.handle_data(&ordered_fragment(
+        first.wrapping_add(span as u32 + 1),
+        false,
+        false,
+    ))?;
+    for i in 1..=span {
+        a.handle_data(&ordered_fragment(
+            first.wrapping_add(i as u32),
+            false,
+            false,
+        ))?;
+        assert!(
+            a.bytes_in_reassembly_queues() <= limit,
+            "after chunk {i}: {} bytes queued, limit {limit}",
+            a.bytes_in_reassembly_queues()
+        );
+    }
+
+    assert_eq!(limit, a.bytes_in_reassembly_queues());
+    Ok(())
+}
+
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
 
 #[path = "duplicate_report_test.rs"]
 mod duplicate_report_test;
+
+#[path = "stream_scheduler_test.rs"]
+mod stream_scheduler_test;

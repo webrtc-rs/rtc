@@ -751,14 +751,8 @@ fn test_a_request_over_tcp_is_sent_once_and_times_out_at_ti() -> Result<()> {
         },
         test_crypto_provider(),
     )?;
-    client.allocate(start)?;
-    // allocate() returns the id its authenticated retry will use; the timeout names the
-    // request that was actually sent, so take the id from the wire.
-    let sent = client.poll_write().expect("the request goes out once");
-    let mut request = Message::new();
-    request.raw = sent.message.to_vec();
-    request.decode()?;
-    let tid = request.transaction_id;
+    let tid = client.allocate(start)?;
+    assert!(client.poll_write().is_some(), "the request goes out once");
 
     // Walk every deadline the client asks for, up to just short of Ti.
     let ti = Duration::from_millis(39_500);
@@ -782,7 +776,7 @@ fn test_a_request_over_tcp_is_sent_once_and_times_out_at_ti() -> Result<()> {
     assert!(client.poll_write().is_none(), "not even at the deadline");
     assert!(
         matches!(client.poll_event(), Some(Event::TransactionTimeout(id)) if id == tid),
-        "at Ti the request has timed out"
+        "at Ti the request has timed out, under the id allocate() handed out"
     );
     Ok(())
 }
@@ -810,5 +804,132 @@ fn test_a_request_over_udp_is_still_retransmitted() -> Result<()> {
     );
     client.handle_timeout(first)?;
     assert!(client.poll_write().is_some(), "UDP retransmits");
+    Ok(())
+}
+
+/// A timed-out Allocate is reported under the id [`Client::allocate`] returned — the one the
+/// caller has to match it with. An anonymous Allocate goes out under the id before it, so a
+/// caller that only knows what `allocate()` told it would never recognise the timeout and
+/// could wait on that allocation for ever; the responses already follow this convention.
+#[test]
+fn test_an_allocate_that_is_never_answered_times_out_under_the_id_allocate_returned() -> Result<()>
+{
+    for transport_protocol in [TransportProtocol::UDP, TransportProtocol::TCP] {
+        let start = Instant::now();
+        let mut client = Client::new(
+            ClientConfig {
+                turn_serv_addr: "127.0.0.1:3478".to_owned(),
+                local_addr: "127.0.0.1:50000".parse().unwrap(),
+                transport_protocol,
+                ..Default::default()
+            },
+            test_crypto_provider(),
+        )?;
+        let tid = client.allocate(start)?;
+        while client.poll_write().is_some() {}
+
+        // Every deadline the client asks for, until it has nothing left to wait on.
+        let mut timeout = None;
+        while let Some(deadline) = client.poll_timeout() {
+            client.handle_timeout(deadline)?;
+            while client.poll_write().is_some() {}
+            while let Some(event) = client.poll_event() {
+                if let Event::TransactionTimeout(id) = event {
+                    timeout = Some((id, deadline));
+                }
+            }
+        }
+        let (id, at) = timeout.expect("a server that never answers times the request out");
+        assert_eq!(
+            id, tid,
+            "{transport_protocol:?}: the timeout must name the allocation its caller knows"
+        );
+        assert!(
+            at <= start + Duration::from_millis(39_500),
+            "{transport_protocol:?}: timed out at {:?}",
+            at - start
+        );
+    }
+    Ok(())
+}
+
+/// An error reply to the anonymous Allocate that carries no NONCE, or no REALM — a 400, a 403,
+/// a 486, or a server that simply left the attribute out — is reported as an
+/// [`Event::AllocateError`], and that too has to name the allocation its caller knows: the id
+/// [`Client::allocate`] returned, as a response and now a timeout do. It named the anonymous
+/// request instead, so a caller matching on what `allocate()` told it never saw the error,
+/// and waited on the allocation for ever.
+#[test]
+fn test_an_error_reply_without_a_nonce_is_reported_under_the_id_allocate_returned() -> Result<()> {
+    use stun::error_code::{CODE_BAD_REQUEST, CODE_UNAUTHORIZED, ErrorCode};
+
+    // Neither attribute, and a 401 that remembered the nonce but not the realm.
+    let replies: [(ErrorCode, Option<Nonce>); 2] = [
+        (CODE_BAD_REQUEST, None),
+        (
+            CODE_UNAUTHORIZED,
+            Some(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+        ),
+    ];
+    for (code, nonce) in replies {
+        let start = Instant::now();
+        let local_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        let server_addr: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+        let mut client = Client::new(
+            ClientConfig {
+                turn_serv_addr: server_addr.to_string(),
+                local_addr,
+                transport_protocol: TransportProtocol::UDP,
+                ..Default::default()
+            },
+            test_crypto_provider(),
+        )?;
+        let tid = client.allocate(start)?;
+        let request = client
+            .poll_write()
+            .expect("the anonymous Allocate goes out");
+        let mut sent = Message::new();
+        sent.raw = request.message.to_vec();
+        sent.decode()?;
+
+        let mut attributes: Vec<Box<dyn Setter>> = vec![
+            Box::new(sent.transaction_id),
+            Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_ERROR_RESPONSE)),
+            Box::new(ErrorCodeAttribute {
+                code,
+                reason: b"no".to_vec(),
+            }),
+        ];
+        if let Some(nonce) = nonce {
+            attributes.push(Box::new(nonce));
+        }
+        attributes.push(Box::new(FINGERPRINT));
+        let mut reply = Message::new();
+        reply.build(&attributes)?;
+
+        client.handle_read(TransportMessage {
+            now: start,
+            transport: TransportContext {
+                local_addr,
+                peer_addr: server_addr,
+                transport_protocol: TransportProtocol::UDP,
+                ecn: None,
+            },
+            message: BytesMut::from(&reply.raw[..]),
+        })?;
+
+        let mut error = None;
+        while let Some(event) = client.poll_event() {
+            if let Event::AllocateError(id, err) = event {
+                error = Some((id, err));
+            }
+        }
+        let (id, _) = error.expect("a reply the client cannot authenticate with is an error");
+        assert_eq!(
+            id, tid,
+            "{}: the error must name the allocation its caller knows",
+            code.0
+        );
+    }
     Ok(())
 }
