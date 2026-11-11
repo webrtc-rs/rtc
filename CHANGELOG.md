@@ -112,6 +112,10 @@ see `docs/crypto-provider-migration.md` for before/after examples.
 
 ### Fixed
 
+- ICE: a controlling agent now answers a Binding request that carries USE-CANDIDATE without
+  ICE-CONTROLLING, and ignores the USE-CANDIDATE, instead of dropping it with
+  `ErrUnexpectedStunrequestMessage`. Peers that always act as controlling can now complete ICE
+  ([#299](https://github.com/webrtc-rs/rtc/issues/299)).
 - ICE: the controlling agent now sends a triggered check (RFC 8445 §7.3.1.4) when a Binding
   request arrives on a pair it had marked Failed, so a late-opening direct path is no longer
   lost to the relay ([#282](https://github.com/webrtc-rs/rtc/issues/282)).

@@ -2279,6 +2279,88 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
     Ok(())
 }
 
+/// A controlling agent must answer a Binding request that carries USE-CANDIDATE but no
+/// ICE-CONTROLLING, and ignore the USE-CANDIDATE (RFC 8445 7.3.1.5). Peers that always act as
+/// controlling send checks in this shape.
+#[test]
+fn test_controlling_agent_answers_use_candidate_without_ice_controlling() -> Result<()> {
+    let config = AgentConfig {
+        is_controlling: true,
+        ..Default::default()
+    };
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
+
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    agent.add_local_candidate(host_config.new_candidate_host()?)?;
+    let local_index = 0;
+
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    agent.add_remote_candidate(remote_host_config.new_candidate_host()?)?;
+
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // USE-CANDIDATE without ICE-CONTROLLING.
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(UseCandidateAttr::new()),
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider().crypto(),
+        )),
+        Box::new(FINGERPRINT),
+    ])?;
+    let request_id = msg.transaction_id;
+
+    agent.write_outs.clear();
+    agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr)?;
+
+    let transmit = agent
+        .write_outs
+        .pop_front()
+        .expect("controlling agent must answer the check");
+    let mut response = Message::new();
+    response.unmarshal_binary(&transmit.message)?;
+    assert_eq!(response.typ, BINDING_SUCCESS);
+    assert_eq!(response.transaction_id, request_id);
+
+    // USE-CANDIDATE is ignored: no role switch and no nomination.
+    assert!(agent.is_controlling);
+    assert!(agent.nominated_pair.is_none());
+    assert!(agent.get_selected_pair().is_none());
+
+    agent.close()?;
+    Ok(())
+}
+
 /// Test role conflict when both agents are controlled
 /// RFC 8445 Section 7.3.1.1 - Agent with larger tiebreaker should switch to controlling
 #[test]
