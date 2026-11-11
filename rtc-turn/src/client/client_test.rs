@@ -807,6 +807,230 @@ fn test_a_request_over_udp_is_still_retransmitted() -> Result<()> {
     Ok(())
 }
 
+/// A client with a live allocation at 127.0.0.1:50000, for driving the permission logic
+/// without a server.
+fn relay_client_with_state(base: Instant) -> Result<(UdpSocket, Client, RelayedAddr)> {
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
+        },
+        test_crypto_provider(),
+    )?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            base,
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+    Ok((udp_socket, client, relayed_addr))
+}
+
+/// A CreatePermission response of `class` answering transaction `tid`.
+fn create_permission_response(tid: TransactionId, class: MessageClass) -> Result<Message> {
+    let mut res = Message::new();
+    if class == CLASS_ERROR_RESPONSE {
+        res.build(&[
+            Box::new(tid),
+            Box::new(MessageType::new(METHOD_CREATE_PERMISSION, class)),
+            Box::new(stun::error_code::ErrorCodeAttribute {
+                code: stun::error_code::CODE_FORBIDDEN,
+                reason: b"Forbidden".to_vec(),
+            }),
+        ])?;
+    } else {
+        res.build(&[
+            Box::new(tid),
+            Box::new(MessageType::new(METHOD_CREATE_PERMISSION, class)),
+        ])?;
+    }
+    Ok(res)
+}
+
+/// Requests a permission for `peer` and answers it with a success response.
+fn grant_permission(
+    client: &mut Client,
+    relayed_addr: RelayedAddr,
+    now: Instant,
+    peer: SocketAddr,
+) -> Result<()> {
+    let tid = client
+        .relay(relayed_addr)?
+        .create_permission(now, peer)?
+        .expect("a CreatePermission request for a new peer IP");
+    while client.poll_write().is_some() {}
+    let res = create_permission_response(tid, CLASS_SUCCESS_RESPONSE)?;
+    client
+        .relay(relayed_addr)?
+        .handle_create_permission_response(res, Some(peer))
+}
+
+/// A TURN permission covers the peer's IP address and ignores the port (RFC 8656 §9), so once
+/// one port of an IP is permitted, every other port of that IP is reachable without another
+/// CreatePermission.
+#[test]
+fn test_permission_covers_every_port_of_the_peer_ip() -> Result<()> {
+    let base = Instant::now();
+    let (_conn, mut client, relayed_addr) = relay_client_with_state(base)?;
+
+    let peer: SocketAddr = "10.0.0.5:4000".parse().unwrap();
+    let same_ip_other_port: SocketAddr = "10.0.0.5:4001".parse().unwrap();
+    let other_ip: SocketAddr = "10.0.0.6:4000".parse().unwrap();
+
+    grant_permission(&mut client, relayed_addr, base, peer)?;
+    match client.poll_event() {
+        Some(Event::CreatePermissionResponse(_, addr)) => assert_eq!(addr, peer),
+        other => panic!("expected CreatePermissionResponse, got {other:?}"),
+    }
+
+    client
+        .relay(relayed_addr)?
+        .send_to(base, b"x", same_ip_other_port)?;
+    assert!(
+        client.poll_write().is_some(),
+        "data for another port of a permitted IP must be sent"
+    );
+    while client.poll_write().is_some() {}
+
+    assert_eq!(
+        client
+            .relay(relayed_addr)?
+            .create_permission(base, same_ip_other_port)?,
+        None,
+        "the permission for the IP is already in place"
+    );
+    assert!(
+        client.poll_write().is_none(),
+        "no CreatePermission is sent for an already-permitted IP"
+    );
+
+    assert!(matches!(
+        client.relay(relayed_addr)?.send_to(base, b"x", other_ip),
+        Err(Error::ErrNoPermission)
+    ));
+
+    Ok(())
+}
+
+/// Refreshes carry one XOR-PEER-ADDRESS per permitted IP, not one per port seen.
+#[test]
+fn test_permission_refresh_sends_one_peer_address_per_ip() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+    let (_conn, mut client, relayed_addr) = relay_client_with_state(base)?;
+
+    grant_permission(
+        &mut client,
+        relayed_addr,
+        t(0),
+        "10.0.0.5:4000".parse().unwrap(),
+    )?;
+    assert_eq!(
+        client
+            .relay(relayed_addr)?
+            .create_permission(t(0), "10.0.0.5:4001".parse().unwrap())?,
+        None
+    );
+    grant_permission(
+        &mut client,
+        relayed_addr,
+        t(0),
+        "10.0.0.6:5000".parse().unwrap(),
+    )?;
+
+    client.relay(relayed_addr)?.handle_timeout(t(120));
+    let transmit = client
+        .poll_write()
+        .expect("permissions are refreshed after the refresh interval");
+    let mut msg = Message::new();
+    msg.raw = transmit.message.to_vec();
+    msg.decode()?;
+    assert_eq!(msg.typ.method, METHOD_CREATE_PERMISSION);
+
+    let mut ips = HashSet::new();
+    let mut count = 0;
+    for attr in msg
+        .attributes
+        .0
+        .iter()
+        .filter(|attr| attr.typ == ATTR_XOR_PEER_ADDRESS)
+    {
+        count += 1;
+        let mut one = Message::new();
+        one.transaction_id = msg.transaction_id;
+        one.add(ATTR_XOR_PEER_ADDRESS, &attr.value);
+        let mut peer = crate::proto::peeraddr::PeerAddress::default();
+        peer.get_from(&one)?;
+        ips.insert(peer.ip);
+    }
+    assert_eq!(count, 2, "one XOR-PEER-ADDRESS per permitted IP");
+    assert_eq!(
+        ips,
+        HashSet::from([
+            "10.0.0.5".parse::<std::net::IpAddr>().unwrap(),
+            "10.0.0.6".parse().unwrap(),
+        ])
+    );
+
+    Ok(())
+}
+
+/// Two requests in flight for different ports of one IP share a permission. If one succeeds and
+/// the other fails, the failure must not revoke the granted permission.
+#[test]
+fn test_failed_create_permission_keeps_granted_permission() -> Result<()> {
+    let base = Instant::now();
+    let (_conn, mut client, relayed_addr) = relay_client_with_state(base)?;
+
+    let first: SocketAddr = "10.0.0.5:4000".parse().unwrap();
+    let second: SocketAddr = "10.0.0.5:4001".parse().unwrap();
+
+    let tid_first = client
+        .relay(relayed_addr)?
+        .create_permission(base, first)?
+        .expect("a request while the IP is not yet permitted");
+    let tid_second = client
+        .relay(relayed_addr)?
+        .create_permission(base, second)?
+        .expect("a request while the IP is not yet permitted");
+    while client.poll_write().is_some() {}
+
+    let ok = create_permission_response(tid_first, CLASS_SUCCESS_RESPONSE)?;
+    client
+        .relay(relayed_addr)?
+        .handle_create_permission_response(ok, Some(first))?;
+    let err = create_permission_response(tid_second, CLASS_ERROR_RESPONSE)?;
+    client
+        .relay(relayed_addr)?
+        .handle_create_permission_response(err, Some(second))?;
+
+    assert!(matches!(
+        client.poll_event(),
+        Some(Event::CreatePermissionResponse(_, addr)) if addr == first
+    ));
+    assert!(matches!(
+        client.poll_event(),
+        Some(Event::CreatePermissionError(tid, _)) if tid == tid_second
+    ));
+
+    client.relay(relayed_addr)?.send_to(base, b"x", second)?;
+
 /// A timed-out Allocate is reported under the id [`Client::allocate`] returned — the one the
 /// caller has to match it with. An anonymous Allocate goes out under the id before it, so a
 /// caller that only knows what `allocate()` told it would never recognise the timeout and

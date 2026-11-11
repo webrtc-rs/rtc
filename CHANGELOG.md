@@ -162,6 +162,10 @@ tables and methodology.
 
 - Add RSA as an allowed private key kind in rtc_dtls::ConfigBuilder::
   validate- [PR #141](https://github.com/webrtc-rs/rtc/pull/141)
+- `rtc-turn`: client permissions are now tracked per peer IP address, as RFC 8656 §9 specifies,
+  instead of per IP and port. `Relay::send_to` to another port of an already-permitted IP no
+  longer fails with `ErrNoPermission`, and permission refreshes send one XOR-PEER-ADDRESS per IP
+  ([#304](https://github.com/webrtc-rs/rtc/issues/304)).
 
 ### Security
 

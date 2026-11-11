@@ -1,6 +1,6 @@
 use log::{debug, warn};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::ops::Add;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
@@ -49,7 +49,9 @@ pub(crate) struct RelayState {
     pub(crate) nonce: Nonce,
     pub(crate) lifetime: Duration,
     allocation_refresh_interval_cap: Option<Duration>,
-    perm_map: HashMap<SocketAddr, Permission>,
+    // Keyed by peer IP: a permission covers the IP address only and ignores the port
+    // (RFC 8656 §9).
+    perm_map: HashMap<IpAddr, Permission>,
     refresh_alloc_timer: Instant,
     refresh_perms_timer: Instant,
 }
@@ -108,6 +110,9 @@ impl Relay<'_> {
     /// five minutes unless refreshed. Returns the transaction id to match against the resulting
     /// [`Event`], or `None` if a permission is already in place.
     ///
+    /// A permission covers every port of `peer_addr`'s IP address (RFC 8656 §9), so once one is
+    /// granted, other ports on the same IP need no further request.
+    ///
     /// # Errors
     ///
     /// Fails if the allocation no longer exists or the request cannot be encoded.
@@ -117,13 +122,11 @@ impl Relay<'_> {
         peer_addr: SocketAddr,
     ) -> Result<Option<TransactionId>> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            relay
+            let perm = relay
                 .perm_map
-                .entry(peer_addr)
-                .or_insert_with(Permission::default);
-            if let Some(perm) = relay.perm_map.get(&peer_addr)
-                && perm.state() == PermState::Idle
-            {
+                .entry(peer_addr.ip())
+                .or_insert_with(|| Permission::new(peer_addr));
+            if perm.state() == PermState::Idle {
                 return Ok(Some(self.create_permissions(
                     now,
                     &[peer_addr],
@@ -190,11 +193,11 @@ impl Relay<'_> {
     ///
     /// # Errors
     ///
-    /// Fails if the allocation is gone, or if no permission exists for `peer_addr`.
+    /// Fails if the allocation is gone, or if no permission exists for `peer_addr`'s IP address.
     pub fn send_to(&mut self, now: Instant, p: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // check if we have a permission for the destination IP addr
         let result = if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
+            if let Some(perm) = relay.perm_map.get(&peer_addr.ip()) {
                 if perm.state() != PermState::Permitted {
                     Err(Error::ErrNoPermission)
                 } else {
@@ -376,10 +379,18 @@ impl Relay<'_> {
                     self.client
                         .events
                         .push_back(Event::CreatePermissionError(res.transaction_id, err));
-                    relay.perm_map.remove(&peer_addr);
+                    // A failed request never revokes a permission that is already granted, e.g.
+                    // by an earlier request for another port on the same IP.
+                    if relay
+                        .perm_map
+                        .get(&peer_addr.ip())
+                        .is_some_and(|perm| perm.state() != PermState::Permitted)
+                    {
+                        relay.perm_map.remove(&peer_addr.ip());
+                    }
                 }
             } else if let Some(peer_addr) = peer_addr_opt
-                && let Some(perm) = relay.perm_map.get_mut(&peer_addr)
+                && let Some(perm) = relay.perm_map.get_mut(&peer_addr.ip())
             {
                 perm.set_state(PermState::Permitted);
                 self.client
@@ -480,8 +491,8 @@ impl Relay<'_> {
 
     pub(super) fn refresh_permissions(&mut self, now: Instant) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            #[allow(clippy::map_clone)]
-            let addrs: Vec<SocketAddr> = relay.perm_map.keys().map(|addr| *addr).collect();
+            // One XOR-PEER-ADDRESS per permitted IP.
+            let addrs: Vec<SocketAddr> = relay.perm_map.values().map(Permission::addr).collect();
             if addrs.is_empty() {
                 debug!("no permission to refresh");
                 return Ok(());
