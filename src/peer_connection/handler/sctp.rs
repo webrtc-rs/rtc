@@ -61,6 +61,22 @@ pub(crate) struct SctpHandlerContext {
     /// and a stream this side opened itself is never reconfigured by the peer.
     peer_opened_streams: HashSet<(AssociationHandle, StreamId)>,
 
+    /// Associations that came up here and whose `SCTPHandshakeComplete` still waits in
+    /// `event_outs`.
+    ///
+    /// Their inbound data is held back (parked in `pending_readable`) until the event has
+    /// been handed on. The event and the data travel by different queues: `Event::Connected` becomes
+    /// an event, which the pipeline hands on in `poll_event`, while a `Readable` stream
+    /// becomes a read, which it hands on within the same `handle_read`. Data that came in the
+    /// same sweep as the COOKIE ACK (or ECHO) that brought the association up — a peer may
+    /// send the moment its own side is up — would otherwise reach the data channel handler
+    /// before the event on which that handler opens the negotiated channels: the message
+    /// finds its channel not open yet and is dropped, though SCTP has already acknowledged
+    /// it. [`SctpHandler::poll_event`] takes the association out of here as it hands the
+    /// event on, and the pipeline pumps the reads right after the events, so the held data
+    /// follows at once.
+    unannounced: HashSet<AssociationHandle>,
+
     /// Transport context of the most recent inbound datagram, **per association**.
     ///
     /// A resumed drain has no triggering packet to copy this from. A single `last_transport`
@@ -95,6 +111,7 @@ impl SctpHandlerContext {
             abort_requested: false,
             pending_readable: HashSet::new(),
             peer_opened_streams: HashSet::new(),
+            unannounced: HashSet::new(),
             association_transport: HashMap::new(),
             now,
         }
@@ -166,6 +183,7 @@ impl<'a> SctpHandler<'a> {
     fn drain_stream(
         ctx_pending: &mut HashSet<(AssociationHandle, StreamId)>,
         peer_opened: &mut HashSet<(AssociationHandle, StreamId)>,
+        unannounced: &HashSet<AssociationHandle>,
         conn: &mut Association,
         ch: AssociationHandle,
         id: StreamId,
@@ -180,7 +198,11 @@ impl<'a> SctpHandler<'a> {
         // established, and an immediate application send cannot be transmitted
         // reliably.  Keep the chunk in SCTP's reassembly queue and let the
         // level-triggered pending path retry it after Event::Connected.
-        if conn.is_handshaking() {
+        //
+        // Nor once it is established but its `SCTPHandshakeComplete` has not reached the
+        // DataChannel handler yet (see `SctpHandlerContext::unannounced`): that handler opens
+        // the negotiated channels on that event, and would drop data for one not open yet.
+        if conn.is_handshaking() || unannounced.contains(&ch) {
             ctx_pending.insert((ch, id));
             return Ok(());
         }
@@ -292,6 +314,7 @@ impl<'a> SctpHandler<'a> {
             Self::drain_stream(
                 &mut self.ctx.pending_readable,
                 &mut self.ctx.peer_opened_streams,
+                &self.ctx.unannounced,
                 conn,
                 ch,
                 id,
@@ -345,6 +368,7 @@ impl<'a> SctpHandler<'a> {
         }
         self.ctx.pending_readable.clear();
         self.ctx.peer_opened_streams.clear();
+        self.ctx.unannounced.clear();
         self.flush_transmits(self.ctx.now);
     }
 
@@ -470,6 +494,8 @@ impl<'a>
                                     now,
                                     event: RTCEventInternal::SCTPHandshakeComplete(ch.0),
                                 });
+                                // Its data waits for the event (see `unannounced`).
+                                self.ctx.unannounced.insert(*ch);
                             }
                             Event::AssociationLost { reason, id } => {
                                 debug!("association_handle {} is closed due to {}", ch.0, reason);
@@ -489,6 +515,7 @@ impl<'a>
                                 Self::drain_stream(
                                     &mut self.ctx.pending_readable,
                                     &mut self.ctx.peer_opened_streams,
+                                    &self.ctx.unannounced,
                                     conn,
                                     *ch,
                                     id,
@@ -561,6 +588,7 @@ impl<'a>
                     self.ctx.association_transport.remove(&ch);
                     self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
                     self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
+                    self.ctx.unannounced.remove(&ch);
                 }
             }
 
@@ -819,6 +847,7 @@ impl<'a>
             }
             self.ctx.pending_readable.clear();
             self.ctx.peer_opened_streams.clear();
+            self.ctx.unannounced.clear();
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -827,7 +856,13 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.ctx.event_outs.pop_front()
+        let evt = self.ctx.event_outs.pop_front()?;
+        // The next handler takes this event before any read the pipeline pumps after it, so
+        // the association's data may follow from now on (see `SctpHandlerContext::unannounced`).
+        if let RTCEventInternal::SCTPHandshakeComplete(handle) = &evt.event {
+            self.ctx.unannounced.remove(&AssociationHandle(*handle));
+        }
+        Some(evt)
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
@@ -873,6 +908,7 @@ impl<'a>
             self.ctx.association_transport.remove(&ch);
             self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
             self.ctx.peer_opened_streams.retain(|(pch, _)| *pch != ch);
+            self.ctx.unannounced.remove(&ch);
         }
 
         for transmit in transmits {
@@ -1489,21 +1525,35 @@ mod tests {
             "the readable stream must be retried after SCTP connects"
         );
 
-        {
+        let inbound = {
             let mut handler = SctpHandler::new(&mut ctx, 0);
             for dgram in cookie_ack {
                 handler
                     .handle_read(raw_read(now, dgram))
                     .expect("COOKIE-ACK");
             }
-        }
+            // Established now, but the event that says so has not gone on yet: the data
+            // waits for it (the DataChannel handler opens negotiated channels on that event).
+            assert!(
+                handler.poll_read().is_none(),
+                "data must not overtake SCTPHandshakeComplete"
+            );
+            let mut announced = false;
+            while let Some(evt) = handler.poll_event() {
+                announced |= matches!(evt.event, RTCEventInternal::SCTPHandshakeComplete(_));
+            }
+            assert!(announced, "the association must say it is up");
+            handler.poll_read().expect("delivered DCEP")
+        };
 
         assert!(
             ctx.pending_readable.is_empty(),
             "the stream must be drained after SCTP becomes established"
         );
-        assert_eq!(ctx.read_outs.len(), 1, "early DCEP must be delivered once");
-        let inbound = ctx.read_outs.pop_front().expect("delivered DCEP");
+        assert!(
+            ctx.read_outs.is_empty(),
+            "early DCEP must be delivered once"
+        );
         assert!(matches!(
             &inbound.message,
             RTCMessageInternal::Dtls(DTLSMessage::Sctp(data))
@@ -1537,6 +1587,41 @@ mod tests {
             )),
             "the DataChannel Open event must follow SCTP establishment"
         );
+    }
+
+    /// Data the peer sends the moment its side is up can arrive in the same sweep as the
+    /// COOKIE-ACK that brings this side up. It must not reach the DataChannel handler before
+    /// the `SCTPHandshakeComplete` on which that handler opens the negotiated channels, or the
+    /// handler drops it for a channel not open yet, after SCTP has acknowledged it.
+    #[test]
+    fn data_right_after_cookie_ack_waits_for_the_handshake_event() {
+        let now = Instant::now();
+        let (mut ctx, cookie_ack, early_data) = client_with_data_before_cookie_ack();
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        for dgram in cookie_ack.into_iter().chain(early_data) {
+            handler
+                .handle_read(raw_read(now, dgram))
+                .expect("COOKIE-ACK, then DATA");
+        }
+        // The pipeline pumps this handler's reads within `handle_read`, before its events.
+        assert!(
+            handler.poll_read().is_none(),
+            "data must not overtake SCTPHandshakeComplete"
+        );
+        let mut announced = false;
+        while let Some(evt) = handler.poll_event() {
+            announced |= matches!(evt.event, RTCEventInternal::SCTPHandshakeComplete(_));
+        }
+        assert!(announced, "the association must say it is up");
+        let inbound = handler
+            .poll_read()
+            .expect("the data, once the event has gone");
+        assert!(matches!(
+            &inbound.message,
+            RTCMessageInternal::Dtls(DTLSMessage::Sctp(data))
+                if data.ppi == PayloadProtocolIdentifier::Dcep
+        ));
+        assert!(handler.poll_read().is_none(), "delivered once");
     }
 
     /// With the pipeline already at its bound, inbound DATA must be left in the reassembly
@@ -2600,8 +2685,9 @@ mod tests {
     }
 
     /// The OPEN arrives in the same flight as the end of the handshake, before COOKIE-ACK. It is
-    /// held in the reassembly queue and drained by the resume after the association connects,
-    /// not by the `Readable` that announced it, and must still configure the stream.
+    /// held in the reassembly queue and drained by the resume once the association has
+    /// connected and its `SCTPHandshakeComplete` has gone on, not by the `Readable` that
+    /// announced it, and must still configure the stream.
     #[test]
     fn an_open_received_before_cookie_ack_still_configures_the_stream() {
         let now = Instant::now();
@@ -2620,9 +2706,17 @@ mod tests {
         );
 
         client_read(&mut ctx, 0, cookie_ack, now);
-        assert_eq!(
-            ctx.read_outs.len(),
-            1,
+        let delivered = {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            while handler.poll_event().is_some() {}
+            handler.poll_read()
+        };
+        assert!(
+            matches!(
+                delivered.as_ref().map(|m| &m.message),
+                Some(RTCMessageInternal::Dtls(DTLSMessage::Sctp(m)))
+                    if m.ppi == PayloadProtocolIdentifier::Dcep && m.stream_id == PEER_STREAM
+            ),
             "precondition: the OPEN is delivered"
         );
         assert!(
