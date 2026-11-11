@@ -125,19 +125,14 @@ impl RTCRtpSenderInternal {
         }
 
         let rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Sendonly);
+            .clone_to()
+            .get_rtp_parameters_by_kind(kind, RTCRtpTransceiverDirection::Sendonly);
 
         Some(RTCRtpCapabilities {
-            codecs: self
-                .send_codecs
-                .iter()
-                .filter(|codec| {
-                    codec
-                        .rtp_codec
-                        .mime_type
-                        .contains(kind.to_string().as_str())
-                })
-                .map(|codec| codec.rtp_codec.clone())
+            codecs: rtp_parameters
+                .codecs
+                .into_iter()
+                .map(|codec| codec.rtp_codec)
                 .collect(),
             header_extensions: rtp_parameters
                 .header_extensions

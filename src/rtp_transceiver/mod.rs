@@ -110,6 +110,7 @@ use shared::error::Result;
 
 pub(crate) mod direction;
 pub(crate) mod fmtp;
+pub mod h264;
 pub(crate) mod internal;
 pub mod rtp_receiver;
 pub mod rtp_sender;

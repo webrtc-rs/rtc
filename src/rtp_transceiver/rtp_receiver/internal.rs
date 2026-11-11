@@ -8,7 +8,7 @@ use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, RtpCodecKind, codec_parameters_fuzzy_search, find_fec_payload_type,
-    find_rtx_payload_type, is_repair_codec, parse_rtx_apt,
+    find_rtx_payload_type,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
@@ -80,19 +80,14 @@ impl RTCRtpReceiverInternal {
         }
 
         let rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
+            .clone_to()
+            .get_rtp_parameters_by_kind(kind, RTCRtpTransceiverDirection::Recvonly);
 
         Some(RTCRtpCapabilities {
-            codecs: self
-                .receive_codecs
-                .iter()
-                .filter(|codec| {
-                    codec
-                        .rtp_codec
-                        .mime_type
-                        .contains(kind.to_string().as_str())
-                })
-                .map(|codec| codec.rtp_codec.clone())
+            codecs: rtp_parameters
+                .codecs
+                .into_iter()
+                .map(|codec| codec.rtp_codec)
                 .collect(),
             header_extensions: rtp_parameters
                 .header_extensions
@@ -110,8 +105,7 @@ impl RTCRtpReceiverInternal {
             let mut rtp_parameters = media_engine
                 .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
 
-            rtp_parameters.codecs =
-                RTCRtpReceiverInternal::get_codecs(&self.receive_codecs, self.kind(), media_engine);
+            rtp_parameters.codecs = self.receive_codecs.clone();
 
             self.last_returned_parameters = Some(RTCRtpReceiveParameters { rtp_parameters });
         }
@@ -129,54 +123,6 @@ impl RTCRtpReceiverInternal {
         &self,
     ) -> impl Iterator<Item = &RTCRtpSynchronizationSource> {
         self.synchronization_sources.iter()
-    }
-
-    pub(crate) fn get_codecs(
-        codecs: &[RTCRtpCodecParameters],
-        kind: RtpCodecKind,
-        media_engine: &MediaEngine,
-    ) -> Vec<RTCRtpCodecParameters> {
-        let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
-        if codecs.is_empty() {
-            return media_engine_codecs;
-        }
-        let mut filtered_codecs = vec![];
-        for codec in codecs {
-            let (c, match_type) =
-                codec_parameters_fuzzy_search(&codec.rtp_codec, &media_engine_codecs);
-            if match_type != CodecMatch::None {
-                filtered_codecs.push(c);
-            }
-        }
-
-        // Repair codecs survive the filter. They are not alternative media formats to choose
-        // between — they accompany whichever primary was chosen — so W3C `setCodecPreferences`
-        // leaves them in place, and dropping them here would produce an offer no peer can act on:
-        // an `a=ssrc-group:FEC-FR` naming a repair SSRC with no `a=rtpmap:<pt> flexfec-03/90000`
-        // to give it a format, and likewise `a=ssrc-group:FID` with no `rtx` codec.
-        for codec in &media_engine_codecs {
-            if !is_repair_codec(&codec.rtp_codec)
-                || filtered_codecs
-                    .iter()
-                    .any(|filtered| filtered.payload_type == codec.payload_type)
-            {
-                continue;
-            }
-
-            // An RTX codec repairs one specific primary (RFC 4588 `apt`), so it belongs here only
-            // when that primary survived. FEC and RED are not bound to a payload type and always do.
-            if let Some(apt) = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
-                && !filtered_codecs
-                    .iter()
-                    .any(|filtered| filtered.payload_type == apt)
-            {
-                continue;
-            }
-
-            filtered_codecs.push(codec.clone());
-        }
-
-        filtered_codecs
     }
 
     pub(crate) fn get_coding_parameters(&self) -> &[RTCRtpCodingParameters] {
@@ -505,6 +451,11 @@ mod repair_association_test {
             .map(|e| e.rtp_coding_parameters.clone())
             .collect();
         let mut receiver = RTCRtpReceiverInternal::new(RtpCodecKind::Video, codings);
+        receiver.set_codec_preferences(
+            media_engine
+                .get_local_codecs_by_kind(RtpCodecKind::Video)
+                .to_vec(),
+        );
         receiver.set_track(MediaStreamTrack::new(
             "stream".to_owned(),
             "track".to_owned(),

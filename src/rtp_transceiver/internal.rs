@@ -1,10 +1,13 @@
 use crate::media_stream::MediaStreamTrack;
-use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
+use crate::peer_connection::configuration::media_engine::{
+    MIME_TYPE_H264, MIME_TYPE_RTX, MediaEngine,
+};
 use crate::peer_connection::sdp::codecs_from_media_description;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    CodecMatch, codec_parameters_fuzzy_search, find_rtx_payload_type,
+    CodecMatch, codec_parameters_fuzzy_search, find_rtx_payload_type, is_repair_codec,
+    parse_rtx_apt, rtcp_feedback_intersection,
 };
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodecParameters, RtpCodecKind};
 use crate::rtp_transceiver::{
@@ -14,8 +17,8 @@ use interceptor::Interceptor;
 use log::trace;
 use sdp::MediaDescription;
 use shared::error::{Error, Result};
+use std::collections::HashMap;
 use std::fmt;
-use unicase::UniCase;
 
 /// Internal representation of an RTP transceiver.
 ///
@@ -218,20 +221,12 @@ impl RTCRtpTransceiverInternal {
         media_engine: &MediaEngine,
     ) -> Result<()> {
         for codec in &codecs {
-            let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind());
+            let media_engine_codecs = media_engine.get_local_codecs_by_kind(self.kind());
             let (_, match_type) =
                 codec_parameters_fuzzy_search(&codec.rtp_codec, &media_engine_codecs);
             if match_type == CodecMatch::None {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
             }
-        }
-
-        if let Some(sender) = self.sender_mut() {
-            sender.set_codec_preferences(codecs.clone());
-        }
-
-        if let Some(receiver) = self.receiver_mut() {
-            receiver.set_codec_preferences(codecs.clone());
         }
 
         self.preferred_codecs = codecs;
@@ -245,7 +240,33 @@ impl RTCRtpTransceiverInternal {
 
     /// Codecs returns list of supported codecs
     pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        RTCRtpReceiverInternal::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
+        let local = media_engine.get_local_codecs_by_kind(self.kind());
+        if self.preferred_codecs.is_empty() {
+            return local.to_vec();
+        }
+        let mut codecs = vec![];
+        for preferred in &self.preferred_codecs {
+            let (registered, matching) = codec_parameters_fuzzy_search(&preferred.rtp_codec, local);
+            if matching != CodecMatch::None {
+                let mut codec = preferred.clone();
+                codec.payload_type = registered.payload_type;
+                codecs.push(codec);
+            }
+        }
+        // Repair codecs accompany their selected primary; they are not competing
+        // formats. RTX's apt must still refer to a primary in this media section.
+        for codec in local {
+            if is_repair_codec(&codec.rtp_codec)
+                && !codecs
+                    .iter()
+                    .any(|selected| selected.payload_type == codec.payload_type)
+                && parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
+                    .is_none_or(|apt| codecs.iter().any(|selected| selected.payload_type == apt))
+            {
+                codecs.push(codec.clone());
+            }
+        }
+        codecs
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
@@ -290,34 +311,111 @@ impl RTCRtpTransceiverInternal {
         }
     }
 
-    // match codecs from remote description, used when remote is offerer and creating a transceiver
-    // from remote description with the aim of keeping order of codecs in remote description.
-    pub(crate) fn set_codec_preferences_from_remote_description(
-        &mut self,
+    // Match this media section without replacing the application's local preferences.
+    pub(crate) fn get_codecs_for_remote_description(
+        &self,
         media: &MediaDescription,
         media_engine: &MediaEngine,
-    ) -> Result<()> {
+        answer: bool,
+    ) -> Result<Vec<RTCRtpCodecParameters>> {
         let mut remote_codecs = codecs_from_media_description(media)?;
 
-        // make a copy as this slice is modified
-        let mut left_codecs = media_engine.get_codecs_by_kind(self.kind);
+        let mut left_codecs = self.get_codecs(media_engine);
 
-        // find codec matches between what is in remote description and
-        // the transceivers codecs and use payload type registered to
-        // media engine.
-        // For RTX re-mapping later. Ordered, not a map: the RTX pass below walks these in turn
-        // and appends a codec per entry, so a `HashMap` would place the answer's rtx formats in
-        // a different order on every run. Each pass fills its own list and hands it over, so the
-        // whole stays in step with `filtered_codecs`: exact matches first, then partial, each in
-        // the offer's order.
+        if !answer {
+            // A new offer advertises local preferences, including formats that
+            // were not selected previously. Reuse existing payload numbers, not
+            // the previous peer's receive limits or codec/feedback selection.
+            let mut mapping = HashMap::new();
+            let mut unmatched = remote_codecs.clone();
+            for codec in &left_codecs {
+                if codec
+                    .rtp_codec
+                    .mime_type
+                    .eq_ignore_ascii_case(MIME_TYPE_RTX)
+                {
+                    continue;
+                }
+                let (previous, matching) =
+                    codec_parameters_fuzzy_search(&codec.rtp_codec, &unmatched);
+                if matching == CodecMatch::Exact {
+                    mapping.insert(codec.payload_type, previous.payload_type);
+                    unmatched.retain(|codec| codec.payload_type != previous.payload_type);
+                }
+            }
+            for codec in &left_codecs {
+                if let Some(apt) = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line) {
+                    if let Some(payload) = mapping
+                        .get(&apt)
+                        .and_then(|previous| find_rtx_payload_type(*previous, &remote_codecs))
+                    {
+                        mapping.insert(codec.payload_type, payload);
+                    }
+                }
+            }
+
+            // Newly offered formats must not reuse a payload number belonging
+            // to a different format in the existing description (RFC 3264 8.3.2).
+            let mut used: Vec<_> = remote_codecs
+                .iter()
+                .map(|codec| codec.payload_type)
+                .collect();
+            for codec in &left_codecs {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    mapping.entry(codec.payload_type)
+                {
+                    let assigned = if !used.contains(&codec.payload_type) {
+                        codec.payload_type
+                    } else {
+                        (96..=127)
+                            .chain(35..=63)
+                            .find(|candidate| {
+                                !used.contains(candidate)
+                                    && !left_codecs
+                                        .iter()
+                                        .any(|codec| codec.payload_type == *candidate)
+                            })
+                            .ok_or_else(|| Error::Other("no unused dynamic payload type".into()))?
+                    };
+                    entry.insert(assigned);
+                    used.push(assigned);
+                }
+            }
+            for codec in &mut left_codecs {
+                if let Some(apt) = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
+                    && let Some(payload) = mapping.get(&apt)
+                {
+                    codec.rtp_codec.sdp_fmtp_line = codec
+                        .rtp_codec
+                        .sdp_fmtp_line
+                        .split(';')
+                        .map(|part| {
+                            if part.trim().starts_with("apt=") {
+                                format!("apt={payload}")
+                            } else {
+                                part.to_owned()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(";");
+                }
+                codec.payload_type = mapping[&codec.payload_type];
+            }
+            return Ok(left_codecs);
+        }
+
+        // Retain the remote payload numbers and order. Pair them with local
+        // payloads only to find the corresponding registered RTX capability.
         let mut payload_mapping: Vec<(PayloadType, PayloadType)> = vec![];
         let mut filter_by_match = |match_filter: CodecMatch| -> Vec<RTCRtpCodecParameters> {
             let mut filtered_codecs = vec![];
             let mut pass_mapping = vec![];
             for remote_codec_idx in (0..remote_codecs.len()).rev() {
                 let remote_codec = &mut remote_codecs[remote_codec_idx];
-                if UniCase::new(remote_codec.rtp_codec.mime_type.as_str())
-                    == UniCase::new(MIME_TYPE_RTX)
+                if remote_codec
+                    .rtp_codec
+                    .mime_type
+                    .eq_ignore_ascii_case(MIME_TYPE_RTX)
                 {
                     continue;
                 }
@@ -325,39 +423,37 @@ impl RTCRtpTransceiverInternal {
                 let (match_codec, match_type) =
                     codec_parameters_fuzzy_search(&remote_codec.rtp_codec, &left_codecs);
                 if match_type == match_filter {
+                    let mut selected = remote_codec.clone();
+                    if selected
+                        .rtp_codec
+                        .mime_type
+                        .eq_ignore_ascii_case(MIME_TYPE_H264)
+                        && match_type == CodecMatch::Exact
+                    {
+                        let Some(fmtp) = fmtp::h264::answer_fmtp(
+                            &match_codec.rtp_codec.sdp_fmtp_line,
+                            &remote_codec.rtp_codec.sdp_fmtp_line,
+                        ) else {
+                            continue;
+                        };
+                        selected.rtp_codec.sdp_fmtp_line = fmtp;
+                    }
+                    selected.rtp_codec.rtcp_feedback = rtcp_feedback_intersection(
+                        &match_codec.rtp_codec.rtcp_feedback,
+                        &remote_codec.rtp_codec.rtcp_feedback,
+                    );
                     pass_mapping.insert(0, (remote_codec.payload_type, match_codec.payload_type));
 
-                    remote_codec.payload_type = match_codec.payload_type;
                     // The scan runs backwards so that matched entries can be removed by index,
                     // so prepend to undo it: an answer must keep the offer's codec order (the
                     // offerer reads it back as our preference). Appending here would make the
                     // answer lead with the offer's *last* codec.
-                    filtered_codecs.insert(0, remote_codec.clone());
+                    filtered_codecs.insert(0, selected);
 
                     // removed matched codec for next round
                     remote_codecs.remove(remote_codec_idx);
 
-                    let needle_fmtp = fmtp::parse(
-                        match_codec.rtp_codec.mime_type.as_str(),
-                        //match_codec.RTPCodecCapability.ClockRate,
-                        //match_codec.RTPCodecCapability.Channels,
-                        match_codec.rtp_codec.sdp_fmtp_line.as_str(),
-                    );
-
-                    for left_codec_idx in (0..left_codecs.len()).rev() {
-                        let left_codec = &left_codecs[left_codec_idx];
-                        let left_codec_fmtp = fmtp::parse(
-                            left_codec.rtp_codec.mime_type.as_str(),
-                            //left_codec.RTPCodecCapability.ClockRate,
-                            //left_codec.RTPCodecCapability.Channels,
-                            left_codec.rtp_codec.sdp_fmtp_line.as_str(),
-                        );
-
-                        if needle_fmtp.match_fmtp(&*left_codec_fmtp) {
-                            left_codecs.remove(left_codec_idx);
-                            break;
-                        }
-                    }
+                    left_codecs.retain(|codec| codec.payload_type != match_codec.payload_type);
                 }
             }
 
@@ -366,27 +462,22 @@ impl RTCRtpTransceiverInternal {
         };
 
         let mut filtered_codecs = filter_by_match(CodecMatch::Exact);
-        filtered_codecs.append(&mut filter_by_match(CodecMatch::Partial));
+        if filtered_codecs.is_empty() {
+            filtered_codecs = filter_by_match(CodecMatch::Partial);
+        }
 
         // find RTX associations and add those
         for (remote_payload_type, media_engine_payload_type) in payload_mapping {
-            let remote_rtx = find_rtx_payload_type(remote_payload_type, &remote_codecs);
-            if remote_rtx.is_none() {
-                continue;
-            }
-
-            if let Some(media_engine_rtx) =
-                find_rtx_payload_type(media_engine_payload_type, &left_codecs)
+            if let Some(remote_rtx) = find_rtx_payload_type(remote_payload_type, &remote_codecs)
+                && find_rtx_payload_type(media_engine_payload_type, &left_codecs).is_some()
+                && let Some(rtx_codec) = remote_codecs
+                    .iter()
+                    .find(|codec| codec.payload_type == remote_rtx)
             {
-                for rtx_codec in &left_codecs {
-                    if rtx_codec.payload_type == media_engine_rtx {
-                        filtered_codecs.push(rtx_codec.clone());
-                        break;
-                    }
-                }
+                filtered_codecs.push(rtx_codec.clone());
             }
         }
 
-        self.set_codec_preferences(filtered_codecs, media_engine)
+        Ok(filtered_codecs)
     }
 }
