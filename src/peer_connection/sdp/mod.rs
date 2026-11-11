@@ -176,7 +176,6 @@ use sdp::extmap::ExtMap;
 use sdp::util::ConnectionRole;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::str::FromStr;
 use url::Url;
 
@@ -755,17 +754,17 @@ impl RTCPeerConnection {
         let parameters =
             media_engine.get_rtp_parameters_by_kind(transceiver.kind(), transceiver.direction());
         for rtp_extension in &parameters.header_extensions {
-            if !media_section.match_extensions.is_empty()
-                && !media_section
-                    .match_extensions
-                    .contains_key(&rtp_extension.uri)
-            {
+            let id = if media_section.match_extensions.is_empty() {
+                rtp_extension.id
+            } else if let Some(id) = media_section.match_extensions.get(&rtp_extension.uri) {
+                *id
+            } else {
                 continue;
-            }
+            };
 
             let ext_url = Url::parse(rtp_extension.uri.as_str())?;
             media = media.with_extmap(sdp::extmap::ExtMap {
-                value: rtp_extension.id,
+                value: id,
                 uri: Some(ext_url),
                 ..Default::default()
             });
@@ -1461,8 +1460,7 @@ pub(crate) fn rtp_extensions_from_media_description(
     for a in &m.attributes {
         if a.key == ATTR_KEY_EXT_MAP {
             let a_str = a.to_string();
-            let mut reader = BufReader::new(a_str.as_bytes());
-            let e = ExtMap::unmarshal(&mut reader)?;
+            let e = ExtMap::unmarshal(&mut a_str.as_bytes())?;
 
             if let Some(uri) = e.uri {
                 out.insert(uri.to_string(), e.value);
@@ -1471,6 +1469,30 @@ pub(crate) fn rtp_extensions_from_media_description(
     }
 
     Ok(out)
+}
+
+#[test]
+fn rtp_extensions_from_media_description_reads_each_extmap_line() {
+    let m = MediaDescription::default()
+        .with_value_attribute("mid".to_owned(), "0".to_owned())
+        .with_value_attribute(
+            ATTR_KEY_EXT_MAP.to_owned(),
+            "1 urn:ietf:params:rtp-hdrext:sdes:mid".to_owned(),
+        )
+        .with_value_attribute(
+            ATTR_KEY_EXT_MAP.to_owned(),
+            "3/recvonly urn:ietf:params:rtp-hdrext:ssrc-audio-level".to_owned(),
+        );
+
+    let extensions = rtp_extensions_from_media_description(&m).unwrap();
+
+    assert_eq!(extensions.len(), 2);
+    assert_eq!(extensions["urn:ietf:params:rtp-hdrext:sdes:mid"], 1);
+    assert_eq!(extensions["urn:ietf:params:rtp-hdrext:ssrc-audio-level"], 3);
+
+    let malformed = MediaDescription::default()
+        .with_value_attribute(ATTR_KEY_EXT_MAP.to_owned(), "not-a-number urn:x".to_owned());
+    assert!(rtp_extensions_from_media_description(&malformed).is_err());
 }
 
 /// update_sdp_origin saves sdp.Origin in PeerConnection when creating 1st local SDP;

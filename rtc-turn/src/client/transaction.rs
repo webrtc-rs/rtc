@@ -17,6 +17,17 @@ const MAX_RTX_COUNT: u16 = 7; // total 7 requests (Rc)
 /// this is how long the client waits for its answer.
 const RELIABLE_TRANSACTION_TIMEOUT: Duration = Duration::from_millis(39_500);
 
+/// The id the authenticated retry of an Allocate uses: the anonymous request's, one on.
+///
+/// [`Client::allocate`](crate::client::Client::allocate) hands this one to its caller,
+/// because the anonymous request is answered with 401 and it is the retry that carries the
+/// allocation. Everything the caller is told about that allocation names it.
+pub(crate) fn authenticated_allocate_id(attempt: TransactionId) -> TransactionId {
+    let mut tid = attempt;
+    tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
+    tid
+}
+
 pub(crate) enum TransactionType {
     BindingRequest,
     AllocateAttempt,
@@ -181,8 +192,18 @@ impl TransactionMap {
         }
 
         for key in keys {
-            self.tr_map.remove(&key);
-            self.events.push_back(Event::TransactionTimeout(key));
+            let exhausted = self.tr_map.remove(&key);
+            // An Allocate nobody answers is the one case where the request on the wire and
+            // the allocation its caller knows have different ids.
+            let timed_out = if matches!(
+                exhausted.as_ref().map(|tr| &tr.transaction_type),
+                Some(TransactionType::AllocateAttempt)
+            ) {
+                authenticated_allocate_id(key)
+            } else {
+                key
+            };
+            self.events.push_back(Event::TransactionTimeout(timed_out));
         }
     }
 

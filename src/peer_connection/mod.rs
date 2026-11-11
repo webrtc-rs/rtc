@@ -3156,4 +3156,162 @@ mod tests {
             "audio transceiver must be re-associated for the follow-up offer"
         );
     }
+
+    #[test]
+    fn re_negotiation_with_simulcast_tracks() {
+        use crate::peer_connection::configuration::media_engine::MIME_TYPE_VP8;
+        use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
+        use crate::rtp_transceiver::rtp_sender::{
+            RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+            RTCRtpHeaderExtensionCapability,
+        };
+
+        fn simulcast_pc() -> RTCPeerConnection {
+            let mut me = MediaEngine::default();
+            me.register_default_codecs().unwrap();
+            for uri in [
+                ::sdp::extmap::SDES_MID_URI,
+                ::sdp::extmap::SDES_RTP_STREAM_ID_URI,
+                ::sdp::extmap::SDES_REPAIR_RTP_STREAM_ID_URI,
+            ] {
+                me.register_header_extension(
+                    RTCRtpHeaderExtensionCapability {
+                        uri: uri.to_owned(),
+                    },
+                    RtpCodecKind::Video,
+                    None,
+                )
+                .unwrap();
+            }
+            RTCPeerConnectionBuilder::new()
+                .with_media_engine(me)
+                .build(Instant::now())
+                .unwrap()
+        }
+
+        fn vp8() -> RTCRtpCodec {
+            RTCRtpCodec {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: String::new(),
+                rtcp_feedback: vec![],
+            }
+        }
+
+        fn simulcast_track(track_id: &str, layers: &[(&str, u32)]) -> MediaStreamTrack {
+            MediaStreamTrack::new(
+                format!("stream-{track_id}"),
+                track_id.to_owned(),
+                format!("label-{track_id}"),
+                RtpCodecKind::Video,
+                layers
+                    .iter()
+                    .map(|(rid, ssrc)| RTCRtpEncodingParameters {
+                        rtp_coding_parameters: RTCRtpCodingParameters {
+                            rid: (*rid).to_owned(),
+                            ssrc: Some(*ssrc),
+                            ..Default::default()
+                        },
+                        codec: vp8(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            )
+        }
+
+        fn negotiate(offerer: &mut RTCPeerConnection, answerer: &mut RTCPeerConnection) {
+            let offer = offerer.create_offer(None).unwrap();
+            offerer
+                .set_local_description(Instant::now(), offer.clone())
+                .unwrap();
+            answerer
+                .set_remote_description(Instant::now(), offer)
+                .unwrap();
+            let answer = answerer.create_answer(None).unwrap();
+            answerer
+                .set_local_description(Instant::now(), answer.clone())
+                .unwrap();
+            offerer
+                .set_remote_description(Instant::now(), answer)
+                .unwrap();
+        }
+
+        fn receiver_by_mid<'a>(
+            pc: &'a mut RTCPeerConnection,
+            mid: &str,
+        ) -> &'a mut RTCRtpReceiverInternal {
+            pc.rtp_transceivers
+                .iter_mut()
+                .find(|t| t.mid().as_deref() == Some(mid))
+                .and_then(|t| t.receiver_mut().as_mut())
+                .expect("receiver for mid")
+        }
+
+        // The SSRCs the remote learns from the RID header extension of the first packets.
+        let first_layers = [("low", 1001u32), ("mid", 1002), ("high", 1003)];
+        let second_layers = [("low", 2001u32), ("mid", 2002), ("high", 2003)];
+
+        let mut offerer = simulcast_pc();
+        let mut answerer = simulcast_pc();
+
+        offerer
+            .add_track(simulcast_track("first", &first_layers))
+            .unwrap();
+        negotiate(&mut offerer, &mut answerer);
+        assert_eq!(answerer.signaling_state, RTCSignalingState::Stable);
+
+        let first_mid = offerer.rtp_transceivers[0]
+            .mid()
+            .clone()
+            .expect("first track mid");
+
+        // Simulate what `bind_by_rid` records when the first packet of each layer arrives with
+        // its RID header extension.
+        {
+            let receiver = receiver_by_mid(&mut answerer, &first_mid);
+            for (rid, ssrc) in first_layers {
+                receiver
+                    .get_coding_parameter_mut_by_rid(rid)
+                    .expect("coding for rid")
+                    .ssrc = Some(ssrc);
+                receiver
+                    .track_mut()
+                    .set_codec_ssrc_by_rid(vp8(), ssrc, &rid.to_owned());
+            }
+        }
+
+        // Renegotiate to add a second simulcast track, as a sender does when it starts
+        // publishing another video. The first track's m-line is unchanged.
+        offerer
+            .add_track(simulcast_track("second", &second_layers))
+            .unwrap();
+        negotiate(&mut offerer, &mut answerer);
+        assert_eq!(answerer.signaling_state, RTCSignalingState::Stable);
+        assert_eq!(answerer.rtp_transceivers.len(), 2);
+
+        // The sender stops attaching RID header extensions once the SSRC is acknowledged, so the
+        // bindings learned before the renegotiation must survive it.
+        let receiver = receiver_by_mid(&mut answerer, &first_mid);
+        for (rid, ssrc) in first_layers {
+            let coding = receiver
+                .get_coding_parameters()
+                .iter()
+                .find(|coding| coding.rid == rid)
+                .expect("coding for rid");
+            assert_eq!(
+                coding.ssrc,
+                Some(ssrc),
+                "SSRC learned for rid {rid} must be kept across renegotiation"
+            );
+            assert_eq!(
+                receiver
+                    .track()
+                    .codec(ssrc)
+                    .map(|codec| codec.mime_type.as_str()),
+                Some(MIME_TYPE_VP8),
+                "codec bound for rid {rid} must be kept across renegotiation"
+            );
+        }
+    }
 }
