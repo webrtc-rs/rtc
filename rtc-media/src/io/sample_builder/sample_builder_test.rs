@@ -5,6 +5,248 @@ use shared::error::Result;
 
 use super::*;
 
+fn fragmented_h264(now: Instant) -> (Bytes, Vec<Packet>) {
+    use rtp::{
+        codec::h264::H264Payloader,
+        packetizer::{Packetizer, new_packetizer},
+        sequence::new_fixed_sequencer,
+    };
+    let mut frame = vec![0, 0, 0, 1, 0x65];
+    frame.extend((0..700).map(|n| (n % 251 + 1) as u8));
+    let frame = Bytes::from(frame);
+    let mut packetizer = new_packetizer(
+        now,
+        200,
+        96,
+        1,
+        Box::<H264Payloader>::default(),
+        Box::new(new_fixed_sequencer(1)),
+        90_000,
+    );
+    let packets = packetizer.packetize(now, &frame, 3_000).unwrap();
+    assert!(packets.len() > 2);
+    (frame, packets)
+}
+
+#[test]
+fn complete_h264_keyframe_does_not_require_a_later_frame() {
+    use rtp::codec::h264::H264Packet;
+    let now = Instant::now();
+    let (frame, packets) = fragmented_h264(now);
+    let mut timed = SampleBuilder::new(16, H264Packet::default(), 90_000);
+    let mut complete =
+        SampleBuilder::new(16, H264Packet::default(), 90_000).with_complete_samples();
+    let timestamp = packets[0].header.timestamp;
+    for packet in packets {
+        timed.push(now, packet.clone());
+        complete.push(now, packet);
+    }
+    assert!(
+        timed.pop(now).is_none(),
+        "duration-oriented API remains unchanged"
+    );
+    let sample = complete
+        .pop(now)
+        .expect("a complete static keyframe is ready");
+    assert_eq!(sample.data, frame);
+    assert_eq!(sample.packet_timestamp, timestamp);
+    assert_eq!(sample.duration, Duration::ZERO);
+    assert_eq!(sample.prev_dropped_packets, 0);
+    assert!(complete.pop(now).is_none());
+}
+
+#[test]
+fn complete_h264_continuous_aus_keep_parameter_sets_and_consumed_cursor() {
+    use rtp::{
+        codec::h264::{H264Packet, H264Payloader},
+        packetizer::{Packetizer, new_packetizer},
+        sequence::new_fixed_sequencer,
+    };
+    let now = Instant::now();
+    let mut packetizer = new_packetizer(
+        now,
+        200,
+        96,
+        1,
+        Box::<H264Payloader>::default(),
+        Box::new(new_fixed_sequencer(1)),
+        90_000,
+    );
+    let mut builder = SampleBuilder::new(4096, H264Packet::default(), 90_000)
+        .with_complete_samples()
+        .with_max_time_delay(Duration::from_secs(1));
+    let mut samples = Vec::new();
+    for index in 0..3 {
+        let frame = Bytes::from(
+            [
+                vec![
+                    0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x1e, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0x33, 0, 0,
+                    0, 1, 0x65,
+                ],
+                vec![0x44 + index; 700],
+            ]
+            .concat(),
+        );
+        for packet in packetizer.packetize(now, &frame, 3000).unwrap() {
+            builder.push(now, packet);
+            while let Some(sample) = builder.pop(now) {
+                samples.push(sample);
+            }
+        }
+        assert_eq!(
+            samples.len(),
+            index as usize + 1,
+            "exactly one AU without a later timestamp"
+        );
+        assert_eq!(samples.last().unwrap().data, frame);
+        assert_eq!(samples.last().unwrap().prev_dropped_packets, 0);
+    }
+}
+
+#[test]
+fn complete_h264_waits_for_missing_fragments_without_flushing_them() {
+    use rtp::codec::h264::H264Packet;
+    let now = Instant::now();
+    let (frame, mut packets) = fragmented_h264(now);
+    let mut builder = SampleBuilder::new(16, H264Packet::default(), 90_000).with_complete_samples();
+    // The marker arrives first. It cannot advance or purge the unfinished AU.
+    builder.push(now, packets.pop().unwrap());
+    assert!(builder.pop(now).is_none());
+    let missing = packets.remove(1);
+    for packet in packets {
+        builder.push(now, packet);
+    }
+    assert!(builder.pop(now).is_none());
+    builder.push(now, missing);
+    let sample = builder
+        .pop(now)
+        .expect("late middle fragment completes the same AU");
+    assert_eq!(sample.data, frame);
+    assert_eq!(sample.prev_dropped_packets, 0);
+    assert!(builder.pop(now).is_none());
+}
+
+#[test]
+fn complete_h264_recovers_after_missing_tail_is_purged() {
+    use rtp::{
+        codec::h264::{H264Packet, H264Payloader},
+        packetizer::{Packetizer, new_packetizer},
+        sequence::new_fixed_sequencer,
+    };
+    let now = Instant::now();
+    let mut packetizer = new_packetizer(
+        now,
+        200,
+        96,
+        1,
+        Box::<H264Payloader>::default(),
+        Box::new(new_fixed_sequencer(1)),
+        90_000,
+    );
+    let old = Bytes::from([vec![0, 0, 0, 1, 0x65], vec![0x11; 700]].concat());
+    let next = Bytes::from([vec![0, 0, 0, 1, 0x65], vec![0x22; 700]].concat());
+    let old_packets = packetizer.packetize(now, &old, 3_000).unwrap();
+    let next_packets = packetizer
+        .packetize(now + Duration::from_millis(33), &next, 3_000)
+        .unwrap();
+    assert!(old_packets.len() > 2 && next_packets.len() > 2);
+    for time_limited in [false, true] {
+        let mut builder = SampleBuilder::new(
+            if time_limited {
+                16
+            } else {
+                old_packets.len() as u16
+            },
+            H264Packet::default(),
+            90_000,
+        )
+        .with_complete_samples();
+        if time_limited {
+            builder = builder.with_max_time_delay(Duration::from_millis(20));
+        }
+        for packet in &old_packets[..old_packets.len() - 1] {
+            builder.push(now, packet.clone());
+        }
+        assert!(builder.pop(now).is_none());
+        for packet in &next_packets {
+            builder.push(now + Duration::from_millis(33), packet.clone());
+        }
+        assert!(
+            old_packets
+                .iter()
+                .all(|packet| builder.buffer[packet.header.sequence_number as usize].is_none()),
+            "the configured lateness policy must actually retire the damaged frame"
+        );
+        let sample = builder
+            .pop(now + Duration::from_millis(33))
+            .expect("the next complete IDR remains available after purge");
+        assert_eq!(
+            sample.packet_timestamp, next_packets[0].header.timestamp,
+            "complete-sample mode must not expose a purged frame without its marker"
+        );
+        assert_eq!(sample.data.len(), next.len());
+        assert_eq!(sample.data, next);
+        assert!(builder.pop(now + Duration::from_millis(33)).is_none());
+    }
+}
+
+#[test]
+fn complete_policy_also_applies_to_expiry_before_pop() {
+    use rtp::codec::h264::H264Packet;
+    let now = Instant::now();
+    // The observed Browser stream ended this 24-packet FU-A prefix without
+    // an end bit or marker, then moved to the next timestamp. Expiry must
+    // not turn the unfinished NAL into a prepared "complete" empty sample.
+    for complete in [false, true] {
+        let mut builder = SampleBuilder::new(4096, H264Packet::default(), 90_000)
+            .with_max_time_delay(Duration::from_secs(1));
+        if complete {
+            builder = builder.with_complete_samples();
+        }
+        let timestamp = 3_690_138_921;
+        for n in 0..24 {
+            builder.push(
+                now,
+                Packet {
+                    header: Header {
+                        sequence_number: 18793 + n,
+                        timestamp,
+                        ..Default::default()
+                    },
+                    payload: Bytes::from(vec![0x7c, if n == 0 { 0x81 } else { 0x01 }, 0x11]),
+                },
+            );
+        }
+        assert!(builder.pop(now).is_none());
+        for (seq, ticks) in [(18817, 4500), (18818, 90_001)] {
+            builder.push(
+                now,
+                Packet {
+                    header: Header {
+                        sequence_number: seq,
+                        timestamp: timestamp + ticks,
+                        marker: true,
+                        ..Default::default()
+                    },
+                    payload: Bytes::from_static(&[0x65, 0x22, 0x33]),
+                },
+            );
+        }
+        let sample = builder
+            .pop(now)
+            .expect("a prepared sample remains available");
+        if complete {
+            assert_eq!(sample.packet_timestamp, timestamp + 4500);
+            assert_eq!(sample.data.as_ref(), &[0, 0, 0, 1, 0x65, 0x22, 0x33]);
+            assert_eq!(sample.prev_dropped_packets, 24);
+        } else {
+            // Preserve the upstream duration-oriented default contract.
+            assert_eq!(sample.packet_timestamp, timestamp);
+            assert!(sample.data.is_empty());
+        }
+    }
+}
+
 // Turns u8 integers into Bytes Array
 macro_rules! bytes {
     ($($item:expr),*) => ({

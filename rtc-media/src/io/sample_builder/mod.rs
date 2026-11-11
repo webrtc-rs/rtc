@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod metadata_test;
+#[cfg(test)]
 mod sample_builder_test;
 #[cfg(test)]
 mod sample_sequence_location_test;
@@ -13,18 +15,25 @@ use rtp::Packet;
 use rtp::packetizer::Depacketizer;
 use std::time::{Duration, Instant};
 
+fn is_padding(packet: &Packet) -> bool {
+    packet.header.padding && packet.payload.is_empty()
+}
+
 /// SampleBuilder buffers packets until media frames are complete.
-pub struct SampleBuilder<T: Depacketizer> {
+pub struct SampleBuilder<T: Depacketizer, M = ()> {
     /// how many packets to wait until we get a valid Sample
     max_late: u16,
     /// max timestamp between old and new timestamps before dropping packets
     max_late_timestamp: u32,
+    /// Require the depacketizer's partition tail on every assembly path.
+    require_tail: bool,
     buffer: Vec<Option<Packet>>,
-    prepared_samples: Vec<Option<Sample>>,
+    prepared_samples: Vec<Option<(Sample, Option<M>)>>,
     last_sample_timestamp: Option<u32>,
 
     /// Interface that allows us to take RTP packets to samples
     depacketizer: T,
+    packet_head_handler: fn(&T, &Packet) -> M,
 
     /// sample_rate allows us to compute duration of media.SamplecA
     sample_rate: u32,
@@ -53,13 +62,33 @@ impl<T: Depacketizer> SampleBuilder<T> {
     /// A large max_late will result in less packet loss but higher latency.
     /// The depacketizer extracts media samples from RTP packets.
     pub fn new(max_late: u16, depacketizer: T, sample_rate: u32) -> Self {
+        Self::new_with_packet_head_handler(max_late, depacketizer, sample_rate, |_, _| ())
+    }
+}
+
+impl<T: Depacketizer, M> SampleBuilder<T, M> {
+    /// Constructs a builder with owned metadata for each assembled sample.
+    ///
+    /// The handler runs after the first media packet is successfully depacketized,
+    /// before later packets can change the depacketizer. Its result is kept
+    /// with the sample only if the entire assembly succeeds; otherwise it is
+    /// dropped. A sample containing only skipped padding has no metadata.
+    /// Use [`Self::pop_with_metadata`] to retrieve the pair.
+    pub fn new_with_packet_head_handler(
+        max_late: u16,
+        depacketizer: T,
+        sample_rate: u32,
+        packet_head_handler: fn(&T, &Packet) -> M,
+    ) -> Self {
         Self {
             max_late,
             max_late_timestamp: 0,
+            require_tail: false,
             buffer: vec![None; u16::MAX as usize + 1],
             prepared_samples: (0..=u16::MAX as usize).map(|_| None).collect(),
             last_sample_timestamp: None,
             depacketizer,
+            packet_head_handler,
             sample_rate,
             filled: SampleSequenceLocation::new(),
             active: SampleSequenceLocation::new(),
@@ -79,6 +108,17 @@ impl<T: Depacketizer> SampleBuilder<T> {
         self
     }
 
+    /// Emit only complete partitions, without waiting for a later timestamp.
+    ///
+    /// The depacketizer's tail check must identify a complete partition (for
+    /// example H264's RTP marker). This policy also applies during expiry:
+    /// incomplete partitions are discarded, never emitted as partial samples.
+    /// `duration` is zero when no following timestamp is available.
+    pub fn with_complete_samples(mut self) -> Self {
+        self.require_tail = true;
+        self
+    }
+
     fn too_old(&self, location: &SampleSequenceLocation) -> bool {
         if self.max_late_timestamp == 0 {
             return false;
@@ -89,7 +129,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         let mut i = location.head;
         while i != location.tail {
-            if let Some(ref packet) = self.buffer[i as usize] {
+            if let Some(packet) = self.buffer[i as usize].as_ref().filter(|p| !is_padding(p)) {
                 found_head = Some(packet.header.timestamp);
                 break;
             }
@@ -102,7 +142,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         let mut i = location.tail.wrapping_sub(1);
         while i != location.head {
-            if let Some(ref packet) = self.buffer[i as usize] {
+            if let Some(packet) = self.buffer[i as usize].as_ref().filter(|p| !is_padding(p)) {
                 found_tail = Some(packet.header.timestamp);
                 break;
             }
@@ -165,9 +205,14 @@ impl<T: Depacketizer> SampleBuilder<T> {
     fn purge_buffers(&mut self, now: Instant) {
         self.purge_consumed_buffers();
 
-        while (self.too_old(&self.filled) || (self.filled.count() > self.max_late))
-            && self.filled.has_data()
+        // Once timestamps expire, retire head holes until a packet can be aged again.
+        let mut purging_expired_timestamp = false;
+        while self.filled.has_data()
+            && (self.too_old(&self.filled)
+                || self.filled.count() > self.max_late
+                || (purging_expired_timestamp && self.buffer[self.filled.head as usize].is_none()))
         {
+            purging_expired_timestamp |= self.too_old(&self.filled);
             if self.active.empty() {
                 // refill the active based on the filled packets
                 self.active = self.filled;
@@ -176,10 +221,15 @@ impl<T: Depacketizer> SampleBuilder<T> {
             if self.active.has_data() && (self.active.head == self.filled.head) {
                 // attempt to force the active packet to be consumed even though
                 // outstanding data may be pending arrival
+                let head = self.filled.head;
                 let err = match self.build_sample(now, true) {
                     Ok(_) => continue,
                     Err(e) => e,
                 };
+                // Padding retirement may already have satisfied the bound.
+                if self.require_tail && self.filled.head != head {
+                    continue;
+                }
 
                 if !matches!(err, BuildError::InvalidPartition(_)) {
                     // In the InvalidPartition case `build_sample` will have already adjusted `dropped_packets`.
@@ -226,7 +276,52 @@ impl<T: Depacketizer> SampleBuilder<T> {
         now: Instant,
         purging_buffers: bool,
     ) -> Result<SampleSequenceLocation, BuildError> {
+        if self.active.has_data() && self.filled.compare(self.active.tail) == Comparison::Inside {
+            self.active.tail = self.filled.tail;
+        }
+        if self.require_tail {
+            let window = if self.active.empty() {
+                self.filled
+            } else {
+                self.active
+            };
+            let mut head = window.head;
+            while window.compare(head) == Comparison::Inside
+                && self.buffer[head as usize].as_ref().is_some_and(is_padding)
+            {
+                head = head.wrapping_add(1);
+            }
+            // An isolated padding packet may precede an out-of-order FU start.
+            // Retire the prefix only once the next media partition has a head.
+            if head != window.head
+                && window.compare(head) == Comparison::Inside
+                && self.buffer[head as usize]
+                    .as_ref()
+                    .is_some_and(|packet| self.depacketizer.is_partition_head(&packet.payload))
+            {
+                let mut i = window.head;
+                while i != head {
+                    self.release_packet(i);
+                    if self.filled.head == i {
+                        self.filled.head = i.wrapping_add(1);
+                    }
+                    i = i.wrapping_add(1);
+                }
+                if self.active.has_data() {
+                    self.active.head = head;
+                }
+            }
+        }
         if self.active.empty() {
+            // A marker may arrive before its partition head. Do not commit the
+            // initial read position until reordering supplies that head.
+            if self.require_tail
+                && self.buffer[self.filled.head as usize]
+                    .as_ref()
+                    .is_some_and(|packet| !self.depacketizer.is_partition_head(&packet.payload))
+            {
+                return Err(BuildError::GapInSegment);
+            }
             self.active = self.filled;
         }
 
@@ -234,11 +329,8 @@ impl<T: Depacketizer> SampleBuilder<T> {
             return Err(BuildError::NoActiveSegment);
         }
 
-        if self.filled.compare(self.active.tail) == Comparison::Inside {
-            self.active.tail = self.filled.tail;
-        }
-
         let mut consume = SampleSequenceLocation::new();
+        let mut complete = false;
 
         let mut i = self.active.head;
         // `self.active` isn't modified in the loop, fetch the timestamp once and cache it.
@@ -246,6 +338,10 @@ impl<T: Depacketizer> SampleBuilder<T> {
         while let Some(ref packet) = self.buffer[i as usize] {
             if self.active.compare(i) == Comparison::After {
                 break;
+            }
+            if is_padding(packet) {
+                i = i.wrapping_add(1);
+                continue;
             }
             let is_same_timestamp = head_timestamp.map(|t| packet.header.timestamp == t);
             let is_different_timestamp = is_same_timestamp.map(std::ops::Not::not);
@@ -264,6 +360,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
             if is_partition_tail && is_same_timestamp.unwrap_or(true) {
                 consume.head = self.active.head;
                 consume.tail = i.wrapping_add(1);
+                complete = true;
                 break;
             }
 
@@ -279,6 +376,10 @@ impl<T: Depacketizer> SampleBuilder<T> {
             return Err(BuildError::NothingToConsume);
         }
 
+        if self.require_tail && !complete {
+            return Err(BuildError::PendingTimestampPacket);
+        }
+
         if !purging_buffers && self.buffer[consume.tail as usize].is_none() {
             // wait for the next packet after this set of packets to arrive
             // to ensure at least one post sample timestamp is known
@@ -291,7 +392,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         // scan for any packet after the current and use that time stamp as the diff point
         for i in consume.tail..self.active.tail {
-            if let Some(ref packet) = self.buffer[i as usize] {
+            if let Some(packet) = self.buffer[i as usize].as_ref().filter(|p| !is_padding(p)) {
                 after_timestamp = packet.header.timestamp;
                 break;
             }
@@ -304,6 +405,9 @@ impl<T: Depacketizer> SampleBuilder<T> {
             .map(|p| &p.payload)
             .ok_or(BuildError::GapInSegment)?;
         if !self.depacketizer.is_partition_head(head_payload) {
+            if self.require_tail {
+                return Err(BuildError::GapInSegment);
+            }
             // libWebRTC will sometimes send several empty padding packets to smooth out send
             // rate. These packets don't carry any media payloads.
             let is_padding = consume.range(&self.buffer).all(|p| {
@@ -333,27 +437,38 @@ impl<T: Depacketizer> SampleBuilder<T> {
         // refcounted, so no copy is needed. Only multi-packet samples require
         // concatenation, and even then `Bytes::from(data)` reuses the `Vec`'s
         // buffer instead of copying it a second time.
+        let mut metadata = None;
         let sample_data: Bytes = if consume.count() == 1 {
-            let payload = self.buffer[consume.head as usize]
+            let packet = self.buffer[consume.head as usize]
                 .as_ref()
-                .map(|p| &p.payload)
                 .ok_or(BuildError::GapInSegment)?;
-            self.depacketizer
-                .depacketize(payload)
-                .map_err(|_| BuildError::DepacketizerFailed)?
+            let data = self
+                .depacketizer
+                .depacketize(&packet.payload)
+                .map_err(|_| BuildError::DepacketizerFailed)?;
+            metadata = Some((self.packet_head_handler)(&self.depacketizer, packet));
+            data
         } else {
             let mut data: Vec<u8> = Vec::new();
             let mut i = consume.head;
             while i != consume.tail {
-                let payload = self.buffer[i as usize]
+                let packet = self.buffer[i as usize]
                     .as_ref()
-                    .map(|p| &p.payload)
                     .ok_or(BuildError::GapInSegment)?;
+                // RTP padding occupies a sequence number but has no codec data.
+                if is_padding(packet) {
+                    i = i.wrapping_add(1);
+                    continue;
+                }
 
                 let p = self
                     .depacketizer
-                    .depacketize(payload)
+                    .depacketize(&packet.payload)
                     .map_err(|_| BuildError::DepacketizerFailed)?;
+
+                if metadata.is_none() {
+                    metadata = Some((self.packet_head_handler)(&self.depacketizer, packet));
+                }
 
                 data.extend_from_slice(&p);
                 i = i.wrapping_add(1);
@@ -375,11 +490,24 @@ impl<T: Depacketizer> SampleBuilder<T> {
         self.padding_packets = 0;
         self.last_sample_timestamp = Some(sample_timestamp);
 
-        self.prepared_samples[self.prepared.tail as usize] = Some(sample);
+        self.prepared_samples[self.prepared.tail as usize] = Some((sample, metadata));
         self.prepared.tail = self.prepared.tail.wrapping_add(1);
 
         self.purge_consumed_location(&consume, true);
         self.purge_consumed_buffers();
+
+        // Unlike duration-oriented pop, a complete partition can consume the
+        // entire active window. Do not refill it from already consumed packets.
+        if self.require_tail {
+            while self.filled.has_data()
+                && matches!(
+                    consume.compare(self.filled.head),
+                    Comparison::Before | Comparison::Inside
+                )
+            {
+                self.purge_consumed_location(&consume, true);
+            }
+        }
 
         Ok(consume)
     }
@@ -387,7 +515,15 @@ impl<T: Depacketizer> SampleBuilder<T> {
     /// Compiles pushed RTP packets into media samples and then
     /// returns the next valid sample (or None if no sample is compiled).
     pub fn pop(&mut self, now: Instant) -> Option<Sample> {
-        let _ = self.build_sample(now, false);
+        self.pop_with_metadata(now).map(|(sample, _)| sample)
+    }
+
+    /// Returns the next valid sample and its owned first-packet metadata.
+    ///
+    /// Samples prepared during [`Self::push`] retain their own metadata even
+    /// if later samples are assembled before this call returns them.
+    pub fn pop_with_metadata(&mut self, now: Instant) -> Option<(Sample, Option<M>)> {
+        let _ = self.build_sample(now, self.require_tail);
 
         if self.prepared.empty() {
             return None;
