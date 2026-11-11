@@ -17,6 +17,7 @@ use crate::peer_connection::transport::ice::candidate::{
 };
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
@@ -853,6 +854,12 @@ impl RTCPeerConnection {
                     && transceiver.direction().has_recv()
             }) && let Some(receiver) = transceiver.receiver_mut()
             {
+                if is_same_remote_track(receiver, &incoming_track) {
+                    // Keep SSRCs and codecs learned from RTP; the sender may no longer attach
+                    // the MID/RID header extension needed to learn them again.
+                    continue;
+                }
+
                 let mut receive_codings = vec![];
                 if !incoming_track.rids.is_empty() {
                     // for incoming_track with rids, defer adding track until received the first RTP
@@ -1590,5 +1597,36 @@ impl RTCPeerConnection {
         );
 
         Ok((track, send_encodings, codec_preferences))
+    }
+}
+
+fn is_same_remote_track(
+    receiver: &RTCRtpReceiverInternal,
+    incoming_track: &sdp::TrackDetails,
+) -> bool {
+    let track = receiver.track();
+    if track.track_id() != &incoming_track.track_id
+        || track.stream_id() != &incoming_track.stream_id
+    {
+        return false;
+    }
+
+    let codings = receiver.get_coding_parameters();
+    if !incoming_track.rids.is_empty() {
+        let mut current: Vec<&str> = codings.iter().map(|c| c.rid.as_str()).collect();
+        let mut remote: Vec<&str> = incoming_track.rids.iter().map(String::as_str).collect();
+        current.sort_unstable();
+        remote.sort_unstable();
+        return current == remote;
+    }
+
+    match (codings, incoming_track.ssrc) {
+        ([coding], Some(ssrc)) => {
+            coding.rid.is_empty()
+                && coding.ssrc == Some(ssrc)
+                && coding.rtx.as_ref().map(|r| r.ssrc) == incoming_track.rtx_ssrc
+                && coding.fec.as_ref().map(|f| f.ssrc) == incoming_track.fec_ssrc
+        }
+        _ => false,
     }
 }

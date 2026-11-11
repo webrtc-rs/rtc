@@ -93,8 +93,9 @@ impl ReceiverStream {
 
             // compute jitter
             // https://tools.ietf.org/html/rfc3550#page-39
+            // u32 ts wraps: signed diff, not a ~2^32 jump
             let d = now.duration_since(last_rtp_time_time).as_secs_f64() * self.clock_rate
-                - (pkt.header.timestamp as f64 - self.last_rtp_time_rtp as f64);
+                - pkt.header.timestamp.wrapping_sub(self.last_rtp_time_rtp) as i32 as f64;
             self.jitter += (d.abs() - self.jitter) / 16.0;
         } else {
             // first frame
@@ -274,6 +275,31 @@ mod tests {
         assert_eq!(rr.reports[0].total_lost, 0);
         assert_eq!(rr.reports[0].delay, 0);
         assert_eq!(rr.reports[0].jitter, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_jitter_ts_wrap() {
+        // steady 20 ms at 48 khz across u32::MAX: was ~2^32 / 16
+        let mut stream = ReceiverStream::new(123456, 48000);
+        let now = Instant::now();
+        for i in 0..4u16 {
+            let ts = (u32::MAX - 1919).wrapping_add(960 * i as u32);
+            stream.process_rtp(
+                now + Duration::from_millis(20 * i as u64),
+                &make_rtp_packet(i, ts),
+            );
+        }
+        assert_eq!(stream.generate_report(now).reports[0].jitter, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_jitter_delay_across_ts_wrap() {
+        // 100 ms late right after the wrap: d = 4800, jitter = 4800 / 16
+        let mut stream = ReceiverStream::new(123456, 48000);
+        let now = Instant::now();
+        stream.process_rtp(now, &make_rtp_packet(1, u32::MAX - 959));
+        stream.process_rtp(now + Duration::from_millis(120), &make_rtp_packet(2, 0));
+        assert_eq!(stream.generate_report(now).reports[0].jitter, 300);
     }
 
     #[test]

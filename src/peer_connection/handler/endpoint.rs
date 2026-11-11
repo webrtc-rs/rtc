@@ -16,14 +16,58 @@ use crate::rtp_transceiver::{PayloadType, SSRC, internal::RTCRtpTransceiverInter
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::Packet;
 use log::{debug, trace, warn};
+use rustc_hash::FxHashMap;
 use shared::TransportContext;
 use shared::error::{Error, Result};
 use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
 
+/// Which transceiver owns an inbound SSRC, so a packet doesn't walk every transceiver to find out.
+/// An entry is only a hint: it is re-checked on use, so a stale one costs a scan, never a wrong hit.
+#[derive(Default)]
+pub(crate) struct SsrcOwners(FxHashMap<SSRC, usize>);
+
+impl SsrcOwners {
+    pub(crate) fn cached(
+        &self,
+        ssrc: SSRC,
+        transceivers: &[RTCRtpTransceiverInternal],
+        owns: fn(&RTCRtpTransceiverInternal, SSRC) -> bool,
+    ) -> Option<usize> {
+        let id = *self.0.get(&ssrc)?;
+        owns(transceivers.get(id)?, ssrc).then_some(id)
+    }
+
+    pub(crate) fn find(
+        &mut self,
+        ssrc: SSRC,
+        transceivers: &[RTCRtpTransceiverInternal],
+        owns: fn(&RTCRtpTransceiverInternal, SSRC) -> bool,
+    ) -> Option<usize> {
+        if let Some(id) = self.cached(ssrc, transceivers, owns) {
+            return Some(id);
+        }
+        let id = transceivers.iter().position(|t| owns(t, ssrc))?;
+        self.0.insert(ssrc, id);
+        Some(id)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+fn receiver_track_has_ssrc(transceiver: &RTCRtpTransceiverInternal, ssrc: SSRC) -> bool {
+    transceiver
+        .receiver()
+        .as_ref()
+        .is_some_and(|receiver| receiver.track().ssrcs().any(|s| s == ssrc))
+}
+
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
+    pub(crate) ssrc_owners: SsrcOwners,
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
@@ -158,8 +202,18 @@ impl<'a> EndpointHandler<'a> {
         // (OSN), while keeping the timestamp/marker/extensions "as is". RTX
         // receive statistics are tracked upstream in the interceptor handler
         // (using the RTX SSRC), so they are not touched here.
-        if let Some((primary_ssrc, primary_payload_type)) =
-            self.rtx_primary_for(rtp_packet.header.ssrc, rtp_packet.header.payload_type)
+        let is_primary = self
+            .ctx
+            .ssrc_owners
+            .cached(
+                rtp_packet.header.ssrc,
+                self.rtp_transceivers,
+                receiver_track_has_ssrc,
+            )
+            .is_some();
+        if !is_primary
+            && let Some((primary_ssrc, primary_payload_type)) =
+                self.rtx_primary_for(rtp_packet.header.ssrc, rtp_packet.header.payload_type)
         {
             let recovered = deencapsulate_rtx(&mut rtp_packet, primary_ssrc, primary_payload_type);
             if !recovered {
@@ -320,19 +374,17 @@ impl<'a> EndpointHandler<'a> {
     // By the time a packet reaches here the SSRC is registered on the receiver's track, so all
     // that is left is to name the track it belongs to.
     fn find_track_id(
-        &self,
+        &mut self,
         ssrc: SSRC,
         rtp_header: Option<&rtp::Header>,
     ) -> Option<MediaStreamTrackId> {
-        if let Some(track_id) = self.rtp_transceivers.iter().find_map(|transceiver| {
-            let receiver = transceiver.receiver().as_ref()?;
-            receiver
-                .track()
-                .ssrcs()
-                .any(|track_ssrc| track_ssrc == ssrc)
-                .then(|| receiver.track().track_id().clone())
-        }) {
-            return Some(track_id);
+        if let Some(id) =
+            self.ctx
+                .ssrc_owners
+                .find(ssrc, self.rtp_transceivers, receiver_track_has_ssrc)
+            && let Some(receiver) = self.rtp_transceivers[id].receiver()
+        {
+            return Some(receiver.track().track_id().clone());
         }
 
         // No receiver owns this ssrc. For inbound RTCP (no rtp_header) it may be feedback
@@ -623,7 +675,7 @@ mod rtx_test {
         ]);
         receiver.set_track(MediaStreamTrack::new(
             "stream".to_string(),
-            "track".to_string(),
+            format!("track-{primary_ssrc}"),
             "label".to_string(),
             RtpCodecKind::Video,
             vec![RTCRtpEncodingParameters {
@@ -704,6 +756,93 @@ mod rtx_test {
             }
             _ => panic!("expected a de-encapsulated RTP TrackPacket on the primary stream"),
         }
+    }
+
+    fn dispatch(
+        ctx: &mut EndpointHandlerContext,
+        transceivers: &mut Vec<RTCRtpTransceiverInternal>,
+        ssrc: u32,
+        payload_type: u8,
+        payload: &'static [u8],
+    ) -> Option<(String, rtp::Packet)> {
+        let mut stats = RTCStatsAccumulator::new();
+        let packet = rtp::Packet {
+            header: rtp::Header {
+                payload_type,
+                ssrc,
+                ..Default::default()
+            },
+            payload: Bytes::from_static(payload),
+        };
+        EndpointHandler::new(ctx, transceivers, &mut stats)
+            .handle_rtp_message(Instant::now(), test_transport(), packet)
+            .expect("handle_rtp_message");
+
+        match ctx.read_outs.pop_front()?.message {
+            RTCMessageInternal::Rtp(RTPMessage::TrackPacket(TrackPacket {
+                track_id,
+                packet: Packet::Rtp(packet),
+            })) => Some((track_id, packet)),
+            _ => panic!("expected an RTP TrackPacket"),
+        }
+    }
+
+    #[test]
+    fn rtx_after_primary_is_still_deencapsulated() {
+        let mut transceivers = vec![rtx_receiver_transceiver(1000, 2000, 96, 97)];
+        let mut ctx = EndpointHandlerContext::default();
+
+        dispatch(&mut ctx, &mut transceivers, 1000, 96, &[0xDE, 0xAD]).expect("primary");
+
+        let (_, packet) = dispatch(
+            &mut ctx,
+            &mut transceivers,
+            2000,
+            97,
+            &[0x00, 0x2A, 0xDE, 0xAD],
+        )
+        .expect("rtx");
+        assert_eq!(packet.header.ssrc, 1000);
+        assert_eq!(packet.header.payload_type, 96);
+        assert_eq!(packet.header.sequence_number, 42);
+    }
+
+    #[test]
+    fn a_packet_reaches_its_track_after_transceivers_move() {
+        let mut transceivers = vec![
+            rtx_receiver_transceiver(1000, 2000, 96, 97),
+            rtx_receiver_transceiver(1001, 2001, 96, 97),
+        ];
+        let mut ctx = EndpointHandlerContext::default();
+        let mut track_of = |transceivers: &mut Vec<_>, ssrc| {
+            dispatch(&mut ctx, transceivers, ssrc, 96, &[0xDE, 0xAD]).map(|(track_id, _)| track_id)
+        };
+
+        assert_eq!(
+            track_of(&mut transceivers, 1001).as_deref(),
+            Some("track-1001")
+        );
+
+        // The remembered position is now out of range.
+        let first = transceivers.remove(0);
+        assert_eq!(
+            track_of(&mut transceivers, 1001).as_deref(),
+            Some("track-1001")
+        );
+
+        // The remembered position now holds a different receiver.
+        transceivers.insert(0, first);
+        assert_eq!(
+            track_of(&mut transceivers, 1001).as_deref(),
+            Some("track-1001")
+        );
+        assert_eq!(
+            track_of(&mut transceivers, 1000).as_deref(),
+            Some("track-1000")
+        );
+
+        transceivers.remove(0);
+        assert_eq!(track_of(&mut transceivers, 1000), None);
     }
 
     #[test]

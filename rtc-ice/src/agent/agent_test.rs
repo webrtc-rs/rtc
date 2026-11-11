@@ -2279,6 +2279,88 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
     Ok(())
 }
 
+/// A controlling agent must answer a Binding request that carries USE-CANDIDATE but no
+/// ICE-CONTROLLING, and ignore the USE-CANDIDATE (RFC 8445 7.3.1.5). Peers that always act as
+/// controlling send checks in this shape.
+#[test]
+fn test_controlling_agent_answers_use_candidate_without_ice_controlling() -> Result<()> {
+    let config = AgentConfig {
+        is_controlling: true,
+        ..Default::default()
+    };
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
+
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    agent.add_local_candidate(host_config.new_candidate_host()?)?;
+    let local_index = 0;
+
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    agent.add_remote_candidate(remote_host_config.new_candidate_host()?)?;
+
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // USE-CANDIDATE without ICE-CONTROLLING.
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(UseCandidateAttr::new()),
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider().crypto(),
+        )),
+        Box::new(FINGERPRINT),
+    ])?;
+    let request_id = msg.transaction_id;
+
+    agent.write_outs.clear();
+    agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr)?;
+
+    let transmit = agent
+        .write_outs
+        .pop_front()
+        .expect("controlling agent must answer the check");
+    let mut response = Message::new();
+    response.unmarshal_binary(&transmit.message)?;
+    assert_eq!(response.typ, BINDING_SUCCESS);
+    assert_eq!(response.transaction_id, request_id);
+
+    // USE-CANDIDATE is ignored: no role switch and no nomination.
+    assert!(agent.is_controlling);
+    assert!(agent.nominated_pair.is_none());
+    assert!(agent.get_selected_pair().is_none());
+
+    agent.close()?;
+    Ok(())
+}
+
 /// Test role conflict when both agents are controlled
 /// RFC 8445 Section 7.3.1.1 - Agent with larger tiebreaker should switch to controlling
 #[test]
@@ -3384,5 +3466,112 @@ fn test_stats_snapshot_reports_the_callers_instant_throughout() -> Result<()> {
     // passed between the two calls.
     assert_eq!(a.get_candidate_pairs_stats(t(900))[0].timestamp, t(900));
 
+    Ok(())
+}
+
+/// RFC 8445 §7.3.1.4: when the controlling agent receives a Binding request on a pair it had
+/// already marked Failed, it must answer and also send a triggered check on that pair, so a
+/// path that opened late (e.g. after a NAT binding appeared) is checked again.
+#[test]
+fn test_controlling_rechecks_failed_pair_on_inbound_binding_request() -> Result<()> {
+    use crate::attributes::control::AttrControlled;
+
+    let now = Instant::now();
+    let config = AgentConfig {
+        is_controlling: true,
+        ..Default::default()
+    };
+    let mut a = Agent::new(now, Arc::new(config), test_crypto_provider())?;
+
+    let local_candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(local_candidate)?;
+
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote_candidate)?;
+
+    a.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    assert_eq!(a.candidate_pairs.len(), 1);
+    // The pair exhausted its retransmission budget and was failed by ping_all_candidates.
+    a.candidate_pairs[0].state = CandidatePairState::Failed;
+    a.candidate_pairs[0].binding_request_count = a.max_binding_requests + 1;
+    a.write_outs.clear();
+    a.pending_binding_requests.clear();
+
+    let username = a.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = a.ufrag_pwd.local_credentials.pwd.clone();
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(AttrControlled(1)),
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider().crypto(),
+        )),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    a.handle_binding_request(now, &msg, 0, 0);
+
+    assert_eq!(
+        a.candidate_pairs[0].state,
+        CandidatePairState::InProgress,
+        "a Binding request on a Failed pair must move it back to InProgress"
+    );
+    assert_eq!(a.candidate_pairs[0].binding_request_count, 0);
+    assert_eq!(
+        a.pending_binding_requests.len(),
+        1,
+        "a triggered check should be pending"
+    );
+    assert_eq!(a.pending_binding_requests[0].destination, remote_addr);
+
+    assert_eq!(
+        a.write_outs.len(),
+        2,
+        "expected a success response and a check"
+    );
+    let mut types = vec![];
+    for out in &a.write_outs {
+        assert_eq!(out.transport.peer_addr, remote_addr);
+        let mut m = Message::new();
+        m.raw = out.message.to_vec();
+        m.decode()?;
+        types.push(m.typ);
+    }
+    assert_eq!(types, vec![BINDING_SUCCESS, BINDING_REQUEST]);
+
+    // The next tick must keep checking the pair rather than failing it again at once.
+    a.ping_all_candidates(now);
+    assert_eq!(a.candidate_pairs[0].state, CandidatePairState::InProgress);
+
+    a.close()?;
     Ok(())
 }

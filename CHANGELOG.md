@@ -117,9 +117,23 @@ see `docs/crypto-provider-migration.md` for before/after examples.
   `SCTPHandshakeComplete`, on which negotiated data channels open; it used to reach the data
   channel handler first and be discarded with `ErrDataChannelNotExisted`, after SCTP had already
   acknowledged it, so the first message the peer sent on a negotiated channel could be lost.
+- ICE: a controlling agent now answers a Binding request that carries USE-CANDIDATE without
+  ICE-CONTROLLING, and ignores the USE-CANDIDATE, instead of dropping it with
+  `ErrUnexpectedStunrequestMessage`. Peers that always act as controlling can now complete ICE
+  ([#299](https://github.com/webrtc-rs/rtc/issues/299)).
+- ICE: the controlling agent now sends a triggered check (RFC 8445 §7.3.1.4) when a Binding
+  request arrives on a pair it had marked Failed, so a late-opening direct path is no longer
+  lost to the relay ([#282](https://github.com/webrtc-rs/rtc/issues/282)).
+- Incoming RTCP reaches `get_stats()` again. Receiver reports, NACK, PLI and FIR now update the
+  outbound stream's remote-inbound and feedback counts, and sender reports update the inbound
+  stream. The read-side stats hook was lost when the interceptor started consuming RTCP
+  ([#310](https://github.com/webrtc-rs/rtc/issues/310)).
 
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
+
+- Preserve the DTLS retransmission deadline when a repeated or incomplete peer flight
+  arrives while waiting for the next flight.
 
 - `rtc-crypto`'s AES-CTR keystream now uses a batched implementation instead of one
   `encrypt_block` call per 16-byte block, which defeated AES-NI / ARMv8 instruction pipelining.
