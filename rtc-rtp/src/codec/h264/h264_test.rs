@@ -4,6 +4,38 @@
 use super::*;
 
 #[test]
+fn fua_start_after_loss_boundary_discards_the_unfinished_nal() -> Result<()> {
+    let old = Bytes::from([vec![0x65], vec![0x11; 400]].concat());
+    let next = Bytes::from([vec![0x65], vec![0x22; 400]].concat());
+    let mut payloader = H264Payloader::default();
+    let fragments = payloader.payload(100, &old)?;
+    assert!(fragments.len() > 2);
+    let mut packet = H264Packet::default();
+    for fragment in &fragments[..fragments.len() - 1] {
+        assert!(packet.depacketize(fragment)?.is_empty());
+    }
+    let mut actual = Bytes::new();
+    for fragment in payloader.payload(100, &next)? {
+        actual = packet.depacketize(&fragment)?;
+    }
+    let expected = Bytes::from([ANNEXB_NALUSTART_CODE.as_ref(), next.as_ref()].concat());
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "old fragments must not prefix the next IDR"
+    );
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
+fn stapa_truncated_length_boundary_returns_an_error() {
+    // A complete two-byte AUD NAL followed by only one byte of the next length.
+    let payload = Bytes::from_static(&[0x78, 0, 2, 0x09, 0xf0, 0xff]);
+    assert!(H264Packet::default().depacketize(&payload).is_err());
+}
+
+#[test]
 fn test_h264_payload() -> Result<()> {
     let empty = Bytes::from_static(&[]);
     let small_payload = Bytes::from_static(&[0x90, 0x90, 0x90]);

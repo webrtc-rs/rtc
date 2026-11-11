@@ -260,6 +260,9 @@ impl Depacketizer for H264Packet {
             STAPA_NALU_TYPE => {
                 let mut curr_offset = STAPA_HEADER_SIZE;
                 while curr_offset < packet.len() {
+                    if packet.len() - curr_offset < STAPA_NALU_LENGTH_SIZE {
+                        return Err(Error::ErrShortPacket);
+                    }
                     let nalu_size =
                         ((packet[curr_offset] as usize) << 8) | packet[curr_offset + 1] as usize;
                     curr_offset += STAPA_NALU_LENGTH_SIZE;
@@ -287,7 +290,7 @@ impl Depacketizer for H264Packet {
                     return Err(Error::ErrShortPacket);
                 }
 
-                if self.fua_buffer.is_none() {
+                if packet[1] & FU_START_BITMASK != 0 || self.fua_buffer.is_none() {
                     self.fua_buffer = Some(BytesMut::new());
                 }
 
