@@ -43,3 +43,9 @@ harness = false
 name = "turn_client_udp"
 path = "examples/turn_client_udp.rs"
 bench = false
+
+[[example]]
+name = "turn_server_udp"
+path = "examples/turn_server_udp.rs"
+bench = false
+test = true
