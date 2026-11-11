@@ -759,6 +759,7 @@ fn timed_test_association() -> Association {
     a.control_queue.clear();
     a.timers.stop(Timer::T1Init);
     a.set_state(AssociationState::Established);
+    a.peer_supports_reconfig = true;
     a.use_forward_tsn = true;
     a.rwnd = 65536;
     a.rto_mgr.set_rto(1000, true);
@@ -1785,3 +1786,6 @@ fn test_full_buffer_gap_fill_headroom_is_one_message() -> Result<()> {
 
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
+
+#[path = "transmit_reset_test.rs"]
+mod transmit_reset_test;

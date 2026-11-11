@@ -100,7 +100,7 @@ fn message_id_exhaustion_preserves_write_state_and_input() -> Result<()> {
         MessageId::new(u64::MAX - 1),
         a.pending_queue.peek().unwrap().message_id
     );
-    let sequence = a.streams.get(&1).unwrap().sequence_number;
+    let sequence = a.transmit_streams.get(&1).map(|tx| tx.next_ssn);
     a.stream(1)?
         .set_buffered_amount_high_threshold(queued.len() + 1)?;
     while a.poll().is_some() {}
@@ -114,7 +114,7 @@ fn message_id_exhaustion_preserves_write_state_and_input() -> Result<()> {
         ));
         assert_eq!(original, input, "a failed write must not consume input");
         assert_eq!(u64::MAX, a.next_message_id, "identities must not wrap");
-        assert_eq!(sequence, a.streams.get(&1).unwrap().sequence_number);
+        assert_eq!(sequence, a.transmit_streams.get(&1).map(|tx| tx.next_ssn));
         assert_eq!(queued.len(), a.stream(1)?.buffered_amount()?);
         assert_eq!(1, a.pending_queue.len());
         assert_eq!(queued.len(), a.pending_queue.get_num_bytes());
@@ -239,7 +239,7 @@ fn reset_follows_expired_pending_tail_after_partial_ack() -> Result<()> {
             sender.cwnd = fragment_size * 2;
             let initial = sender.gather_outbound(now).0;
             assert_eq!(2, transmitted_data(&initial).len());
-            assert!(sender.reconfigs.is_empty());
+            assert!(sender.outgoing_reset.is_none());
             assert_eq!(3, sender.pending_queue.len());
             if ack_mode != 0 {
                 sender.handle_sack(
@@ -273,7 +273,7 @@ fn reset_follows_expired_pending_tail_after_partial_ack() -> Result<()> {
             assert!(sender.pending_queue.is_empty());
             assert_eq!(0, sender.pending_queue.get_num_bytes());
             assert_eq!(0, sender.inflight_queue.get_num_bytes());
-            assert_eq!(1, sender.reconfigs.len());
+            assert!(sender.outgoing_reset.is_some());
             assert_eq!(first_tsn.wrapping_add(4), sender.my_next_tsn);
             let parsed: Vec<Packet> = packets
                 .iter()
