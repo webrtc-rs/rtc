@@ -351,6 +351,22 @@ impl RTCPeerConnection {
         }
     }
 
+    /// Close follows already-queued data for that channel. Other channels can
+    /// keep making progress while an application applies receive back-pressure.
+    fn pop_ready_event(&mut self) -> Option<RTCPeerConnectionEvent> {
+        let ready = self.pipeline_context.event_outs.iter().position(|event| {
+            let RTCPeerConnectionEvent::OnDataChannel(
+                crate::peer_connection::event::RTCDataChannelEvent::OnClose(id),
+            ) = event else {
+                return true;
+            };
+            !self.pipeline_context.data_read_outs.iter().any(|message| {
+                matches!(&message.message, RTCMessage::DataChannelMessage(channel, _) if channel == id)
+            })
+        });
+        ready.and_then(|index| self.pipeline_context.event_outs.remove(index))
+    }
+
     /// Returns whether any handler raised an event during the sweep.
     fn pump_events(&mut self) -> bool {
         let mut intermediate_eouts = VecDeque::new();
@@ -471,9 +487,9 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        // Drain the backlog before sweeping the pipeline again: anything a sweep adds lands
-        // behind it anyway, and the sweep runs once the backlog is empty.
-        if let Some(evt) = self.pipeline_context.event_outs.pop_front() {
+        // Drain ready events first. A close waiting for its channel's queued data
+        // must not prevent a sweep from raising events for unrelated channels.
+        if let Some(evt) = self.pop_ready_event() {
             return Some(evt);
         }
 
@@ -485,7 +501,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             self.pump_events();
         }
 
-        self.pipeline_context.event_outs.pop_front()
+        self.pop_ready_event()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {

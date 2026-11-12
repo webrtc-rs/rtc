@@ -163,6 +163,61 @@ impl<'a> SctpHandler<'a> {
         }
     }
 
+    fn forward_association_event(
+        events: &mut VecDeque<TaggedRTCEventInternal>,
+        pending: &mut HashSet<(AssociationHandle, StreamId)>,
+        peer_opened: &mut HashSet<(AssociationHandle, StreamId)>,
+        unannounced: &mut HashSet<AssociationHandle>,
+        ch: AssociationHandle,
+        event: Event,
+        now: Instant,
+    ) {
+        let forwarded = match event {
+            Event::HandshakeFailed { reason } => {
+                debug!(
+                    "association_handle {} handshake failed due to {}",
+                    ch.0, reason
+                );
+                None
+            }
+            Event::Connected => {
+                debug!("association_handle {} is connected", ch.0);
+                // Its data waits for the event (see `unannounced`).
+                unannounced.insert(ch);
+                Some(RTCEventInternal::SCTPHandshakeComplete(ch.0))
+            }
+            Event::AssociationLost { reason, id } => {
+                debug!("association_handle {} is closed due to {}", ch.0, reason);
+                pending.remove(&(ch, id));
+                peer_opened.remove(&(ch, id));
+                Some(RTCEventInternal::SCTPStreamClosed(ch.0, id))
+            }
+            Event::Stream(StreamEvent::Opened { id }) => {
+                peer_opened.insert((ch, id));
+                None
+            }
+            Event::Stream(StreamEvent::Readable { id }) => {
+                // Timeout processing has no inbound packet to drain against.
+                // The normal level-triggered read path resumes this stream.
+                pending.insert((ch, id));
+                None
+            }
+            Event::Stream(StreamEvent::BufferedAmountLow { id }) => {
+                Some(RTCEventInternal::SCTPBufferedAmountLow(ch.0, id))
+            }
+            Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
+                Some(RTCEventInternal::SCTPBufferedAmountHigh(ch.0, id))
+            }
+            Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
+                Some(RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes))
+            }
+            _ => None,
+        };
+        if let Some(event) = forwarded {
+            events.push_back(TaggedRTCEventInternal { now, event });
+        }
+    }
+
     /// How many more messages may be pulled out of SCTP before the pipeline is over its bound.
     fn read_budget(&self) -> usize {
         SCTP_PIPELINE_READ_BACKLOG_LIMIT
@@ -214,9 +269,15 @@ impl<'a> SctpHandler<'a> {
                 ctx_pending.insert((ch, id));
                 return Ok(());
             }
-            let Some(chunks) = stream.read_sctp()? else {
-                ctx_pending.remove(&(ch, id));
-                return Ok(());
+            let chunks = match stream.read_sctp() {
+                Ok(Some(chunks)) => chunks,
+                Ok(None) | Err(Error::ErrStreamClosed) => {
+                    // Draining the final message can complete a deferred reset and
+                    // remove the stream. Preserve messages already collected in this batch.
+                    ctx_pending.remove(&(ch, id));
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
             };
             // Reassemble straight into the delivered buffer: one copy instead of the
             // scratch-buffer round-trip (`max_len` preserves the max-message-size bound
@@ -481,37 +542,7 @@ impl<'a>
 
                     while let Some(event) = conn.poll() {
                         match event {
-                            Event::HandshakeFailed { reason } => {
-                                debug!(
-                                    "association_handle {} handshake failed due to {}",
-                                    ch.0, reason
-                                );
-                                //TODO: put it into event_outs?
-                            }
-                            Event::Connected => {
-                                debug!("association_handle {} is connected", ch.0);
-                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                    now,
-                                    event: RTCEventInternal::SCTPHandshakeComplete(ch.0),
-                                });
-                                // Its data waits for the event (see `unannounced`).
-                                self.ctx.unannounced.insert(*ch);
-                            }
-                            Event::AssociationLost { reason, id } => {
-                                debug!("association_handle {} is closed due to {}", ch.0, reason);
-                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                    now,
-                                    event: RTCEventInternal::SCTPStreamClosed(ch.0, id),
-                                });
-                            }
-                            Event::Stream(StreamEvent::Opened { id }) => {
-                                // The peer's DATA created this stream. Its first message
-                                // may be the OPEN this side's sends must follow.
-                                self.ctx.peer_opened_streams.insert((*ch, id));
-                            }
                             Event::Stream(StreamEvent::Readable { id }) => {
-                                // Bounded: what is not read stays in the reassembly queue,
-                                // which is what lowers `a_rwnd` and throttles the peer.
                                 Self::drain_stream(
                                     &mut self.ctx.pending_readable,
                                     &mut self.ctx.peer_opened_streams,
@@ -524,36 +555,15 @@ impl<'a>
                                     &mut messages,
                                 )?;
                             }
-                            Event::Stream(StreamEvent::BufferedAmountLow { id }) => {
-                                debug!(
-                                    "association_handle {} stream id {} is buffered amount low",
-                                    ch.0, id
-                                );
-                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                    now,
-                                    event: RTCEventInternal::SCTPBufferedAmountLow(ch.0, id),
-                                });
-                            }
-                            Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
-                                debug!(
-                                    "association_handle {} stream id {} is buffered amount high",
-                                    ch.0, id
-                                );
-                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                    now,
-                                    event: RTCEventInternal::SCTPBufferedAmountHigh(ch.0, id),
-                                });
-                            }
-                            Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
-                                // Forward the exact released byte count so the data
-                                // channel handler can decrement its synchronous
-                                // send back-pressure counter (see DataChannelHandler).
-                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                    now,
-                                    event: RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
-                                });
-                            }
-                            _ => {}
+                            event => Self::forward_association_event(
+                                &mut self.ctx.event_outs,
+                                &mut self.ctx.pending_readable,
+                                &mut self.ctx.peer_opened_streams,
+                                &mut self.ctx.unannounced,
+                                *ch,
+                                event,
+                                now,
+                            ),
                         }
                     }
 
@@ -725,13 +735,8 @@ impl<'a>
                             let mut stream = conn.stream(message.stream_id)?;
                             stream.close(now)?;
 
-                            self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                                now,
-                                event: RTCEventInternal::SCTPStreamClosed(
-                                    message.association_handle,
-                                    message.stream_id,
-                                ),
-                            });
+                            // The stream reset is asynchronous. Keep the RTC channel's
+                            // stream ID reserved until SCTP reports AssociationLost.
                         }
                         Message::DataChannelThreshold(data_channel_threshold) => {
                             is_dcep_internal_control_message = true;
@@ -856,6 +861,21 @@ impl<'a>
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
+        // Application reads can finish a deferred reset without receiving another
+        // datagram. Surface the resulting lifecycle and credit events on this path too.
+        for (ch, conn) in self.ctx.sctp_transport.sctp_associations.iter_mut() {
+            while let Some(event) = conn.poll() {
+                Self::forward_association_event(
+                    &mut self.ctx.event_outs,
+                    &mut self.ctx.pending_readable,
+                    &mut self.ctx.peer_opened_streams,
+                    &mut self.ctx.unannounced,
+                    *ch,
+                    event,
+                    self.ctx.now,
+                );
+            }
+        }
         let evt = self.ctx.event_outs.pop_front()?;
         // The next handler takes this event before any read the pipeline pumps after it, so
         // the association's data may follow from now on (see `SctpHandlerContext::unannounced`).
@@ -884,6 +904,17 @@ impl<'a>
         let mut endpoint_events: Vec<(AssociationHandle, EndpointEvent)> = vec![];
         for (ch, conn) in sctp_associations.iter_mut() {
             conn.handle_timeout(now);
+            while let Some(event) = conn.poll() {
+                Self::forward_association_event(
+                    &mut self.ctx.event_outs,
+                    &mut self.ctx.pending_readable,
+                    &mut self.ctx.peer_opened_streams,
+                    &mut self.ctx.unannounced,
+                    *ch,
+                    event,
+                    now,
+                );
+            }
 
             while let Some(event) = conn.poll_endpoint_event() {
                 endpoint_events.push((*ch, event));
@@ -3187,5 +3218,228 @@ mod tests {
             after, empty_window,
             "the abandoned fragments must be dropped and their window given back"
         );
+    }
+    #[test]
+    fn a_parked_response_survives_peer_reset_before_application_drain() {
+        let now = Instant::now();
+        let mut e = establish();
+        let data = server_datagrams_carrying(&mut e, 1, 1, now);
+        e.server_conn
+            .stream(1)
+            .expect("server stream")
+            .close(now)
+            .expect("peer reset");
+        let reset = drain_transmits(&mut e.server_conn, now);
+        assert!(!reset.is_empty());
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            for datagram in data.into_iter().chain(reset) {
+                handler
+                    .handle_read(raw_read(now, datagram))
+                    .expect("read DATA and reset");
+            }
+        }
+        assert!(ctx.read_outs.is_empty());
+        assert!(!ctx.pending_readable.is_empty());
+
+        let response = SctpHandler::new(&mut ctx, 0)
+            .poll_read()
+            .expect("the final buffered response must survive deferred reset completion");
+        assert!(
+            matches!(response.message, RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage { payload, .. })) if payload.as_ref() == [0; 64])
+        );
+        assert!(ctx.pending_readable.is_empty());
+        assert!(ctx.event_outs.is_empty());
+        assert!(
+            ctx.sctp_transport
+                .sctp_associations
+                .get_mut(&e.client_ch)
+                .unwrap()
+                .stream(1)
+                .is_err(),
+            "draining the final response must complete the deferred reset"
+        );
+
+        // The read above generated the stream-loss event. No timeout or new
+        // datagram should be needed to deliver it, and it must be delivered once.
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        assert!(matches!(
+            handler.poll_event(),
+            Some(TaggedRTCEventInternal {
+                now: observed_at,
+                event: RTCEventInternal::SCTPStreamClosed(association, 1),
+            }) if observed_at == now && association == e.client_ch.0
+        ));
+        assert!(handler.poll_event().is_none());
+    }
+
+    #[test]
+    fn event_polling_reports_send_high_watermark_without_an_inbound_packet() {
+        let now = Instant::now();
+        let e = establish();
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        ctx.sctp_transport
+            .sctp_associations
+            .get_mut(&e.client_ch)
+            .unwrap()
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .unwrap()
+            .set_buffered_amount_high_threshold(4)
+            .unwrap();
+
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        handler
+            .handle_write(TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                    association_handle: e.client_ch.0,
+                    stream_id: 1,
+                    ppi: PayloadProtocolIdentifier::Binary,
+                    payload: BytesMut::from(&b"buffered"[..]),
+                    negotiated: false,
+                })),
+            })
+            .unwrap();
+
+        assert!(handler.ctx.event_outs.is_empty());
+        assert!(matches!(
+            handler.poll_event(),
+            Some(TaggedRTCEventInternal {
+                now: observed_at,
+                event: RTCEventInternal::SCTPBufferedAmountHigh(association, 1),
+            }) if observed_at == now && association == e.client_ch.0
+        ));
+        assert!(handler.poll_event().is_none());
+    }
+
+    #[test]
+    fn local_close_waits_for_sctp_stream_removal() {
+        use datachannel::message::message_channel_close::DataChannelClose;
+        let now = Instant::now();
+        let e = establish();
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        ctx.sctp_transport
+            .sctp_associations
+            .get_mut(&e.client_ch)
+            .unwrap()
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .unwrap();
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        handler
+            .handle_write(TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                    association_handle: e.client_ch.0,
+                    stream_id: 1,
+                    ppi: PayloadProtocolIdentifier::Dcep,
+                    payload: Message::DataChannelClose(DataChannelClose)
+                        .marshal()
+                        .unwrap()
+                        .into(),
+                    negotiated: false,
+                })),
+            })
+            .unwrap();
+        assert!(
+            handler
+                .ctx
+                .sctp_transport
+                .sctp_associations
+                .get_mut(&e.client_ch)
+                .unwrap()
+                .stream(1)
+                .is_ok()
+        );
+        assert!(
+            handler.poll_event().is_none(),
+            "requesting reset must not release the RTC stream reservation"
+        );
+    }
+
+    #[test]
+    fn timeout_processing_forwards_stream_loss_without_an_inbound_datagram() {
+        let now = Instant::now();
+        let e = establish();
+        let mut conn = e.client_conn;
+        conn.open_stream(1, PayloadProtocolIdentifier::Binary)
+            .unwrap();
+        conn.close(AssociationError::LocallyClosed).unwrap();
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, conn);
+        let mut handler = SctpHandler::new(&mut ctx, 0);
+        handler.handle_timeout(now).unwrap();
+        assert!(
+            matches!(
+                handler.poll_event(),
+                Some(TaggedRTCEventInternal {
+                    event: RTCEventInternal::SCTPStreamClosed(_, 1),
+                    ..
+                })
+            ),
+            "timeout processing must forward queued stream loss without a later packet"
+        );
+    }
+    #[test]
+    fn application_close_waits_until_its_queued_messages_are_read() {
+        use crate::peer_connection::event::RTCDataChannelEvent;
+        use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
+        let now = Instant::now();
+        let mut peer = crate::peer_connection::RTCPeerConnectionBuilder::new()
+            .build(now)
+            .unwrap();
+        peer.pipeline_context
+            .data_read_outs
+            .push_back(TaggedRTCMessage {
+                now,
+                message: RTCMessage::DataChannelMessage(
+                    7,
+                    crate::data_channel::message::RTCDataChannelMessage {
+                        is_string: false,
+                        data: BytesMut::from(&b"final response"[..]),
+                    },
+                ),
+            });
+        peer.pipeline_context.event_outs.push_back(
+            crate::peer_connection::event::RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnClose(7),
+            ),
+        );
+        peer.pipeline_context.event_outs.push_back(
+            crate::peer_connection::event::RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnOpen(9),
+            ),
+        );
+        assert!(
+            matches!(
+                peer.poll_event(),
+                Some(
+                    crate::peer_connection::event::RTCPeerConnectionEvent::OnDataChannel(
+                        RTCDataChannelEvent::OnOpen(9)
+                    )
+                )
+            ),
+            "an unrelated channel must progress while the old response is backpressured"
+        );
+        assert!(
+            peer.poll_event().is_none(),
+            "OnClose must not overtake a queued application message"
+        );
+        assert!(matches!(
+            peer.poll_read(),
+            Some(TaggedRTCMessage {
+                message: RTCMessage::DataChannelMessage(7, _),
+                ..
+            })
+        ));
+        assert!(matches!(
+            peer.poll_event(),
+            Some(
+                crate::peer_connection::event::RTCPeerConnectionEvent::OnDataChannel(
+                    RTCDataChannelEvent::OnClose(7)
+                )
+            )
+        ));
     }
 }
