@@ -54,6 +54,9 @@ pub(crate) struct SctpTransport {
     // Streams share the bytes sent by weight (RFC 8260 section 3.6), off by default.
     pub(crate) weighted_fair_queueing: bool,
 
+    // Time-based loss detection with the undo of a needless cut (RFC 8985), off by default.
+    pub(crate) rack_tlp: bool,
+
     pub(crate) internal_buffer: Vec<u8>,
 }
 
@@ -78,6 +81,7 @@ impl SctpTransport {
             max_receive_buffer_size,
             mtu,
             weighted_fair_queueing: false,
+            rack_tlp: false,
             internal_buffer: vec![],
         }
     }
@@ -85,6 +89,12 @@ impl SctpTransport {
     /// Schedules the association `start()` builds by weighted fair queueing.
     pub(crate) fn with_weighted_fair_queueing(mut self, enabled: bool) -> Self {
         self.weighted_fair_queueing = enabled;
+        self
+    }
+
+    /// Turns on time-based loss detection for the association `start()` builds.
+    pub(crate) fn with_rack_tlp(mut self, enabled: bool) -> Self {
+        self.rack_tlp = enabled;
         self
     }
 
@@ -197,7 +207,8 @@ impl SctpTransport {
         let mut sctp_transport_config = ::sctp::TransportConfig::default()
             .with_max_message_size(max_message_size)
             .with_sctp_port(local_port)
-            .with_stream_scheduler(scheduler);
+            .with_stream_scheduler(scheduler)
+            .with_rack_tlp(self.rack_tlp);
         if let Some(recv_buf) = self.max_receive_buffer_size {
             sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
         }
@@ -480,5 +491,48 @@ mod tests {
             ::sctp::StreamScheduler::FirstComeFirstServed,
             scheduler_after_start(transport)
         );
+    }
+
+    fn rack_tlp_after_start(transport: SctpTransport, role: RTCDtlsRole) -> bool {
+        let mut transport = transport;
+        transport
+            .start(
+                role,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        transport
+            .sctp_transport_config
+            .expect("client transport config")
+            .rack_tlp()
+    }
+
+    #[test]
+    fn start_applies_rack_tlp_when_asked() {
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        )
+        .with_rack_tlp(true);
+        assert!(rack_tlp_after_start(transport, RTCDtlsRole::Client));
+    }
+
+    #[test]
+    fn start_leaves_rack_tlp_off_by_default() {
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
+        assert!(!rack_tlp_after_start(transport, RTCDtlsRole::Client));
     }
 }
