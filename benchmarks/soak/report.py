@@ -497,8 +497,18 @@ def classify(e):
 def outage_disconnect(run, group, t):
     """An ICE disconnect at t that the outage caused: the path was cut, any agent loses it. One that
     starts within a sample interval after the outage counts too (the clocks of two shapers differ by
-    that much); an ICE failure is never excused."""
+    that much). An ICE failure in an outage phase is not excused (see `own_outage`)."""
     return run.phase_at(group, t)[0] == "outage" or run.phase_at(group, t - SAMPLE_S)[0] == "outage"
+
+
+def own_outage(run, group, who, t):
+    """An ICE failure at t while an outage attack (`outage-30`, `outage-60`, ...) had cut the path of
+    the participant that failed, or a sample interval after it ended: the path was down longer than
+    any agent waits before it gives up (about 30 s), so failing is what it should do, whichever SFU
+    it talks to. A rejoined participant (`s17#2`) is the same participant."""
+    who = who.split("#")[0]
+    return any(w["name"].startswith("outage") and attacked(w, group, who)
+               and w["start"] <= t <= w["end"] + SAMPLE_S for w in run.attacks)
 
 
 def downtimes(ent):
@@ -612,6 +622,8 @@ def scope_metrics(ents, group, phase, rules, drop=None):
                 if drop is not None and drop(e.run, ev["t"], ev["t"]):
                     continue
                 if kind == "ice_disc" and outage_disconnect(e.run, group, ev["t"]):
+                    continue
+                if kind == "ice_fail" and own_outage(e.run, group, str(ev.get("id")), ev["t"]):
                     continue
                 if phase is None or e.run.phase_at(group, ev["t"])[0] == phase:
                     counts[kind] += 1
