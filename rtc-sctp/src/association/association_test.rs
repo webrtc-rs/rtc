@@ -1783,6 +1783,27 @@ fn test_full_buffer_gap_fill_headroom_is_one_message() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn shutdown_acks_received_cumulative_tsn_from_peer() -> Result<()> {
+    let mut a = timed_test_association();
+    a.peer_last_tsn = 99;
+    a.cumulative_tsn_ack_point = 5000;
+    a.will_send_shutdown = true;
+
+    let (raw, ok) = a.gather_outbound_shutdown_packets(vec![], Instant::now());
+    assert!(ok);
+    assert_eq!(1, raw.len());
+
+    let pkt = Packet::unmarshal(&raw[0])?;
+    let shutdown = pkt.chunks[0]
+        .as_any()
+        .downcast_ref::<ChunkShutdown>()
+        .expect("a SHUTDOWN chunk");
+
+    assert_eq!(99, shutdown.cumulative_tsn_ack);
+    Ok(())
+}
+
 #[path = "message_selection_test.rs"]
 mod message_selection_test;
 

@@ -2569,7 +2569,7 @@ impl Association {
             self.will_send_shutdown = false;
 
             let shutdown = ChunkShutdown {
-                cumulative_tsn_ack: self.cumulative_tsn_ack_point,
+                cumulative_tsn_ack: self.peer_last_tsn,
             };
 
             if let Ok(raw) = self.create_packet(vec![Box::new(shutdown)]).marshal() {
