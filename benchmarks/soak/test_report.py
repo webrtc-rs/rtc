@@ -345,6 +345,20 @@ class OutageDisconnects(Fixture):
         self.assertIn("ICE disconnects", md.split("## Breaches")[1].split("## ")[0])
 
 
+    def test_an_ice_failure_in_an_outage_aimed_at_the_participant_is_not_counted(self):
+        cut = window(80, 140, "o1", "outage-60", ["s17"]) + [
+            event("rtcd-rs", 109, "s17", "ice_state", "ice:failed")]
+        status, md, _, _ = run_report(side("rtcd-rs", extra=cut), side("rtcd-go"))
+        self.assertEqual(status, 0, md)
+
+    def test_an_ice_failure_outside_its_own_outage_counts(self):
+        cut = window(80, 140, "o1", "outage-60", ["s18"]) + [
+            event("rtcd-rs", 109, "s17", "ice_state", "ice:failed")]
+        status, md, _, _ = run_report(side("rtcd-rs", extra=cut), side("rtcd-go"))
+        self.assertEqual(status, 1)
+        self.assertIn("ICE failures", md.split("## Breaches")[1].split("## ")[0])
+
+
 class EarlyStop(Fixture):
     """A baseline killed part way (OOM, crash) is compared over the minutes it ran."""
 
