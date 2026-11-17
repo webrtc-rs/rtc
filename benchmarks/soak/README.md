@@ -58,10 +58,11 @@ Each pair writes its own `<pair>.jsonl`; the comparison needs `rtc-rtc` and `pio
 the same directory and `run.sh` reports, or call `report.py --rules rules.json --out DIR out/*.jsonl`).
 `machine.txt` in the output records the architecture, kernel, cores and CPU.
 
-`PROFILE=abuse` runs the same pairs as an abuse soak (see "The abuse profile of the peers").
+`PROFILE=abuse` runs the same pairs as an abuse soak (see "The abuse profile of the peers");
+`PROFILE=trace` runs the call over recorded cellular links (see "Trace replay").
 
 CI runs the three
-pairs of the `call` profile and `rtc-rtc` / `pion-pion` of the `abuse` profile on x64 and arm64
+pairs of the `call` and `trace` profiles and `rtc-rtc` / `pion-pion` of the `abuse` profile on x64 and arm64
 (`.github/workflows/soak.yml`): weekly for 120 minutes, by hand with a `minutes` input, and for pull
 requests that touch this directory for 10 minutes with 5-minute cycles.
 
@@ -150,6 +151,44 @@ the k-th name of `NETEM_NAMES` for flow k (all names in the whole-device and `ud
 the script writes an `event` `seed` line and one `phase` line named `abuse`, so the group is not
 treated as clean. Every change of any profile resets reorder, duplicate, loss and rate first
 (`tc qdisc replace` on a netem keeps them otherwise).
+
+## Trace replay
+
+`PROFILE=trace` (`NETEM_PROFILE=trace` in `netem.sh`) puts the call on real recorded links instead of
+synthetic phases, the way Mahimahi-based evaluations of real-time video do (Winstein, Sivaraman,
+Balakrishnan, "Stochastic Forecasts Achieve High Throughput and Low Delay over Cellular Networks",
+NSDI 2013; Netravali et al., "Mahimahi: Accurate Record-and-Replay for HTTP", USENIX ATC 2015).
+
+* **Traces.** The Mahimahi LTE driving traces of Verizon, AT&T and T-Mobile, uplink and downlink (six
+  files), at commit `f1346c38c415abfc98626dd82450f49a57033603` of github.com/ravinet/mahimahi. A file is
+  a list of millisecond timestamps, one per 1500-byte packet the link can deliver then, and loops. That
+  repository is GPL-3.0, so the files are **not** committed here (this repository is MIT / Apache-2.0):
+  `traces.sh` downloads them at run time into `TRACE_DIR` (default `<outdir>/traces`, in CI
+  `$RUNNER_TEMP/soak-traces`) and fails when a file's sha256 is not the one hard-coded in it.
+* **Replay.** `tracereplay.py` counts the packets of every `NETEM_TRACE_STEP_MS` (200) window, which is
+  the kbit the link can deliver in it, and every step sets that rate (`tc qdisc change`, one
+  `tc -batch` per step for all flows) on the flow's netem, with `NETEM_TRACE_DELAY` (40 ms, one way)
+  of base delay. Each flow (the single flow in the whole-device and `udp` modes, every flow of
+  `<base>:<count>`) takes a carrier and an offset into its uplink and its downlink from
+  `NETEM_SEED` and the flow's number, so a seed replays; the replay loops. On `lo` (no ingress shaping)
+  only the uplink is replayed, and both directions of the pair share it.
+* **Queue.** `NETEM_TRACE_LIMIT` (100) packets, drop-tail: 150 kB, which at the median rates of these
+  traces (1 to 20 Mbit/s) is 60 ms to 1.2 s. It holds a keyframe's burst but turns a stall into loss
+  rather than seconds of delay. (`mm-link` queues without bound by default.)
+* **Stalls.** A step in which the link delivers nothing is set as `loss 100%` (with `rate 0`, which
+  in netem means no limit): what a stalled link does to the packets of a call is, over seconds, the
+  same as an outage.
+* **Timeline.** One `phase` line named `trace` at the start (so the group is not treated as clean), an
+  `event` `trace` line per flow with the files and offsets, and `attack` windows per flow with `who`
+  as in the abuse profile: `trace-stall` for no delivery for at least 1 s, `trace-low` for under
+  300 kbit/s for at least 2 s (a stall is low too, so the two overlap). The windows follow what the
+  flow's participant lives through: the lower of its uplink and downlink where both are shaped.
+* **Rules.** `rules.json`, as for `call`. There is no clean phase, so the drift rules report `n/a`, as in
+  the abuse profile. The long stalls of the traces (the AT&T uplink has one of 78 s, Verizon's 14 s)
+  can end the ICE session for both libraries; the comparison only holds `rtc` to what `pion` shows.
+
+Local: `PROFILE=trace SEED=7 benchmarks/soak/run.sh rtc-rtc 10 out` (Linux, root for `tc`), or look
+at a trace alone, on any machine: `python3 benchmarks/soak/tracereplay.py stats "$(benchmarks/soak/traces.sh)"/*`.
 
 ## The abuse profile of the peers
 

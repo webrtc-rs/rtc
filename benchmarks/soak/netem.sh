@@ -33,6 +33,16 @@
 # and, rarely, an outage of 30, 60 or 120 s. Each scene logs an `attack` start and end line (see
 # README.md); NETEM_NAMES (space separated) names the participant of flow k, the k-th name.
 #
+# NETEM_PROFILE=trace (NETEM_SEED, NETEM_NAMES, NETEM_GROUP as above) replays recorded cellular links
+# instead (traces.sh fetches them into NETEM_TRACE_DIR; tracereplay.py does the replay): every flow gets an
+# uplink and a downlink trace and an offset into each, chosen from the seed and the flow's number,
+# and the rate of its netem follows the trace in steps of NETEM_TRACE_STEP_MS (200). The base one-way
+# delay is NETEM_TRACE_DELAY (40ms) and the queue NETEM_TRACE_LIMIT packets (100: 150 kB, a drop-tail
+# that holds a keyframe burst but turns a stall into loss, not seconds of delay). A step the link
+# delivers nothing in is a stall (100 % loss). Stretches without delivery for 1 s and under 300 kbit/s
+# for 2 s are logged as `attack` windows named `trace-stall` and `trace-low`, with a `trace` phase line
+# at the start. Without ingress shaping (`lo`) only the uplink trace is replayed.
+#
 # Egress is always impaired. Ingress is impaired too, through an `ifb` device, except on `lo`
 # (a packet crosses lo's egress and ingress both, so the egress shaping already covers each
 # direction once). Override with NETEM_INGRESS=0|1|auto. Linux only; needs root/NET_ADMIN (and
@@ -295,6 +305,27 @@ run_abuse() {
 
 if [ "$profile" = abuse ]; then
   run_abuse
+  exit 0
+fi
+
+# --- trace profile ------------------------------------------------------------------------------
+
+# One process steps every flow's rate with a single `tc -batch` per step, so five steps a second for
+# many flows stay cheap, and it writes the `trace` phase and the `attack` lines.
+run_trace() {
+  local args=()
+  [ "$ingress" = 1 ] && args+=(--ifb "$ifb")
+  if [ "$ports" = udp ]; then args+=(--all-names); fi
+  python3 "$(dirname "$0")/tracereplay.py" play --dir "${NETEM_TRACE_DIR:?NETEM_TRACE_DIR is where traces.sh put the traces}" \
+    --seed "$seed" --seconds "$(left "$((minutes * 60))")" --iface "$iface" --flows "$flows" \
+    --delay "${NETEM_TRACE_DELAY:-40ms}" --limit "${NETEM_TRACE_LIMIT:-100}" --step-ms "${NETEM_TRACE_STEP_MS:-200}" \
+    --events "$events" --group "$group" --arch "$arch" --names "${names[*]}" ${args[@]+"${args[@]}"} &
+  pids+=("$!")
+  wait "${pids[@]}"
+}
+
+if [ "$profile" = trace ]; then
+  run_trace
   exit 0
 fi
 

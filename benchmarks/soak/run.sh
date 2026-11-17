@@ -12,6 +12,10 @@
 # (default: today's date, UTC; printed and logged): `SEED=7 PROFILE=abuse run.sh rtc-rtc 3 out`. ONLY
 # (comma separated attack classes) restricts the peers' attacks, for looking at one class.
 # The comparison needs the same SEED for both pairs.
+# PROFILE=trace runs the call over recorded cellular links instead of the netem phases: netem.sh replays
+# Mahimahi LTE traces (SEED picks the trace and offset of each direction), which this script fetches
+# with traces.sh into TRACE_DIR (default <outdir>/traces) and checks against pinned hashes; the rules
+# are the call profile's. See README.md, "Trace replay".
 # Needs Linux, python3, iproute2 and root (or sudo) for tc. Writes machine.txt (architecture, cores, CPU).
 # Exits non-zero when a peer exits non-zero or logs a panic or fatal error (a crash is a failure; it is
 # also written to the JSONL as an `error` event of id `sfu`, which the report gates at zero) or, when rtc-rtc.jsonl and
@@ -34,8 +38,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 cycle=${CYCLE_MIN:-20}
 iface=${IFACE:-lo}
 profile=${PROFILE:-call}
-case "$profile" in call | abuse) ;; *)
-  echo "PROFILE is call or abuse, not $profile" >&2
+case "$profile" in call | abuse | trace) ;; *)
+  echo "PROFILE is call, abuse or trace, not $profile" >&2
   exit 2
   ;;
 esac
@@ -49,6 +53,10 @@ if [ "$profile" = abuse ]; then
 fi
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
+if [ "$profile" = trace ]; then
+  trace_dir=$("$here/traces.sh" "${TRACE_DIR:-$outdir/traces}")
+  echo "run.sh: profile trace, seed $seed, traces in $trace_dir (replay: SEED=$seed PROFILE=trace $0 $pair $minutes $outdir)"
+fi
 jsonl=$outdir/$pair.jsonl
 : >"$jsonl"
 {
@@ -102,6 +110,9 @@ done
 if [ "$profile" = abuse ]; then
   $sudo env NETEM_PROFILE=abuse NETEM_SEED="$seed" NETEM_NAMES="$offerer-offerer $answerer-answerer" \
     "$here/netem.sh" "$iface" "$minutes" "$cycle" "$jsonl" &
+elif [ "$profile" = trace ]; then
+  $sudo env NETEM_PROFILE=trace NETEM_SEED="$seed" NETEM_NAMES="$offerer-offerer $answerer-answerer" \
+    NETEM_TRACE_DIR="$trace_dir" "$here/netem.sh" "$iface" "$minutes" "$cycle" "$jsonl" &
 else
   $sudo "$here/netem.sh" "$iface" "$minutes" "$cycle" "$jsonl" &
 fi

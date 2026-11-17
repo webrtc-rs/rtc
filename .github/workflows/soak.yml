@@ -3,10 +3,11 @@
 # report job holds rtc-rtc against pion-pion (the same run, the same machine type) and fails when
 # rtc is less stable, when a pair job failed or when a pair left no measurements.
 # Weekly and by hand: two hours. On a pull request that touches the harness: ten minutes, five-
-# minute cycles. Two profiles: `call` (the call under netem phases) and `abuse` (the same call while
+# minute cycles. Three profiles: `call` (the call under netem phases), `abuse` (the same call while
 # hostile connections, traffic and a hostile network are thrown at it; pairs rtc-rtc and pion-pion
-# only, with the same seed, the run id, so both libraries get the same abuse). A crash fails the
-# job. See benchmarks/soak/README.md.
+# only, with the same seed, the run id, so both libraries get the same abuse) and `trace` (the call
+# over recorded cellular links, replayed from the same seed; all three pairs, the call's rules). A
+# crash fails the job. See benchmarks/soak/README.md.
 name: soak
 
 on:
@@ -46,7 +47,7 @@ jobs:
       matrix:
         pair: [ rtc-rtc, pion-pion, rtc-pion ]
         arch: [ x64, arm64 ]
-        profile: [ call, abuse ]
+        profile: [ call, abuse, trace ]
         exclude:
           - pair: rtc-pion # the mixed pair is a call comparison only
             profile: abuse
@@ -73,12 +74,18 @@ jobs:
             sudo modprobe sch_netem
           }
           tc -V
+      - name: Traces
+        if: matrix.profile == 'trace'
+        run: |
+          dir="$RUNNER_TEMP/soak-traces"
+          benchmarks/soak/traces.sh "$dir"
+          echo "TRACE_DIR=$dir" >> "$GITHUB_ENV"
       - name: Report tests
         run: python3 -m unittest discover -s benchmarks/soak -p 'test_*.py'
       - name: Soak
         env:
           PROFILE: ${{ matrix.profile }}
-          SEED: ${{ github.run_id }} # the same for every job of the run: one schedule of abuse for both libraries
+          SEED: ${{ github.run_id }} # the same for every job of the run: one schedule of abuse, one trace replay for all
         run: scripts/ci-run.sh benchmarks/soak/run.sh "${{ matrix.pair }}" "$MINUTES" soak-out
       - uses: actions/upload-artifact@v4
         if: always()
@@ -105,7 +112,7 @@ jobs:
         id: inputs
         run: |
           missing=0
-          for profile in call abuse; do
+          for profile in call abuse trace; do
             pairs="rtc-rtc pion-pion rtc-pion"
             [ "$profile" = abuse ] && pairs="rtc-rtc pion-pion"
             for pair in $pairs; do
@@ -124,7 +131,7 @@ jobs:
           set +e
           # One report per architecture and profile: the pairs of one are compared with each other.
           status=0
-          for profile in call abuse; do
+          for profile in call abuse trace; do
             rules=rules.json
             [ "$profile" = abuse ] && rules='rules-abuse.json'
             for arch in x64 arm64; do
@@ -138,7 +145,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          for profile in call abuse; do
+          for profile in call abuse trace; do
             for arch in x64 arm64; do
               [ -f "soak-report/$arch-$profile/summary.md" ] && { echo "## $arch, $profile"; cat "soak-report/$arch-$profile/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
             done
