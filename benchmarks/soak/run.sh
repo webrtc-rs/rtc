@@ -51,6 +51,8 @@ if [ "$profile" = abuse ]; then
   [ -n "${ONLY:-}" ] && peer_args+=(--only "$ONLY")
   echo "run.sh: profile abuse, seed $seed (replay: SEED=$seed PROFILE=abuse $0 $pair $minutes $outdir)"
 fi
+# A recorded link stalls for up to 78 s: the peers keep ICE patient as in the abuse profile.
+[ "$profile" = trace ] && peer_args=(--profile trace)
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 if [ "$profile" = trace ]; then

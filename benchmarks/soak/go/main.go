@@ -26,7 +26,7 @@ import (
 
 const (
 	reportEvery      = 5 * time.Second
-	patientICEFailed = 240 * time.Second // the abuse profile's longest outage is 120 s
+	patientICEFailed = 240 * time.Second // the abuse profile's longest outage is 120 s, a trace's stall 78 s
 )
 
 type signalMsg struct {
@@ -87,12 +87,12 @@ func main() {
 	minutes := flag.Float64("minutes", 1, "how long to run once connected")
 	out := flag.String("out", "pion.jsonl", "JSONL file to append to")
 	id := flag.String("id", "", "peer id (default pion-<role>)")
-	profile := flag.String("profile", "call", "call, or abuse: hostile connections and traffic next to the call")
+	profile := flag.String("profile", "call", "call; abuse: hostile connections and traffic next to the call; trace: the call over a recorded link (patient ICE)")
 	seed := flag.Uint64("seed", 1, "seed of the abuse profile's schedule")
 	only := flag.String("only", "", "abuse profile: only these attack classes (comma separated)")
 	flag.Parse()
-	if *profile != "call" && *profile != "abuse" {
-		fmt.Fprintln(os.Stderr, "soak-pion: --profile is call or abuse")
+	if *profile != "call" && *profile != "abuse" && *profile != "trace" {
+		fmt.Fprintln(os.Stderr, "soak-pion: --profile is call, abuse or trace")
 		os.Exit(2)
 	}
 	if *id == "" {
@@ -107,7 +107,7 @@ func main() {
 		log.event("seed", fmt.Sprintf("profile abuse seed %d", *seed))
 	}
 	ab := abuseOpts{enabled: *profile == "abuse", seed: *seed, only: *only, out: *out, signal: *addr}
-	if err := run(log, *role, *addr, *id, time.Duration(*minutes*float64(time.Minute)), ab); err != nil {
+	if err := run(log, *role, *addr, *id, time.Duration(*minutes*float64(time.Minute)), *profile != "call", ab); err != nil {
 		log.event("error", err.Error())
 		fmt.Fprintln(os.Stderr, "soak-pion:", err)
 		os.Exit(1)
@@ -123,7 +123,8 @@ var (
 // newPeerConnection builds a peer connection with the soak's codecs, header extension and the
 // library's default interceptors, over loopback host candidates only.
 // A patient one lets ICE ride out a long outage (the measured call of the abuse profile, whose
-// network goes down for up to two minutes) instead of failing after 25 s.
+// network goes down for up to two minutes, and of the trace profile, whose recorded links stall
+// for over a minute) instead of failing after 25 s.
 func newPeerConnection(patient bool) (*webrtc.PeerConnection, error) {
 	me := &webrtc.MediaEngine{}
 	if err := me.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: opusCap, PayloadType: 111}, webrtc.RTPCodecTypeAudio); err != nil {
@@ -150,8 +151,9 @@ func newPeerConnection(patient bool) (*webrtc.PeerConnection, error) {
 	return api.NewPeerConnection(webrtc.Configuration{})
 }
 
-func run(log *logger, role, addr, id string, dur time.Duration, ab abuseOpts) error {
-	pc, err := newPeerConnection(ab.enabled)
+// patient: ICE rides out long outages (the abuse and trace profiles).
+func run(log *logger, role, addr, id string, dur time.Duration, patient bool, ab abuseOpts) error {
+	pc, err := newPeerConnection(patient)
 	if err != nil {
 		return err
 	}

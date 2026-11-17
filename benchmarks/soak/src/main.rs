@@ -56,7 +56,7 @@ const REPORT_EVERY: Duration = Duration::from_secs(5);
 const AUDIO_EVERY: Duration = Duration::from_millis(20);
 const VIDEO_EVERY: Duration = Duration::from_nanos(33_333_333);
 const DATA_EVERY: Duration = Duration::from_millis(100);
-const PATIENT_ICE_FAILED: Duration = Duration::from_secs(240); // the abuse profile's longest outage is 120 s
+const PATIENT_ICE_FAILED: Duration = Duration::from_secs(240); // the abuse profile's longest outage is 120 s, a trace's stall 78 s
 const DC_STREAM_ID: u16 = 1; // the id both peers agree on out-of-band
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -104,7 +104,9 @@ fn parse_args() -> Args {
             _ => usage(),
         }
     }
-    if a.role != "offerer" && a.role != "answerer" || a.profile != "call" && a.profile != "abuse" {
+    if a.role != "offerer" && a.role != "answerer"
+        || !matches!(a.profile.as_str(), "call" | "abuse" | "trace")
+    {
         usage();
     }
     if a.id.is_empty() {
@@ -115,7 +117,7 @@ fn parse_args() -> Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: soak-rtc [--role offerer|answerer] [--signal HOST:PORT] [--minutes N] [--out FILE.jsonl] [--id NAME] [--profile call|abuse] [--seed N] [--only CLASS,...]"
+        "usage: soak-rtc [--role offerer|answerer] [--signal HOST:PORT] [--minutes N] [--out FILE.jsonl] [--id NAME] [--profile call|abuse|trace] [--seed N] [--only CLASS,...]"
     );
     std::process::exit(2);
 }
@@ -235,7 +237,8 @@ fn codec(mime: &str, rate: u32, channels: u16, fmtp: &str, pt: u8) -> RTCRtpCode
 /// One peer connection with the soak's tracks (Opus audio, VP8 video) and the negotiated data
 /// channel. `alt_video_ssrc` gives the video track a second SSRC to switch to (the abuse sessions);
 /// `patient` lets ICE ride out a long outage (the measured call of the abuse profile, whose network
-/// goes down for up to two minutes) instead of failing after 25 s.
+/// goes down for up to two minutes, and of the trace profile, whose recorded links stall for over a
+/// minute) instead of failing after 25 s.
 struct Peer {
     pc: rtc::peer_connection::RTCPeerConnection,
     audio: RTCRtpSenderId,
@@ -348,7 +351,7 @@ fn run(log: &mut Logger, a: &Args) -> Result<(), Box<dyn std::error::Error>> {
         audio,
         video,
         dc: dc_id,
-    } = build_peer(false, a.profile == "abuse")?;
+    } = build_peer(false, a.profile != "call")?;
     let sender_ids = HashMap::from([(RtpCodecKind::Audio, audio), (RtpCodecKind::Video, video)]);
     let host = host_candidate(local_addr)?;
 
