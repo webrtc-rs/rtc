@@ -17,21 +17,18 @@ const MAX_RTX_COUNT: u16 = 7; // total 7 requests (Rc)
 /// this is how long the client waits for its answer.
 const RELIABLE_TRANSACTION_TIMEOUT: Duration = Duration::from_millis(39_500);
 
-/// The id the authenticated retry of an Allocate uses: the anonymous request's, one on.
-///
-/// [`Client::allocate`](crate::client::Client::allocate) hands this one to its caller,
-/// because the anonymous request is answered with 401 and it is the retry that carries the
-/// allocation. Everything the caller is told about that allocation names it.
-pub(crate) fn authenticated_allocate_id(attempt: TransactionId) -> TransactionId {
-    let mut tid = attempt;
-    tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
-    tid
-}
-
 pub(crate) enum TransactionType {
     BindingRequest,
+    /// The anonymous Allocate, under the id [`Client::allocate`](crate::client::Client::allocate)
+    /// hands its caller.
     AllocateAttempt,
-    AllocateRequest(TextAttribute),
+    /// The authenticated retry after a 401. It is a new transaction under a fresh id (RFC 8489
+    /// §6), so it remembers which allocation it belongs to: `allocation` is the id `allocate()`
+    /// returned, and every event about this request names it, not the id on the wire.
+    AllocateRequest {
+        nonce: TextAttribute,
+        allocation: TransactionId,
+    },
     CreatePermissionRequest(RelayedAddr, Option<SocketAddr>),
     RefreshRequest(RelayedAddr),
     ChannelBindRequest(RelayedAddr, SocketAddr),
@@ -193,15 +190,11 @@ impl TransactionMap {
 
         for key in keys {
             let exhausted = self.tr_map.remove(&key);
-            // An Allocate nobody answers is the one case where the request on the wire and
-            // the allocation its caller knows have different ids.
-            let timed_out = if matches!(
-                exhausted.as_ref().map(|tr| &tr.transaction_type),
-                Some(TransactionType::AllocateAttempt)
-            ) {
-                authenticated_allocate_id(key)
-            } else {
-                key
+            // The authenticated Allocate retry is the one request whose caller knows it by
+            // another id than the one on the wire.
+            let timed_out = match exhausted.as_ref().map(|tr| &tr.transaction_type) {
+                Some(TransactionType::AllocateRequest { allocation, .. }) => *allocation,
+                _ => key,
             };
             self.events.push_back(Event::TransactionTimeout(timed_out));
         }
