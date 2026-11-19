@@ -53,6 +53,14 @@ impl Unmarshal for DataChannelThreshold {
         Self: Sized,
         B: Buf,
     {
+        // A type byte and a u32; `get_u8`/`get_u32` panic on a short buffer.
+        let required_len = 5;
+        if buf.remaining() < required_len {
+            return Err(Error::UnexpectedEndOfBuffer {
+                expected: required_len,
+                actual: buf.remaining(),
+            });
+        }
         let t = buf.get_u8();
         let v = buf.get_u32();
         if t == 0 {

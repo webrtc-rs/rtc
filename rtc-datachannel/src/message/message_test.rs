@@ -51,6 +51,17 @@ fn test_message_unmarshal_invalid_message_type() {
 }
 
 #[test]
+fn test_message_unmarshal_short_threshold_is_an_error() {
+    // Message type 0x00 (threshold, internal) with fewer than the 5 bytes
+    // its body needs.
+    for len in 1..6 {
+        let data = [0u8; 6];
+        let mut bytes = Bytes::copy_from_slice(&data[..len]);
+        assert!(Message::unmarshal(&mut bytes).is_err(), "length {len}");
+    }
+}
+
+#[test]
 fn test_message_marshal_size() {
     let msg = Message::DataChannelAck(DataChannelAck {});
 

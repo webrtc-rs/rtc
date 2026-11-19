@@ -68,6 +68,22 @@ fn test_abort_chunk_one_error_cause() -> Result<()> {
 }
 
 #[test]
+fn test_error_cause_length_past_end_is_an_error() {
+    // A cause header claiming 16 bytes, followed by only 4 more.
+    let raw = Bytes::from_static(&[0x00, 0x0d, 0x00, 0x10, 1, 2, 3, 4]);
+    assert!(ErrorCause::unmarshal(&raw).is_err());
+
+    // The same inside an ABORT chunk: the chunk's own length is consistent,
+    // the cause's is not.
+    let chunk = Bytes::from_static(&[
+        0x06, 0x00, 0x00, 0x0c, // ABORT, flags, length 12
+        0x00, 0x0d, 0x00, 0x40, // cause: protocol violation, length 64
+        1, 2, 3, 4,
+    ]);
+    assert!(ChunkAbort::unmarshal(&chunk).is_err());
+}
+
+#[test]
 fn test_abort_chunk_many_error_causes() -> Result<()> {
     let abort1 = ChunkAbort {
         error_causes: vec![
