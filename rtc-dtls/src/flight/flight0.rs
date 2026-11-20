@@ -111,7 +111,8 @@ impl Flight for Flight0 {
                         }
                     }
                     Extension::UseSrtp(e) => {
-                        if let Ok(profile) = find_matching_srtp_profile(
+                        if let Ok(profile) = select_srtp_profile(
+                            cfg.srtp_profile_selection,
                             &e.protection_profiles,
                             &cfg.local_srtp_protection_profiles,
                         ) {

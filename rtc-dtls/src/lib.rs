@@ -105,6 +105,7 @@ pub mod signature_hash_algorithm;
 pub mod state;
 
 use cipher_suite::*;
+use config::SrtpProfileSelection;
 use extension::extension_use_srtp::SrtpProtectionProfile;
 
 pub(crate) fn find_matching_srtp_profile(
@@ -119,6 +120,79 @@ pub(crate) fn find_matching_srtp_profile(
         }
     }
     Err(())
+}
+
+/// Select the SRTP protection profile per the configured policy: whose list
+/// order wins when intersecting the client's `use_srtp` offer with the
+/// server's configured profiles. [RFC 5764, §4.1.1] mandates only that the
+/// selected profile is one the client offered; the order policy is the
+/// server's choice.
+pub(crate) fn select_srtp_profile(
+    selection: SrtpProfileSelection,
+    client_offer: &[SrtpProtectionProfile],
+    local_profiles: &[SrtpProtectionProfile],
+) -> Result<SrtpProtectionProfile, ()> {
+    match selection {
+        SrtpProfileSelection::ServerPreference => {
+            find_matching_srtp_profile(local_profiles, client_offer)
+        }
+        SrtpProfileSelection::ClientPreference => {
+            find_matching_srtp_profile(client_offer, local_profiles)
+        }
+    }
+}
+
+#[cfg(test)]
+mod srtp_selection_tests {
+    use super::*;
+
+    const SHA1_80: SrtpProtectionProfile = SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80;
+    const SHA1_32: SrtpProtectionProfile = SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32;
+    const GCM128: SrtpProtectionProfile = SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm;
+
+    #[test]
+    fn client_preference_follows_the_client_order() {
+        let client = [SHA1_80, SHA1_32];
+        let server = [SHA1_32, SHA1_80];
+        assert_eq!(
+            select_srtp_profile(SrtpProfileSelection::ClientPreference, &client, &server),
+            Ok(SHA1_80)
+        );
+    }
+
+    #[test]
+    fn server_preference_follows_the_server_order() {
+        let client = [SHA1_80, SHA1_32];
+        let server = [SHA1_32, SHA1_80];
+        assert_eq!(
+            select_srtp_profile(SrtpProfileSelection::ServerPreference, &client, &server),
+            Ok(SHA1_32)
+        );
+    }
+
+    #[test]
+    fn server_preference_still_selects_within_the_client_offer() {
+        // The server order only ranks the intersection: a profile the client
+        // did not offer is never selected (RFC 5764 §4.1.1).
+        let client = [SHA1_80, GCM128];
+        let server = [SHA1_32, GCM128];
+        assert_eq!(
+            select_srtp_profile(SrtpProfileSelection::ServerPreference, &client, &server),
+            Ok(GCM128)
+        );
+    }
+
+    #[test]
+    fn no_intersection_is_an_error() {
+        let client = [GCM128];
+        let server = [SHA1_80, SHA1_32];
+        assert!(
+            select_srtp_profile(SrtpProfileSelection::ServerPreference, &client, &server).is_err()
+        );
+        assert!(
+            select_srtp_profile(SrtpProfileSelection::ClientPreference, &client, &server).is_err()
+        );
+    }
 }
 
 pub(crate) fn find_matching_cipher_suite(

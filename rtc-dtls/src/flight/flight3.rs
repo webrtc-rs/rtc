@@ -19,7 +19,7 @@ use shared::error::Error;
 
 use crate::cipher_suite::cipher_suite_for_id;
 use crate::prf::{prf_pre_master_secret, prf_psk_pre_master_secret};
-use crate::{find_matching_cipher_suite, find_matching_srtp_profile};
+use crate::{find_matching_cipher_suite, select_srtp_profile};
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 
@@ -184,7 +184,8 @@ impl Flight for Flight3 {
             for extension in &h.extensions {
                 match extension {
                     Extension::UseSrtp(e) => {
-                        let profile = match find_matching_srtp_profile(
+                        let profile = match select_srtp_profile(
+                            cfg.srtp_profile_selection,
                             &e.protection_profiles,
                             &cfg.local_srtp_protection_profiles,
                         ) {

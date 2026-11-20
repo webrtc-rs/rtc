@@ -90,6 +90,11 @@ impl Endpoint {
         }
     }
 
+    /// Get the established connection with the remote address, if any.
+    pub fn connection(&self, remote: SocketAddr) -> Option<&DTLSConn> {
+        self.connections.get(&remote)
+    }
+
     /// Initiate an Association
     pub fn connect(
         &mut self,

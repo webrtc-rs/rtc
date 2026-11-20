@@ -113,6 +113,7 @@ pub struct ConfigBuilder {
     cipher_suites: Vec<CipherSuiteId>,
     signature_schemes: Vec<SignatureScheme>,
     srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+    srtp_profile_selection: SrtpProfileSelection,
     client_auth: ClientAuthType,
     extended_master_secret: ExtendedMasterSecretType,
     flight_interval: Duration,
@@ -138,6 +139,7 @@ impl Default for ConfigBuilder {
             cipher_suites: vec![],
             signature_schemes: vec![],
             srtp_protection_profiles: vec![],
+            srtp_profile_selection: SrtpProfileSelection::default(),
             client_auth: ClientAuthType::default(),
             extended_master_secret: ExtendedMasterSecretType::default(),
             flight_interval: Duration::default(),
@@ -196,6 +198,19 @@ impl ConfigBuilder {
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     ) -> Self {
         self.srtp_protection_profiles = srtp_protection_profiles;
+        self
+    }
+
+    /// srtp_profile_selection declares whose preference order wins when the
+    /// server intersects the client's `use_srtp` offer with the configured
+    /// profiles. The default is [`SrtpProfileSelection::ClientPreference`]
+    /// (historical behavior); [`SrtpProfileSelection::ServerPreference`]
+    /// makes the server pick by its own configured order.
+    pub fn with_srtp_profile_selection(
+        mut self,
+        srtp_profile_selection: SrtpProfileSelection,
+    ) -> Self {
+        self.srtp_profile_selection = srtp_profile_selection;
         self
     }
 
@@ -365,6 +380,23 @@ pub enum ExtendedMasterSecretType {
     Require = 1,
     /// `DISABLE` (`2`).
     Disable = 2,
+}
+
+/// SrtpProfileSelection declares whose preference order wins when the server
+/// intersects the client's `use_srtp` offer with the server's configured
+/// protection profiles.
+///
+/// [RFC 5764, §4.1.1] requires only that the server select a single profile
+/// the client offered; the selection policy within the offered set is the
+/// server's. The historical pion/webrtc-rs behavior iterates the client's
+/// list first.
+#[derive(Debug, Default, PartialEq, Eq, Copy, Clone)]
+pub enum SrtpProfileSelection {
+    /// The client's `use_srtp` offer order wins (historical behavior).
+    #[default]
+    ClientPreference,
+    /// The server's configured profile order wins.
+    ServerPreference,
 }
 
 impl ConfigBuilder {
@@ -580,6 +612,7 @@ impl ConfigBuilder {
             local_signature_schemes,
             extended_master_secret: self.extended_master_secret,
             local_srtp_protection_profiles: self.srtp_protection_profiles,
+            srtp_profile_selection: self.srtp_profile_selection,
             server_name,
             client_auth: self.client_auth,
             local_certificates: self.certificates,
@@ -639,6 +672,7 @@ pub struct HandshakeConfig {
     pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
     pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
+    pub(crate) srtp_profile_selection: SrtpProfileSelection, // Whose order wins when intersecting the client's use_srtp offer
     pub(crate) server_name: String,
     pub(crate) client_auth: ClientAuthType, // If we are a client should we request a client certificate
     pub(crate) local_certificates: Vec<Certificate>,
@@ -696,6 +730,7 @@ impl HandshakeConfig {
             local_signature_schemes: vec![],
             extended_master_secret: ExtendedMasterSecretType::Disable,
             local_srtp_protection_profiles: vec![],
+            srtp_profile_selection: SrtpProfileSelection::default(),
             server_name: String::new(),
             client_auth: ClientAuthType::NoClientCert,
             local_certificates: vec![],

@@ -251,8 +251,11 @@ impl DTLSConn {
         &self.state
     }
 
-    // selected_srtp_protection_profile returns the selected SRTPProtectionProfile
-    pub(crate) fn selected_srtp_protection_profile(&self) -> SrtpProtectionProfile {
+    /// selected_srtp_protection_profile returns the SRTPProtectionProfile
+    /// negotiated via the `use_srtp` extension
+    /// ([`SrtpProtectionProfile::Unsupported`] when SRTP is not negotiated).
+    /// Pion parity: `Connection.SelectedSRTPProtectionProfile`.
+    pub fn selected_srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.state.srtp_protection_profile
     }
 
