@@ -59,17 +59,15 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 pub static ANNEXB_NALUSTART_CODE: Bytes = Bytes::from_static(&[0x00, 0x00, 0x00, 0x01]);
 
 impl H264Payloader {
-    fn next_ind(nalu: &Bytes, start: usize) -> (isize, isize) {
-        let mut zero_count = 0;
-
-        for (i, &b) in nalu[start..].iter().enumerate() {
-            if b == 0 {
-                zero_count += 1;
-                continue;
-            } else if b == 1 && zero_count >= 2 {
-                return ((start + i - zero_count) as isize, zero_count as isize + 1);
-            }
-            zero_count = 0
+    fn next_ind(finder: &memchr::memmem::Finder<'_>, nalu: &Bytes, start: usize) -> (isize, isize) {
+        let data = &nalu[start..];
+        if let Some(pos) = finder.find(data) {
+            // The start code also takes any zeros right before `00 00 01`.
+            let zero_count = 2 + data[..pos].iter().rev().take_while(|&&b| b == 0).count();
+            return (
+                (start + pos + 2 - zero_count) as isize,
+                zero_count as isize + 1,
+            );
         }
         (-1, -1)
     }
@@ -190,13 +188,15 @@ impl Payloader for H264Payloader {
 
         let mut payloads = vec![];
 
-        let (mut next_ind_start, mut next_ind_len) = H264Payloader::next_ind(payload, 0);
+        let finder = memchr::memmem::Finder::new(&[0, 0, 1]);
+        let (mut next_ind_start, mut next_ind_len) = H264Payloader::next_ind(&finder, payload, 0);
         if next_ind_start == -1 {
             self.emit(payload, mtu, &mut payloads);
         } else {
             while next_ind_start != -1 {
                 let prev_start = (next_ind_start + next_ind_len) as usize;
-                let (next_ind_start2, next_ind_len2) = H264Payloader::next_ind(payload, prev_start);
+                let (next_ind_start2, next_ind_len2) =
+                    H264Payloader::next_ind(&finder, payload, prev_start);
                 next_ind_start = next_ind_start2;
                 next_ind_len = next_ind_len2;
                 if next_ind_start != -1 {
