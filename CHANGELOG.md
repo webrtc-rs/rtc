@@ -128,6 +128,16 @@ see `docs/crypto-provider-migration.md` for before/after examples.
   outbound stream's remote-inbound and feedback counts, and sender reports update the inbound
   stream. The read-side stats hook was lost when the interceptor started consuming RTCP
   ([#310](https://github.com/webrtc-rs/rtc/issues/310)).
+- TURN: a Refresh, CreatePermission or ChannelBind rejected with 438 (Stale Nonce) is now sent
+  again with the new nonce right away, as RFC 8489 §9.2.5 requires, up to three times in a row.
+  With a server that rotates its nonces, a stale Refresh used to wait for the next scheduled one,
+  half a lifetime away, and the allocation expired first; a stale ChannelBind dropped the
+  binding, and binding the peer again on a new number was refused with 400 while the server
+  kept the old one. A retried Refresh keeps its lifetime, so `close()` still releases the
+  allocation, and the outcome of a retried CreatePermission, timeouts included, is reported
+  under the id `create_permission()` returned ([#263](https://github.com/webrtc-rs/rtc/issues/263),
+  [#267](https://github.com/webrtc-rs/rtc/issues/267),
+  [#334](https://github.com/webrtc-rs/rtc/issues/334)).
 
 - Ignore unrelated post-handshake DTLS records without consuming the final-flight
   retry budget or modifying the completed handshake cache.
