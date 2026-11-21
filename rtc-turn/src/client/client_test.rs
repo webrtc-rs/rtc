@@ -517,7 +517,12 @@ fn test_refresh_response_reschedules_shorter_lifetime_from_response_time() -> Re
     ])?;
     client
         .relay(relayed_addr)?
-        .handle_refresh_allocation_response(t(30), response)?;
+        .handle_refresh_allocation_response(
+            t(30),
+            response,
+            Duration::from_secs(600),
+            StaleNonceRetry::first(TransactionId::new()),
+        )?;
 
     assert_eq!(
         client.relay(relayed_addr)?.poll_timeout(),
@@ -568,7 +573,12 @@ fn test_refresh_response_reschedule_applies_interval_cap() -> Result<()> {
     ])?;
     client
         .relay(relayed_addr)?
-        .handle_refresh_allocation_response(t(30), response)?;
+        .handle_refresh_allocation_response(
+            t(30),
+            response,
+            Duration::from_secs(600),
+            StaleNonceRetry::first(TransactionId::new()),
+        )?;
 
     assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(50)));
     Ok(())
@@ -630,7 +640,12 @@ fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
 
     client
         .relay(relayed_addr)?
-        .handle_refresh_allocation_response(t(1), res)?;
+        .handle_refresh_allocation_response(
+            t(1),
+            res,
+            Duration::ZERO,
+            StaleNonceRetry::first(TransactionId::new()),
+        )?;
 
     assert!(
         !client.relays.contains_key(&relayed_addr),
@@ -931,5 +946,441 @@ fn test_an_error_reply_without_a_nonce_is_reported_under_the_id_allocate_returne
             code.0
         );
     }
+    Ok(())
+}
+
+// 438 (Stale Nonce) on a live allocation.
+//
+// A TURN server may expire the nonce it handed out at any time and answer the next request with
+// 438 and a new one; RFC 8489 §9.2.5 has the client send that request again with the new nonce.
+// Servers that rotate nonces every few minutes hit every allocation that lives longer than that.
+// See webrtc-rs/rtc#263, #267 and #334.
+
+use super::relay::MAX_RETRY_ATTEMPTS;
+use stun::error_code::{CODE_STALE_NONCE, ErrorCode};
+
+const STALE_NONCE_SERVER: &str = "127.0.0.1:3478";
+const STALE_NONCE_LOCAL: &str = "127.0.0.1:50000";
+const STALE_NONCE_RELAYED: &str = "127.0.0.1:50001";
+const STALE_NONCE_PEER: &str = "127.0.0.1:60000";
+
+/// A client holding one allocation, as `allocate()` leaves it, signed with nonce `"first"`.
+fn client_with_allocation(now: Instant) -> Result<(Client, RelayedAddr)> {
+    let mut client = Client::new(
+        ClientConfig {
+            turn_serv_addr: STALE_NONCE_SERVER.to_owned(),
+            local_addr: STALE_NONCE_LOCAL.parse().unwrap(),
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            ..Default::default()
+        },
+        test_crypto_provider(),
+    )?;
+    let relayed_addr: RelayedAddr = STALE_NONCE_RELAYED.parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            now,
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "first".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+    Ok((client, relayed_addr))
+}
+
+/// The next request the client puts on the wire, decoded. Indications are skipped.
+fn next_request(client: &mut Client) -> Option<Message> {
+    while let Some(transmit) = client.poll_write() {
+        let mut msg = Message::new();
+        msg.raw = transmit.message.to_vec();
+        if msg.decode().is_ok() && msg.typ.class == CLASS_REQUEST {
+            return Some(msg);
+        }
+    }
+    None
+}
+
+fn nonce_of(msg: &Message) -> String {
+    Nonce::get_from_as(msg, ATTR_NONCE)
+        .expect("a request on an allocation carries a nonce")
+        .text
+}
+
+/// Answers `request` from the server: a success, or an error with `code` and a new `nonce`.
+fn answer(
+    client: &mut Client,
+    now: Instant,
+    request: &Message,
+    error: Option<(ErrorCode, &str)>,
+    mut attributes: Vec<Box<dyn Setter>>,
+) -> Result<()> {
+    let class = if error.is_some() {
+        CLASS_ERROR_RESPONSE
+    } else {
+        CLASS_SUCCESS_RESPONSE
+    };
+    let mut setters: Vec<Box<dyn Setter>> = vec![
+        Box::new(request.transaction_id),
+        Box::new(MessageType::new(request.typ.method, class)),
+    ];
+    if let Some((code, nonce)) = error {
+        setters.push(Box::new(ErrorCodeAttribute {
+            code,
+            reason: b"Stale Nonce".to_vec(),
+        }));
+        setters.push(Box::new(Nonce::new(ATTR_NONCE, nonce.to_owned())));
+    }
+    setters.append(&mut attributes);
+    setters.push(Box::new(FINGERPRINT));
+    let mut reply = Message::new();
+    reply.build(&setters)?;
+
+    client.handle_read(TransportMessage {
+        now,
+        transport: TransportContext {
+            local_addr: STALE_NONCE_LOCAL.parse().unwrap(),
+            peer_addr: STALE_NONCE_SERVER.parse().unwrap(),
+            transport_protocol: TransportProtocol::UDP,
+            ecn: None,
+        },
+        message: BytesMut::from(&reply.raw[..]),
+    })
+}
+
+/// A Refresh rejected with 438 goes out again at once with the new nonce. Waiting for the next
+/// scheduled refresh is waiting half a lifetime, which is when the allocation expires: before
+/// this, a server that rotated its nonce dropped the allocation at the end of its 600 s and
+/// every connection relayed through it with it (#263).
+#[test]
+fn test_a_refresh_rejected_for_a_stale_nonce_is_sent_again_with_the_new_nonce() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    client.refresh_allocations(start)?;
+    let refresh = next_request(&mut client).expect("a Refresh");
+    assert_eq!(nonce_of(&refresh), "first");
+
+    answer(
+        &mut client,
+        start,
+        &refresh,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    let retry = next_request(&mut client).expect("the Refresh is sent again right away");
+    assert_eq!(retry.typ, MessageType::new(METHOD_REFRESH, CLASS_REQUEST));
+    assert_ne!(
+        retry.transaction_id, refresh.transaction_id,
+        "a request with a new nonce is a new transaction (RFC 8489 §5)"
+    );
+    assert_eq!(nonce_of(&retry), "second");
+    let mut lifetime = crate::proto::lifetime::Lifetime::default();
+    lifetime.get_from(&retry)?;
+    assert_eq!(
+        lifetime.0,
+        Duration::from_secs(600),
+        "for the same lifetime"
+    );
+
+    answer(
+        &mut client,
+        start,
+        &retry,
+        None,
+        vec![Box::new(crate::proto::lifetime::Lifetime(
+            Duration::from_secs(600),
+        ))],
+    )?;
+    assert!(next_request(&mut client).is_none(), "nothing left to retry");
+    assert_eq!(
+        client.relay(relayed_addr)?.poll_timeout(),
+        Some(start + Duration::from_secs(120)),
+        "the allocation is refreshed and the next refresh is scheduled from it"
+    );
+    Ok(())
+}
+
+/// `close()` is a Refresh with a zero lifetime; sent again after a 438, it is still one.
+/// Retrying it with the allocation's lifetime would renew what the caller asked to release.
+#[test]
+fn test_a_close_rejected_for_a_stale_nonce_is_sent_again_as_a_close() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    client.relay(relayed_addr)?.close(start)?;
+    let close = next_request(&mut client).expect("the zero-lifetime Refresh");
+
+    answer(
+        &mut client,
+        start,
+        &close,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    let retry = next_request(&mut client).expect("the close is sent again");
+    let mut lifetime = crate::proto::lifetime::Lifetime::default();
+    lifetime.get_from(&retry)?;
+    assert_eq!(lifetime.0, Duration::ZERO);
+
+    answer(
+        &mut client,
+        start,
+        &retry,
+        None,
+        vec![Box::new(crate::proto::lifetime::Lifetime(Duration::ZERO))],
+    )?;
+    assert!(
+        !client.relays.contains_key(&relayed_addr),
+        "the allocation is released"
+    );
+    Ok(())
+}
+
+/// A server that keeps answering 438 is retried `MAX_RETRY_ATTEMPTS` times, not for ever.
+#[test]
+fn test_a_request_rejected_for_a_stale_nonce_is_retried_a_bounded_number_of_times() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, _) = client_with_allocation(start)?;
+    client.refresh_allocations(start)?;
+
+    let mut sent = 0;
+    let mut nonce = 0;
+    while let Some(request) = next_request(&mut client) {
+        sent += 1;
+        nonce += 1;
+        answer(
+            &mut client,
+            start,
+            &request,
+            Some((CODE_STALE_NONCE, &format!("nonce-{nonce}"))),
+            vec![],
+        )?;
+    }
+    assert_eq!(sent, 1 + usize::from(MAX_RETRY_ATTEMPTS));
+    Ok(())
+}
+
+/// A CreatePermission rejected with 438 is sent again, and its outcome is reported under the id
+/// `create_permission()` returned — the only one its caller knows — not under the retry's.
+#[test]
+fn test_a_permission_rejected_for_a_stale_nonce_is_retried_and_reported_under_its_first_id()
+-> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    let id = client
+        .relay(relayed_addr)?
+        .create_permission(start, peer)?
+        .expect("a new permission is requested");
+    let request = next_request(&mut client).expect("a CreatePermission");
+    assert_eq!(request.transaction_id, id);
+
+    answer(
+        &mut client,
+        start,
+        &request,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    assert!(
+        client.poll_event().is_none(),
+        "a rejection that is being retried is not an error yet"
+    );
+    let retry = next_request(&mut client).expect("the CreatePermission is sent again");
+    assert_eq!(nonce_of(&retry), "second");
+    let mut retried_peer = crate::proto::peeraddr::PeerAddress::default();
+    retried_peer.get_from(&retry)?;
+    assert_eq!(SocketAddr::new(retried_peer.ip, retried_peer.port), peer);
+
+    answer(&mut client, start, &retry, None, vec![])?;
+    match client.poll_event() {
+        Some(Event::CreatePermissionResponse(event_id, event_peer)) => {
+            assert_eq!(event_id, id, "named as the caller knows it");
+            assert_eq!(event_peer, peer);
+        }
+        other => panic!("expected CreatePermissionResponse, got {other:?}"),
+    }
+    Ok(())
+}
+
+/// The periodic permission refresh is retried too. Nobody holds its id, so before this a 438
+/// was simply dropped, and the permissions lapsed when their 5 minutes ran out (#334).
+#[test]
+fn test_a_permission_refresh_rejected_for_a_stale_nonce_is_retried() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    client.relay(relayed_addr)?.create_permission(start, peer)?;
+    let create = next_request(&mut client).expect("a CreatePermission");
+    answer(&mut client, start, &create, None, vec![])?;
+    while client.poll_event().is_some() {}
+
+    let refresh_due = start + Duration::from_secs(120);
+    client.relay(relayed_addr)?.handle_timeout(refresh_due);
+    let refresh = next_request(&mut client).expect("the periodic permission refresh");
+    assert_eq!(
+        refresh.typ,
+        MessageType::new(METHOD_CREATE_PERMISSION, CLASS_REQUEST)
+    );
+
+    answer(
+        &mut client,
+        refresh_due,
+        &refresh,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    let retry = next_request(&mut client).expect("the refresh is sent again right away");
+    assert_eq!(nonce_of(&retry), "second");
+    let mut retried_peer = crate::proto::peeraddr::PeerAddress::default();
+    retried_peer.get_from(&retry)?;
+    assert_eq!(SocketAddr::new(retried_peer.ip, retried_peer.port), peer);
+    Ok(())
+}
+
+/// Binds a channel for `peer` and returns the ChannelBind request.
+fn bind_channel(client: &mut Client, relayed_addr: RelayedAddr, now: Instant) -> Result<Message> {
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    client.relay(relayed_addr)?.create_permission(now, peer)?;
+    let create = next_request(client).expect("a CreatePermission");
+    answer(client, now, &create, None, vec![])?;
+    while client.poll_event().is_some() {}
+
+    client.relay(relayed_addr)?.send_to(now, b"hello", peer)?;
+    let bind = next_request(client).expect("the first packet to the peer binds a channel");
+    assert_eq!(
+        bind.typ,
+        MessageType::new(METHOD_CHANNEL_BIND, CLASS_REQUEST)
+    );
+    Ok(bind)
+}
+
+fn channel_number_of(msg: &Message) -> Result<u16> {
+    let mut number = crate::proto::channum::ChannelNumber::default();
+    number.get_from(msg)?;
+    Ok(number.0)
+}
+
+/// A ChannelBind rejected with 438 is sent again with the new nonce and the same channel number.
+///
+/// It used to drop the binding instead, and the next packet bound the peer to a new number. A
+/// server that already held the first binding refuses that with 400 (RFC 8656 §12: a peer is
+/// bound to one channel at a time) for as long as the first one lives, and the ChannelData it
+/// kept sending on the first number found no binding at the client (#267).
+#[test]
+fn test_a_channel_bind_rejected_for_a_stale_nonce_keeps_its_channel_number() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    let bind = bind_channel(&mut client, relayed_addr, start)?;
+    let number = channel_number_of(&bind)?;
+
+    answer(
+        &mut client,
+        start,
+        &bind,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    let retry = next_request(&mut client).expect("the ChannelBind is sent again right away");
+    assert_eq!(nonce_of(&retry), "second");
+    assert_eq!(channel_number_of(&retry)?, number, "for the same channel");
+
+    answer(&mut client, start, &retry, None, vec![])?;
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    client.relay(relayed_addr)?.send_to(start, b"again", peer)?;
+    let transmit = client.poll_write().expect("data for the peer");
+    assert!(
+        crate::proto::chandata::ChannelData::is_channel_data(&transmit.message),
+        "the channel is bound"
+    );
+    let mut data = crate::proto::chandata::ChannelData {
+        raw: transmit.message.to_vec(),
+        ..Default::default()
+    };
+    data.decode()?;
+    assert_eq!(data.number.0, number);
+    Ok(())
+}
+
+/// When the server keeps answering 438, the binding is still not dropped: it keeps its number
+/// and the next packet to the peer binds that number again.
+#[test]
+fn test_a_channel_bind_still_rejected_after_its_retries_is_bound_again_on_the_same_number()
+-> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    let mut request = bind_channel(&mut client, relayed_addr, start)?;
+    let number = channel_number_of(&request)?;
+
+    for attempt in 0..=MAX_RETRY_ATTEMPTS {
+        answer(
+            &mut client,
+            start,
+            &request,
+            Some((CODE_STALE_NONCE, &format!("nonce-{attempt}"))),
+            vec![],
+        )?;
+        match next_request(&mut client) {
+            Some(retry) => request = retry,
+            None => break,
+        }
+    }
+    assert!(
+        next_request(&mut client).is_none(),
+        "the retries are used up"
+    );
+
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    client.relay(relayed_addr)?.send_to(start, b"again", peer)?;
+    let bind = next_request(&mut client).expect("the next packet binds the channel again");
+    assert_eq!(
+        channel_number_of(&bind)?,
+        number,
+        "on the number the server knows"
+    );
+    Ok(())
+}
+
+/// A request sent again after a 438 that is then never answered times out under the id its
+/// caller holds, as an Allocate's does, not under the retry's.
+#[test]
+fn test_a_retried_permission_that_is_never_answered_times_out_under_its_first_id() -> Result<()> {
+    let start = Instant::now();
+    let (mut client, relayed_addr) = client_with_allocation(start)?;
+    let peer: SocketAddr = STALE_NONCE_PEER.parse().unwrap();
+    let id = client
+        .relay(relayed_addr)?
+        .create_permission(start, peer)?
+        .expect("a new permission is requested");
+    let request = next_request(&mut client).expect("a CreatePermission");
+    answer(
+        &mut client,
+        start,
+        &request,
+        Some((CODE_STALE_NONCE, "second")),
+        vec![],
+    )?;
+    let retry = next_request(&mut client).expect("the CreatePermission is sent again");
+    assert_ne!(retry.transaction_id, id);
+
+    // Every retransmission deadline of the retry, until it is given up. The allocation's own
+    // refresh deadlines come later and are not reached.
+    let mut timed_out = None;
+    while let Some(deadline) = client.poll_timeout() {
+        if deadline >= start + Duration::from_secs(60) {
+            break;
+        }
+        client.handle_timeout(deadline)?;
+        while client.poll_write().is_some() {}
+        while let Some(event) = client.poll_event() {
+            if let Event::TransactionTimeout(event_id) = event {
+                timed_out = Some(event_id);
+            }
+        }
+    }
+    assert_eq!(timed_out, Some(id), "named as the caller knows it");
     Ok(())
 }

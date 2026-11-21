@@ -32,9 +32,40 @@ pub(crate) enum TransactionType {
     BindingRequest,
     AllocateAttempt,
     AllocateRequest(TextAttribute),
-    CreatePermissionRequest(RelayedAddr, Option<SocketAddr>),
-    RefreshRequest(RelayedAddr),
-    ChannelBindRequest(RelayedAddr, SocketAddr),
+    CreatePermissionRequest(RelayedAddr, Option<SocketAddr>, StaleNonceRetry),
+    /// The allocation, and the lifetime the request asked for: zero when it is a `close()`.
+    RefreshRequest(RelayedAddr, Duration, StaleNonceRetry),
+    ChannelBindRequest(RelayedAddr, SocketAddr, StaleNonceRetry),
+}
+
+/// What a request sent again after a 438 (Stale Nonce) carries over from the first one.
+///
+/// RFC 8489 §9.2.5 has the client retry a request rejected with 438 using the nonce in the
+/// rejection. The retry is a new transaction with a new id, but it is still the request the
+/// caller made: anything reported about it names `first_id`, the id the caller was handed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StaleNonceRetry {
+    pub(crate) first_id: TransactionId,
+    /// How many times this request has already been rejected with 438.
+    pub(crate) rejections: u16,
+}
+
+impl StaleNonceRetry {
+    /// A request on its first attempt, sent under `id`.
+    pub(crate) fn first(id: TransactionId) -> Self {
+        Self {
+            first_id: id,
+            rejections: 0,
+        }
+    }
+
+    /// The same request, sent again after one more 438.
+    pub(crate) fn rejected(self) -> Self {
+        Self {
+            first_id: self.first_id,
+            rejections: self.rejections + 1,
+        }
+    }
 }
 
 // TransactionConfig is a set of config params used by NewTransaction
@@ -193,15 +224,16 @@ impl TransactionMap {
 
         for key in keys {
             let exhausted = self.tr_map.remove(&key);
-            // An Allocate nobody answers is the one case where the request on the wire and
-            // the allocation its caller knows have different ids.
-            let timed_out = if matches!(
-                exhausted.as_ref().map(|tr| &tr.transaction_type),
-                Some(TransactionType::AllocateAttempt)
-            ) {
-                authenticated_allocate_id(key)
-            } else {
-                key
+            // Where the request on the wire and the one its caller knows have different ids:
+            // an Allocate nobody answers, and a request sent again after a 438 (Stale Nonce).
+            let timed_out = match exhausted.as_ref().map(|tr| &tr.transaction_type) {
+                Some(TransactionType::AllocateAttempt) => authenticated_allocate_id(key),
+                Some(
+                    TransactionType::CreatePermissionRequest(_, _, retry)
+                    | TransactionType::RefreshRequest(_, _, retry)
+                    | TransactionType::ChannelBindRequest(_, _, retry),
+                ) => retry.first_id,
+                _ => key,
             };
             self.events.push_back(Event::TransactionTimeout(timed_out));
         }
